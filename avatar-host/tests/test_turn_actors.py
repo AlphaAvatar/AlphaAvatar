@@ -39,7 +39,7 @@ CASES = {
 async def session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owned_endpoints: set[object]
 ) -> AsyncIterator[Chain]:
-    """Two segments the endpoint holds across, each transcribed in time."""
+    """Two segments the turn-taking model holds across, each transcribed in time."""
     answers = ((0.3, "What is two plus"), (0.3, "three?"))
     async with configured_chain(
         tmp_path, monkeypatch, owned_endpoints, answers, frozenset({"segment-a"})

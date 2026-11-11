@@ -72,7 +72,6 @@ class SpeakerSegmentState:
     invalid: bool = False
     inference_failed: bool = False
     vector: np.ndarray | None = None
-    short: bool = False  # Its vector is of speech shorter than a window
     last_audio: bytes | None = None
     identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
     speaker: Participant | None = None  # Its identified participant, for its attributes
@@ -457,7 +456,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 return
 
         if state.vector is None:
-            state.vector, state.short = vector.copy(), job.whole
+            state.vector = vector.copy()
 
         # Attributes keep their own input: full windows only.
         if not job.whole:
@@ -574,9 +573,8 @@ class SpeakerProcessor(PersonaProcessorBase):
                 if state.vector is None or state.inference_failed:
                     return
 
-                # Short speech may continue a known voice; it is too little to open one.
                 state.entity = self._tracks.resolve(
-                    state.segment.source, state.vector, time.monotonic(), create=not state.short
+                    state.segment.source, state.vector, time.monotonic()
                 )
                 self._release_tracks()
                 if state.entity is None:

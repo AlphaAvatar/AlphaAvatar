@@ -69,7 +69,7 @@ def chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, socket_root: Path):
     spec = {
         "files": str(files),
         "stt": [CARD, SUM],  # The card question, then the two-sentence one
-        "runners": {"voice": ["SpeechRunner"], "router": ["EndpointRunner"]},
+        "runners": {"voice": ["SpeechRunner"], "router": ["TurnTakingRunner"]},
     }
     monkeypatch.setattr(doctor_process, "_main", doubles.child)
     doubles.resolvable(monkeypatch)
@@ -163,7 +163,7 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
     ] == ["PASS"] * 3
     assert {runner["method"] for runner in checks["models.runners"]["runners"]} == {
         doubles.SpeechRunner.INFERENCE_METHOD,
-        doubles.EndpointRunner.INFERENCE_METHOD,
+        doubles.TurnTakingRunner.INFERENCE_METHOD,
     }
     # Vision on: the card question alone, as agreed; the two-sentence one runs with it off.
     found = scenarios(checks)

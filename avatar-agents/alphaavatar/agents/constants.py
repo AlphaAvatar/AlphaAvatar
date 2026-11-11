@@ -21,7 +21,7 @@ VIDEO_PERSONA_INTERVAL_SEC = 0.2
 VIDEO_MEMORY_INTERVAL_SEC = 0.5
 
 SPEAKER_BETA = 0.95
-SPEAKER_MATCH_THRESHOLD = 0.8  # Cosine of the campplus speaker vectors
+SPEAKER_MATCH_THRESHOLD = 0.6  # Cosine of the campplus speaker vectors
 
 FACE_BETA = 0.95
 FACE_MATCH_THRESHOLD = 0.45

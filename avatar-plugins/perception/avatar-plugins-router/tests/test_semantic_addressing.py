@@ -26,11 +26,7 @@ from pathlib import Path
 import pytest
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
-from alphaavatar.agents.router.enums import (
-    SemanticAddressingLabel,
-    TurnTakingAction,
-    TurnTakingMode,
-)
+from alphaavatar.agents.router.enums import AssessmentLabel, TurnTakingAction, TurnTakingMode
 from alphaavatar.agents.router.models import SemanticAddressingModelBase
 from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
@@ -62,7 +58,7 @@ SPEECH = "router:speech:microphone"
 TRANSCRIPTS = PerceptionSourceRef("router:transcript:microphone", 1)
 MICROPHONE = {"source_id": "microphone", "source_generation": 1}
 ALICE, BOB = PerceptionEntityRef("voice-alice"), PerceptionEntityRef("voice-bob")
-AVATAR, OTHER = SemanticAddressingLabel.AVATAR, SemanticAddressingLabel.NON_AVATAR
+AVATAR, OTHER = AssessmentLabel.POSITIVE, AssessmentLabel.NEGATIVE  # Addressed to the Avatar
 HOLD = 0.05  # How long each assessment takes when the model is timed
 
 
@@ -75,7 +71,7 @@ async def wait_until(condition: Callable[[], object], failure: str) -> None:
         pytest.fail(failure, pytrace=False)
 
 
-def to_avatar(texts: list[str]) -> SemanticAddressingLabel:
+def to_avatar(texts: list[str]) -> AssessmentLabel:
     """To the Avatar when its name is in what was read, unless the target speaks to John."""
     if texts[-1].startswith("John"):
         return OTHER
@@ -291,8 +287,8 @@ async def test_speech_in_two_segments_is_read_together_and_each_result_is_its_ow
 
     assert speech.model.requests == [["Hey Assistant,"], ["Hey Assistant,", "what time is it?"]]
     # Each result targets its own transcript, names its own subject and keeps what it read.
-    assert speech.judged("a") == [(("a",), "avatar", first)]
-    assert speech.judged("b") == [(("a", "b"), "avatar", second)]
+    assert speech.judged("a") == [(("a",), AVATAR, first)]
+    assert speech.judged("b") == [(("a", "b"), AVATAR, second)]
 
 
 async def test_a_change_of_addressee_is_the_later_segments_alone(speech: Speech) -> None:
@@ -302,8 +298,8 @@ async def test_a_change_of_addressee_is_the_later_segments_alone(speech: Speech)
     await wait_until(lambda: speech.judged("b"), "the second segment was never judged")
 
     # The later segment speaks to someone else; the earlier one's result stands.
-    assert speech.judged("a") == [(("a",), "avatar", None)]
-    assert speech.judged("b") == [(("a", "b"), "non_avatar", None)]
+    assert speech.judged("a") == [(("a",), AVATAR, None)]
+    assert speech.judged("b") == [(("a", "b"), OTHER, None)]
 
 
 async def test_transcripts_out_of_order_repeated_or_identified_late_are_read_in_media_time(
@@ -327,9 +323,9 @@ async def test_transcripts_out_of_order_repeated_or_identified_late_are_read_in_
         ["Hey Assistant,"],
         ["Hey Assistant,", "what time is it?"],
     ]
-    assert speech.judged("a") == [(("a",), "avatar", None)]
+    assert speech.judged("a") == [(("a",), AVATAR, None)]
     # Its first result, published before the identity, is not rewritten.
-    assert speech.judged("b") == [(("b",), "non_avatar", None), (("a", "b"), "avatar", BOB)]
+    assert speech.judged("b") == [(("b",), OTHER, None), (("a", "b"), AVATAR, BOB)]
 
 
 @pytest.mark.parametrize("speech", [{"history": 1}], indirect=True)
@@ -354,8 +350,8 @@ async def test_only_a_committed_turn_retires_the_input_it_owns(speech: Speech) -
         [committed, "And tomorrow?", "Thanks."],
     ]
     # The evidence is the window's alone: the committed segments are not this input's.
-    assert speech.judged("c")[1] == (("c",), "avatar", None)
-    assert speech.judged("d") == [(("c", "d"), "avatar", None)]
+    assert speech.judged("c")[1] == (("c",), AVATAR, None)
+    assert speech.judged("d") == [(("c", "d"), AVATAR, None)]
 
 
 @pytest.mark.parametrize("acknowledged", [False, True], ids=["unacknowledged", "acknowledged"])
@@ -378,8 +374,8 @@ async def test_a_sealed_inputs_late_transcript_stays_its_own_segments(
     else:
         # Its judgment reads what came before it and targets it alone; the later input is
         # judged again with it as context, its result still its own.
-        assert speech.judged("a") == [(("a",), "non_avatar", None)]
-        assert speech.judged("b") == [(("b",), "avatar", None), (("a", "b"), "avatar", None)]
+        assert speech.judged("a") == [(("a",), OTHER, None)]
+        assert speech.judged("b") == [(("b",), AVATAR, None), (("a", "b"), AVATAR, None)]
 
 
 @pytest.mark.parametrize(
@@ -428,9 +424,9 @@ async def test_what_ends_a_window_ends_its_judgments_late_ones_too(
     await asyncio.sleep(0.1)
 
     # What it was assessed on is gone: no result reads that window.
-    assert (("a", "b"), "avatar", None) not in speech.judged("b")
+    assert (("a", "b"), AVATAR, None) not in speech.judged("b")
     if retire == "late-job":
-        assert speech.judged("b") == [(("z", "a", "b"), "avatar", None)]
+        assert speech.judged("b") == [(("z", "a", "b"), AVATAR, None)]
     elif retire == "stop":
         await asyncio.wait_for(stopping, HANG_GUARD)
         assert speech.judged("b") == [] and len(speech.model.requests) == 2
@@ -440,7 +436,7 @@ async def test_what_ends_a_window_ends_its_judgments_late_ones_too(
     else:
         # A new window: the next speech is read alone.
         assert speech.model.requests[2:] == [["Hello."]]
-        assert speech.judged("d") == [(("d",), "non_avatar", None)]
+        assert speech.judged("d") == [(("d",), OTHER, None)]
 
 
 async def test_each_judgment_is_traced_from_when_it_was_queued(speech: Speech) -> None:

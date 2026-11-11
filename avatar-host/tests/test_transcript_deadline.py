@@ -40,7 +40,7 @@ async def session(
     owned_endpoints: set[object],
 ) -> AsyncIterator[Chain]:
     """The parameter is (answers, continues): how its transcription service answers, request
-    by request, and the segments the endpoint model holds."""
+    by request, and the segments the turn-taking model holds."""
     async with configured_chain(tmp_path, monkeypatch, owned_endpoints, *request.param) as chain:
         yield chain
 
@@ -91,7 +91,7 @@ VOICE, OTHER = PerceptionEntityRef("voice-1"), PerceptionEntityRef("voice-2")
 async def test_a_held_turn_keeps_the_words_it_has_and_marks_the_segment_it_lost(
     session: Chain, speakers: tuple[PerceptionEntityRef | None, ...]
 ) -> None:
-    # The endpoint holds after the first segment; the second joins the same input, whoever
+    # The turn-taking model holds after the first segment; the second joins the same input, whoever
     # its speech names, and keeps its own deadline: the commit is due 3 s after it closed.
     first, second = speakers
     session.say("segment-a", first)

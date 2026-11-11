@@ -213,7 +213,7 @@ Router 拥有借用这些组件的流和任务。
 | TTS 供应商实现 | [voice/tts/](avatar-plugins/foundation/avatar-plugins-voice/alphaavatar/plugins/voice/tts/)。 |
 | 音频活动与片段发布 | [router/audio_activity/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/audio_activity/)。 |
 | 转录消费 | [router/speech/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/speech/)。 |
-| 轮次端点评估 | [router/turn_taking/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/)。 |
+| 轮次判断 | [router/turn_taking/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/)。 |
 
 - 规范化音频只发布一次，由独立消费者派生结果。
 - VAD 片段边界不会自动成为对话轮次边界。
@@ -242,7 +242,7 @@ Persona 提供说话者／身份证据；轮次判断不识别人。
 | `InputWindow` | 输入成员、活动／已关闭片段、转录文本和修订号。 |
 | `TurnEvidenceBuilder` | 根据输入和保留的时序上下文构造模型证据。 |
 | `TurnAddressing` / `AddressingFusion` | 匹配并合并寻址证据。 |
-| 轮次判断模型 | 通过声明的能力估计端点／交互证据。 |
+| 轮次判断模型 | 通过声明的能力给出轮次判断与交互证据。 |
 | `TurnTakingPolicy` | 根据证据和评估生成动作。 |
 | `AssessmentWork` | 替换、取消、追踪并回收异步评估任务。 |
 | `AvatarEngine` | 校验提出的动作／输入，准入实际轮次。 |
@@ -251,9 +251,9 @@ Persona 提供说话者／身份证据；轮次判断不识别人。
 公开契约：[agents/router/](avatar-agents/alphaavatar/agents/router/)。
 
 - `input_id` 标识提出的时序输入；`revision` 用于检测过期评估。
-- 说话者／实体标签不会把端点音频拆成独立的人物候选。
-- 端点 HOLD 让当前输入保持开放，接收后续语音并重新评估。
-- 一旦确定端点，输入可在等待 STT 结果时封闭。
+- 说话者／实体标签不会把轮次判断的音频拆成独立的人物候选。
+- 轮次判断为未说完或不确定时的 HOLD 让当前输入保持开放，接收后续语音并重新评估。
+- 一旦轮次判断已确定，输入可在等待 STT 结果时封闭。
 - 封闭输入的成员保持固定，同时下一份输入可以继续到达。
 - 待处理记录服务于转录／准入生命周期，不是说话者登记表。
 - 转录等待有观察点和固定的硬期限；重新评估不能延长期限。
@@ -562,7 +562,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 不要让导入或文档检查顺带触发计费实验。
 区分离线桩、真实模型推理、远端端点、RTC 与渲染器验证。
 报告耗时时，记录样本与配置身份、失败情况，以及预热或首次运行条件。
-不要仅凭少量延迟样本就声称端点行为正确。
+不要仅凭少量延迟样本就声称轮次判断正确。
 
 工作流入口：[.github/workflows/](.github/workflows/)、
 [packaging/linux/](packaging/linux/) 与 [scripts/maintenance/](scripts/maintenance/)。

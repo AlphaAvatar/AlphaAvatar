@@ -21,10 +21,11 @@ import asyncio
 import numpy as np
 import pytest
 
-from alphaavatar.agents.router.enums import TurnTakingMode
+from alphaavatar.agents.router.enums import AssessmentLabel, TurnTakingMode
 from alphaavatar.agents.router.schemas import TurnTakingAudioEvidence, TurnTakingEvidence
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
+from alphaavatar.plugins.router.processors.turn_taking.config import TurnTakingModelConfig
 from alphaavatar.plugins.router.processors.turn_taking.models.model_files import (
     SMART_TURN_V3_CONFIG,
 )
@@ -57,6 +58,16 @@ class Runner:
             await self.released.wait()
             raise
         return np.float32(self.probability).tobytes()
+
+
+def smart_turn(runner: Runner, **thresholds: float) -> SmartTurnV3Model:
+    """Smart Turn with its configured thresholds, unless ``thresholds`` replace them."""
+    config = TurnTakingModelConfig(**thresholds)
+    return SmartTurnV3Model(
+        inference_executor=runner,
+        incomplete_threshold=config.incomplete_threshold,
+        complete_threshold=config.complete_threshold,
+    )
 
 
 def at(seconds: float) -> RuntimeTime:
@@ -128,19 +139,40 @@ async def test_the_window_is_heard_on_its_media_time_its_sources_mixed_and_mirro
     case: str,
 ) -> None:
     runner = Runner()
-    model = SmartTurnV3Model(inference_executor=runner)
+    model = smart_turn(runner)
     audio, expected = HEARD[case]
     assessment = await model.assess(window(*audio))
 
     (heard,) = runner.heard
     np.testing.assert_array_equal(heard, expected)
-    assert assessment.end_of_turn_probability == pytest.approx(0.8)
+    assert assessment.speech_completion == AssessmentLabel.POSITIVE
+    assert assessment.speech_completion_probability == pytest.approx(0.8)
+
+
+@pytest.mark.parametrize(
+    ("probability", "label"),
+    [
+        (0.2, AssessmentLabel.NEGATIVE),
+        (0.5, AssessmentLabel.UNKNOWN),
+        (0.9, AssessmentLabel.POSITIVE),
+    ],
+    ids=["incomplete", "uncertain", "complete"],
+)
+async def test_the_probability_is_a_clear_judgment_only_beyond_its_thresholds(
+    probability: float, label: AssessmentLabel
+) -> None:
+    # Between the thresholds the model abstains: only a deadline settles that uncertainty.
+    assessment = await smart_turn(Runner(probability)).assess(window(sound(NEAR, "a", 0.0, A)))
+    assert assessment.speech_completion == label
+    assert assessment.speech_completion_probability == pytest.approx(probability)
+    with pytest.raises(ValueError, match="incomplete"):
+        smart_turn(Runner(), incomplete_threshold=0.7, complete_threshold=0.3)
 
 
 async def test_one_inference_answers_each_assessment_of_the_same_sound_for_its_own_input() -> None:
     runner = Runner(probability=0.25)
     runner.gate.clear()
-    model = SmartTurnV3Model(inference_executor=runner)
+    model = smart_turn(runner)
     audio = (sound(NEAR, "a", 0.0, A),)
     first = asyncio.create_task(model.assess(window(*audio, input_id="first", revision=1)))
     second = asyncio.create_task(model.assess(window(*audio, input_id="second", revision=3)))
@@ -158,13 +190,15 @@ async def test_one_inference_answers_each_assessment_of_the_same_sound_for_its_o
         ("first", 2),
         ("first", 4),
     ]
-    assert {a.end_of_turn_probability for a in (*answers, again, other)} == {0.25}
+    assert {
+        (a.speech_completion, a.speech_completion_probability) for a in (*answers, again, other)
+    } == {(AssessmentLabel.NEGATIVE, 0.25)}
 
 
 async def test_a_cancelled_assessment_leaves_its_inference_to_answer_the_next() -> None:
     runner = Runner()
     runner.gate.clear()
-    model = SmartTurnV3Model(inference_executor=runner)
+    model = smart_turn(runner)
     audio = (sound(NEAR, "a", 0.0, A),)
     cancelled = asyncio.create_task(model.assess(window(*audio, revision=1)))
     await asyncio.sleep(0.01)
@@ -183,7 +217,7 @@ async def test_closing_cancels_its_inference_refuses_assessments_and_forgets_wha
     None
 ):
     runner = Runner()
-    model = SmartTurnV3Model(inference_executor=runner)
+    model = smart_turn(runner)
     heard, pending = (sound(NEAR, "a", 0.0, A),), (sound(NEAR, "b", 0.0, B),)
     await model.assess(window(*heard))
     runner.gate.clear()

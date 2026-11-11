@@ -119,7 +119,7 @@ class TurnTakingPolicy:
         *,
         evidence: TurnTakingEvidence,
         assessment: TurnTakingAssessment,
-        completion_expired: bool = False,
+        speech_completion_expired: bool = False,
         addressing_expired: bool = False,
     ) -> TurnTakingPolicyResult:
         completion, addressing = assessment.speech_completion, assessment.addressing
@@ -131,7 +131,7 @@ class TurnTakingPolicy:
             action, reason = TurnTakingAction.HOLD, "speech_incomplete"
         elif addressing == AssessmentLabel.NEGATIVE:
             action, reason = TurnTakingAction.PASSIVE, "addressed_to_other"
-        elif completion == AssessmentLabel.UNKNOWN and not completion_expired:
+        elif completion == AssessmentLabel.UNKNOWN and not speech_completion_expired:
             action, reason = TurnTakingAction.HOLD, "speech_completion_unknown"
         elif addressing == AssessmentLabel.UNKNOWN and not addressing_expired:
             action, reason = TurnTakingAction.HOLD, "addressing_unknown"

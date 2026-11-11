@@ -32,7 +32,7 @@ from alphaavatar.agents.avatar.voice import (
     TranscriptionEventType,
 )
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
-from alphaavatar.agents.router.enums import TurnTakingAction, TurnTakingMode
+from alphaavatar.agents.router.enums import AssessmentLabel, TurnTakingAction, TurnTakingMode
 from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
 from alphaavatar.agents.router.schemas import (
     TurnTakingAssessment,
@@ -605,12 +605,12 @@ class FinalizingSTT(STTBase):
         return self.streams[-1]
 
 
-class EndpointModel(TurnTakingModelBase):
-    """Offline endpoint detector: every complete, transcribed input ends its turn."""
+class TurnTakingModel(TurnTakingModelBase):
+    """Offline turn-taking model: every complete, transcribed input's speech is complete."""
 
     @property
     def name(self) -> str:
-        return "offline_endpoint"
+        return "offline_turn_taking"
 
     @property
     def capabilities(self) -> TurnTakingModelCapabilities:
@@ -624,7 +624,7 @@ class EndpointModel(TurnTakingModelBase):
             revision=evidence.revision,
             turn_mode=evidence.turn_mode,
             confidence=1.0,
-            end_of_turn_probability=1.0,
+            speech_completion=AssessmentLabel.POSITIVE,
         )
 
 
@@ -645,7 +645,9 @@ async def test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement(
 ) -> None:
     runtime = pipeline.runtime
     monkeypatch.setattr(
-        turn_taking, "create_turn_taking_model", lambda name, inference_executor: EndpointModel()
+        turn_taking,
+        "create_turn_taking_model",
+        lambda config, inference_executor: TurnTakingModel(),
     )
     stt = FinalizingSTT()
     listeners = (

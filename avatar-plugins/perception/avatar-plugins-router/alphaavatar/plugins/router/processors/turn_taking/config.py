@@ -61,7 +61,7 @@ class TurnTakingConfig(BaseModel):
     transcript_timeout_sec: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
 
     unsegmented_alignment_sec: float = Field(default=0.75, gt=0.0)
-    completion_wait_sec: float = Field(default=1.5, gt=0.0, allow_inf_nan=False)
+    speech_completion_wait_sec: float = Field(default=1.5, gt=0.0, allow_inf_nan=False)
     commit_timeout_sec: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
     max_pending_inputs: int = Field(default=128, ge=1, le=4096)
     max_window_segments: int = Field(default=128, ge=1, le=4096)

@@ -123,7 +123,7 @@ router:
       addressing_wait_sec: 0.5
       transcript_wait_sec: 3.0
       unsegmented_alignment_sec: 0.75
-      completion_wait_sec: 1.5
+      speech_completion_wait_sec: 1.5
 
       fusion:
         conflict_margin: 0.1

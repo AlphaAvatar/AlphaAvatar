@@ -74,7 +74,7 @@ class InputWindow:
     has_perception_gap: bool = False
     wait: TranscriptWait | None = None
     transcript_failure: str | None = None
-    completion_deadline: float | None = None
+    speech_completion_deadline: float | None = None
     addressing_deadline: float | None = None
 
     segments: list[PerceptionSegmentRef] = field(default_factory=list)
@@ -138,7 +138,7 @@ class InputWindow:
         added = segment not in self.segments
         if added:
             self.segments.append(segment)
-            self.completion_deadline = self.addressing_deadline = None
+            self.speech_completion_deadline = self.addressing_deadline = None
         self._subject(segment, observation)
         if added or segment not in self.active_segments:
             self._touch(observation.time_range.end)

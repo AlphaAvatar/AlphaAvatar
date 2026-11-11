@@ -58,6 +58,7 @@ from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
 from alphaavatar.plugins.persona.processors.speaker.attribute_runner import SpeakerAttributeRunner
 from alphaavatar.plugins.persona.processors.speaker.processor import SpeakerProcessor
+from alphaavatar.plugins.persona.processors.speaker.tracking import SpeakerTracks
 from alphaavatar.plugins.persona.processors.speaker.vector_runner import SpeakerVectorRunner
 
 HANG_GUARD = 30
@@ -66,8 +67,13 @@ PEOPLE = ("alice", "bob", "carol")  # Each a vector of its own
 USERS = PEOPLE[:2]
 # Constant PCM levels identify each physical speaker's audio inside the offline model double.
 LEVELS = {8192: "alice", 16384: "bob", 24576: "carol"}
-# The Persona VDB runner answers a miss with no result, or with a row that has no user.
-SEARCH_REPLIES = {"none": None, "empty-user": {"user_id": "", "score": 0.99}}
+# The Persona VDB runner answers a miss with no result, or with a row that has no user; or
+# it matches another stored user above the threshold.
+SEARCH_REPLIES = {
+    "none": None,
+    "empty-user": {"user_id": "", "score": 0.99},
+    "wrong": {"user_id": "mallory"},
+}
 
 
 def embedding(user: str, size: int) -> np.ndarray:
@@ -474,31 +480,81 @@ async def test_speech_shorter_than_a_window_is_inferred_once_at_its_own_length(
     await runtime.aclose()
 
 
-async def test_speech_shorter_than_a_window_continues_a_known_voice_but_never_opens_one(
-    tmp_path: Path,
+@pytest.mark.parametrize("case", ["registered", "unregistered", "mismatched", "reconnected"])
+async def test_short_utterances_from_a_sessions_start_open_a_voice_and_are_identified(
+    case: str, tmp_path: Path
 ) -> None:
+    # No named subject and no voice yet: each 1-2 s utterance gets its own vector, opens or
+    # continues a track and is searched like any other; the search decides the identity.
     inference = SensorInference()
+    reply = {"registered": "matched", "unregistered": "none", "mismatched": "wrong"}.get(case)
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    utter(runtime, source, "a", "bob", heard=1.5, spoken=1.2)
-    await wait_until(settled(runtime, 1), "the short segment was never settled")
-    # Too little speech to open a voice: inferred, then left unattributed and unsearched.
-    assert inference.vector_samples == [19200]
-    assert not runtime.session.participants and inference.searches == []
+    if case == "reconnected":
+        # Known on the first connection; the new generation starts without its tracks.
+        utter(runtime, source, "before", "alice", heard=3.0, spoken=2.6)
+        await wait_until(lambda: participant_of(runtime, "alice"), "alice was never identified")
+        await wait_until(lambda: inference.attribute_samples, "alice was never described")
+        before = participant_of(runtime, "alice")
+        source = PerceptionSourceRef("device", 2)
+        inference.vector_samples.clear()
+        inference.searches.clear()
+    lengths = (1.2, 1.8, 1.0)
+    for index, length in enumerate(lengths):
+        if reply is not None:
+            inference.replies.append(reply)
+        utter(runtime, source, f"short-{index}", "alice", heard=length + 0.3, spoken=length)
+        await wait_until(
+            lambda index=index: len(inference.searches) == index + 1,
+            f"short utterance {index} was never searched",
+        )
 
-    utter(runtime, source, "b", "alice", heard=3.0, spoken=2.6)
-    await wait_until(lambda: inference.searches, "the known voice was never searched")
-    utter(runtime, source, "c", "alice", heard=1.5, spoken=1.2)
-    await wait_until(lambda: len(inference.searches) == 2, "the short segment was never searched")
-    assert inference.searches == ["speaker:alice", "speaker:alice"]
-    alice = participant_of(runtime, "alice")
-    for segment in ("b", "c"):
-        resolved = runtime.participants.resolve(segment=PerceptionSegmentRef(source, segment))
-        assert resolved is not None and resolved.participant_id == alice.participant_id
+    assert inference.vector_samples == [round(length * 16000) for length in lengths]
+    assert inference.searches == ["speaker:alice"] * len(lengths)
+    (participant_id,) = {
+        runtime.participants.resolve(
+            segment=PerceptionSegmentRef(source, f"short-{index}")
+        ).participant_id
+        for index in range(len(lengths))
+    }  # One voice: every utterance is attributed to the same participant.
+    current = runtime.participants.get(participant_id)
+    generated = runtime.session.get_identity(participant_id, 0)
+    if case == "unregistered":
+        # No match: a new voice keeps its generated user, never someone else's.
+        assert current == generated and participant_of(runtime, "alice") is None
+    else:
+        expected = "mallory" if case == "mismatched" else "alice"
+        # The match binds what the search found: right, or wrong on wrong evidence.
+        assert (current.user_id, current.identity_sequence) == (expected, 1)
+    if case == "reconnected":
+        assert participant_id != before.participant_id
+    # The attribute model never hears the short audio.
+    assert inference.attribute_samples == ([48000] if case == "reconnected" else [])
     await persona.on_stop()
     await runtime.aclose()
+
+
+@pytest.mark.parametrize(
+    ("margin", "query", "joined"),
+    [(0.0, (1.0, 1.0), False), (0.05, (1.0, 0.95), False), (0.05, (1.0, 0.9), True)],
+    ids=["tie", "within-margin", "beyond-margin"],
+)
+def test_a_voice_as_close_to_two_tracks_as_the_margin_joins_neither(
+    margin: float, query: tuple[float, float], joined: bool
+) -> None:
+    source = PerceptionSourceRef("device", 1)
+    tracks = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8, ttl_sec=60.0)
+    first = tracks.resolve(source, np.array([1.0, 0.0, 0.0]), 0.0)
+    assert tracks.resolve(source, np.array([0.0, 1.0, 0.0]), 0.0) not in (None, first)
+    vector = np.array([*query, 0.0]) / np.linalg.norm([*query, 0.0])
+    # Both tracks are above the threshold; the closer one only when it is clear of the other.
+    assert tracks.resolve(source, vector, 1.0) == (first if joined else None)
+    # A single candidate needs only the threshold.
+    alone = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8, ttl_sec=60.0)
+    only = alone.resolve(source, np.array([1.0, 0.0, 0.0]), 0.0)
+    assert alone.resolve(source, vector, 1.0) == only
 
 
 def test_the_speaker_vector_model_resolves_its_pinned_revision_and_checksum(

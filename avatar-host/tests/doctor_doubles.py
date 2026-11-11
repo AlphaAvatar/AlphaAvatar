@@ -101,7 +101,7 @@ class SpeechRunner(InferenceRunner):
         return response.tobytes()
 
 
-class EndpointRunner(InferenceRunner):
+class TurnTakingRunner(InferenceRunner):
     """Smart Turn's layout: every assessed window ends its turn."""
 
     INFERENCE_METHOD = "alphaavatar.router.turn_taking.smart_turn_v3"
@@ -111,7 +111,7 @@ class EndpointRunner(InferenceRunner):
         return np.asarray([1.0], dtype=np.float32).tobytes()
 
 
-class CachedModelRunner(EndpointRunner):
+class CachedModelRunner(TurnTakingRunner):
     """Smart Turn's layout, its weights a file in the configured model cache: loaded when it
     is there, fetched into it when it is not, as start fetches a missing model, unless this
     machine switches downloads off; with ``refetch``, fetched again over the one there. Each
@@ -137,7 +137,7 @@ class CachedModelRunner(EndpointRunner):
             log.write(f"{fetched}\n")
 
 
-class MissingFileRunner(EndpointRunner):
+class MissingFileRunner(TurnTakingRunner):
     """Smart Turn's layout, reading a file its own settings name, which is not there: a missing
     file that no model download would bring."""
 

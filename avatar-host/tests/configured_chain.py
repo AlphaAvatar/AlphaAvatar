@@ -17,7 +17,7 @@ The configuration is loaded and the session assembled as start assembles it: the
 its own factory, which gives turn taking the segment STT's fallback notice, the segment STT
 itself, Context, Loop and Engine, at their default deadlines. Stand-ins: the transcription
 service (a loopback endpoint that answers each request after its delay), the VAD (speech
-published as Audio Activity publishes it), the turn-taking endpoint model, the model provider
+published as Audio Activity publishes it), the turn-taking model, the model provider
 (it records each request), the TTS (silence, at real time) and Memory and Persona (empty).
 """
 
@@ -38,7 +38,7 @@ import doctor_doubles as doubles
 import pytest
 
 from alphaavatar.agents.avatar.provider.schemas import ModelInputMessage, ModelTextPart
-from alphaavatar.agents.router.enums import TurnTakingMode
+from alphaavatar.agents.router.enums import AssessmentLabel, TurnTakingMode
 from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
 from alphaavatar.agents.router.schemas import TurnTakingAssessment, TurnTakingEvidence
 from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
@@ -91,15 +91,15 @@ class Transcriber:
         writer.close()
 
 
-class EndpointModel(TurnTakingModelBase):
-    """Each complete input ends its turn, but one whose last segment ``continues``."""
+class TurnTakingModel(TurnTakingModelBase):
+    """Each complete input's speech is complete, but one's whose last segment ``continues``."""
 
     def __init__(self, continues: frozenset[str] = frozenset()) -> None:
         self.continues = continues
 
     @property
     def name(self) -> str:
-        return "endpoint stand-in"
+        return "turn-taking stand-in"
 
     @property
     def capabilities(self) -> TurnTakingModelCapabilities:
@@ -113,7 +113,9 @@ class EndpointModel(TurnTakingModelBase):
             revision=evidence.revision,
             turn_mode=evidence.turn_mode,
             confidence=1.0,
-            end_of_turn_probability=float(evidence.segments[-1].segment_id not in self.continues),
+            speech_completion=AssessmentLabel.NEGATIVE
+            if evidence.segments[-1].segment_id in self.continues
+            else AssessmentLabel.POSITIVE,
         )
 
 
@@ -239,7 +241,7 @@ async def configured_chain(
     continues: frozenset[str] = frozenset(),
 ) -> AsyncIterator[Chain]:
     """The configured session, started: its transcription service ``answers`` request by
-    request, its endpoint model holds the segments it ``continues``."""
+    request, its turn-taking model holds the segments it ``continues``."""
     server = await asyncio.start_server(Transcriber(*answers), "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     owned_endpoints.add(("127.0.0.1", port))
@@ -256,7 +258,7 @@ async def configured_chain(
     monkeypatch.setattr(
         turn_taking,
         "create_turn_taking_model",
-        lambda name, inference_executor: EndpointModel(continues),
+        lambda config, inference_executor: TurnTakingModel(continues),
     )
     path = tmp_path / "avatar.json"
     path.write_text(

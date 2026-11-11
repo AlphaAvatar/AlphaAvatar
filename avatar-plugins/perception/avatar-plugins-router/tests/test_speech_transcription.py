@@ -34,7 +34,7 @@ from alphaavatar.agents.avatar.voice import (
     TranscriptionEventType,
 )
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
-from alphaavatar.agents.router.enums import TurnTakingAction, TurnTakingMode
+from alphaavatar.agents.router.enums import AssessmentLabel, TurnTakingAction, TurnTakingMode
 from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
 from alphaavatar.agents.router.schemas import (
     TurnTakingAssessment,
@@ -50,6 +50,7 @@ from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceR
 from alphaavatar.core.media import AudioFrame, AudioFramePayload
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnNotice
 from alphaavatar.plugins.router.processors.speech import SpeechTranscriptionProcessor
 from alphaavatar.plugins.router.processors.turn_taking import processor as turn_taking
 from alphaavatar.plugins.router.processors.turn_taking.config import TurnTakingConfig
@@ -138,19 +139,25 @@ class OfflineSTT(STTBase):
         return self.streams[-1]
 
 
-class EndpointModel(TurnTakingModelBase):
-    """Offline endpoint detector: every complete, transcribed input ends its turn, with
-    ``end`` as its probability; or it ``fails``, or assesses without the ``transcript``. Asked
-    what it can do, it holds the loop ``lag`` seconds: an assessment that starts late."""
+class TurnTakingModel(TurnTakingModelBase):
+    """Offline turn-taking model: every complete, transcribed input's speech is judged
+    ``completion``; or it ``fails``, or assesses without the ``transcript``. Asked what it can
+    do, it holds the loop ``lag`` seconds: an assessment that starts late."""
 
     def __init__(
-        self, end: float = 1.0, *, fails: bool = False, transcript: bool = True, lag: float = 0.0
+        self,
+        completion: AssessmentLabel = AssessmentLabel.POSITIVE,
+        *,
+        fails: bool = False,
+        transcript: bool = True,
+        lag: float = 0.0,
     ) -> None:
-        self.end, self.fails, self.transcript, self.lag = end, fails, transcript, lag
+        self.completion, self.fails, self.transcript = completion, fails, transcript
+        self.lag = lag
 
     @property
     def name(self) -> str:
-        return "offline_endpoint"
+        return "offline_turn_taking"
 
     @property
     def capabilities(self) -> TurnTakingModelCapabilities:
@@ -161,13 +168,13 @@ class EndpointModel(TurnTakingModelBase):
 
     async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
         if self.fails:
-            raise RuntimeError("the endpoint model failed")
+            raise RuntimeError("the turn-taking model failed")
         return TurnTakingAssessment(
             input_id=evidence.input_id,
             revision=evidence.revision,
             turn_mode=evidence.turn_mode,
             confidence=1.0,
-            end_of_turn_probability=self.end,
+            speech_completion=self.completion,
         )
 
 
@@ -232,12 +239,12 @@ class Listening:
 async def listening(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[Listening]:
-    """The chain; ``request.param`` may name its endpoint ``model`` (every complete input
-    ends its turn), turn taking's ``settings`` and the ``addressing`` it requires."""
+    """The chain; ``request.param`` may name its speech completion ``model`` (every complete
+    input's speech complete), turn taking's ``settings`` and the ``addressing`` it requires."""
     param = getattr(request, "param", {})
-    model = param.get("model", EndpointModel())
+    model = param.get("model", TurnTakingModel())
     monkeypatch.setattr(
-        turn_taking, "create_turn_taking_model", lambda name, inference_executor: model
+        turn_taking, "create_turn_taking_model", lambda config, inference_executor: model
     )
     runtime, stt = avatar_runtime(tmp_path / "workspace"), OfflineSTT()
     transcription = SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1)
@@ -432,7 +439,8 @@ async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_sta
     assert actions.count(TurnTakingAction.CANCEL) == 1
 
 
-SPAN, LAG = 0.2, 0.05  # A hold or addressing wait short enough for a test; a late start
+SPAN, LAG = 0.2, 0.05  # An uncertainty's wait short enough for a test; a late start
+UNKNOWN = AssessmentLabel.UNKNOWN
 
 
 def terminal(listening: Listening) -> dict:
@@ -443,36 +451,45 @@ def terminal(listening: Listening) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("listening", "stage", "reason"),
+    ("listening", "assessed_outcome", "uncertain"),
     [
         (
-            {"model": EndpointModel(0.0, lag=LAG), "settings": {"max_hold_sec": SPAN}},
-            "input.hold",
-            "turn_hold_timeout",
-        ),
-        (
-            {"model": EndpointModel(fails=True, lag=LAG), "settings": {"max_hold_sec": SPAN}},
-            "input.hold",
-            "assessment_error_timeout",
+            {
+                "model": TurnTakingModel(UNKNOWN, lag=LAG),
+                "settings": {"speech_completion_wait_sec": SPAN},
+            },
+            "done",
+            "router.speech_completion_uncertain",
         ),
         (
             {
-                "model": EndpointModel(lag=LAG),
+                "model": TurnTakingModel(fails=True, lag=LAG),
+                "settings": {"speech_completion_wait_sec": SPAN},
+            },
+            "failed",
+            "router.speech_completion_uncertain",
+        ),
+        (
+            {
+                "model": TurnTakingModel(lag=LAG),
                 "addressing": ("semantic",),
                 "settings": {"addressing_wait_sec": SPAN},
             },
-            "input.addressing_wait",
-            None,
+            "done",
+            "router.addressing_uncertain",
         ),
     ],
     indirect=["listening"],
     ids=["hold", "assessment-failed", "addressing"],
 )
 async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_as_a_span(
-    listening: Listening, stage: str, reason: str | None
+    listening: Listening, assessed_outcome: str, uncertain: str
 ) -> None:
-    # O-16: the endpoint model's assessment, queued when the transcript came, then the hold
-    # or addressing wait it led to, each with its span, all before the decision.
+    # O-16: the speech completion assessment, queued when the transcript came, then the wait
+    # its uncertainty led to, each with its span, all before the decision that says so.
+    # Completion's wait counts from the input's first wait, for its words; addressing's from
+    # the hold it led to.
+    stage = "input.hold"
     listening.utter(listening.speech(), "segment-a")
     await wait_until(lambda: listening.stt.streams, "the source never opened")
     (stream,) = listening.stt.streams
@@ -490,15 +507,23 @@ async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_a
     assert accepted["recorded_time_ns"] <= assessed["event_time_ns"]
     assert assessed["start_time_ns"] - assessed["event_time_ns"] >= LAG * 1e9
     assert assessed["end_time_ns"] <= waited["start_time_ns"]
-    assert waited["end_time_ns"] - waited["start_time_ns"] >= SPAN * 1e9
+    first = next(r for r in listening.records("input.decision") if r["action"] == "hold")
+    since = (
+        waited["start_time_ns"]
+        if uncertain == "router.addressing_uncertain"
+        else first["recorded_time_ns"]
+    )
+    assert waited["end_time_ns"] - since >= SPAN * 1e9
     assert waited["end_time_ns"] <= terminal(listening)["recorded_time_ns"]
-    assert assessed["outcome"] == ("failed" if reason == "assessment_error_timeout" else "done")
-    assert (waited["outcome"], waited.get("reason")) == ("done", reason)
+    assert assessed["outcome"] == assessed_outcome
+    assert (waited["outcome"], waited.get("reason")) == ("done", "awaiting_uncertain_decision")
+    (_, commit), *_ = [item for item in listening.decisions() if item[1].action == "commit"]
+    assert commit.system_notices == (TurnNotice(uncertain),)
 
 
 @pytest.mark.parametrize(
     "listening",
-    [{"model": EndpointModel(0.0, transcript=False), "settings": {"max_hold_sec": HANG_GUARD}}],
+    [{"model": TurnTakingModel(UNKNOWN), "settings": {"speech_completion_wait_sec": HANG_GUARD}}],
     indirect=True,
 )
 async def test_a_hold_its_speaker_ends_by_speaking_on_is_traced_as_cancelled(
@@ -506,14 +531,17 @@ async def test_a_hold_its_speaker_ends_by_speaking_on_is_traced_as_cancelled(
 ) -> None:
     source = listening.speech()
     listening.utter(source, "segment-a")
+    await wait_until(lambda: listening.stt.streams, "the source never opened")
+    (stream,) = listening.stt.streams
+    stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "words")  # Then it holds.
     await wait_until(
-        lambda: any(d.reason == "endpoint_incomplete" for _, d in listening.decisions()),
+        lambda: any(d.reason == "speech_completion_unknown" for _, d in listening.decisions()),
         "the input never held",
     )
     listening.frame(source, "segment-b", 1)  # The speaker goes on.
     await wait_until(lambda: listening.records("input.hold"), "the hold never ended")
     (hold,) = listening.records("input.hold")
-    assert (hold["outcome"], hold["reason"]) == ("cancelled", "turn_hold_timeout")
+    assert (hold["outcome"], hold["reason"]) == ("cancelled", "awaiting_uncertain_decision")
     assert hold["end_time_ns"] - hold["start_time_ns"] < HANG_GUARD * 1e9
 
 

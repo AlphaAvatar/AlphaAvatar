@@ -418,8 +418,8 @@ class TurnTakingCoordinator:
         return self._policy.decide(
             evidence=evidence,
             assessment=assessment,
-            completion_expired=window.completion_deadline is not None
-            and now >= window.completion_deadline,
+            speech_completion_expired=window.speech_completion_deadline is not None
+            and now >= window.speech_completion_deadline,
             addressing_expired=window.addressing_deadline is not None
             and now >= window.addressing_deadline,
         )
@@ -430,9 +430,9 @@ class TurnTakingCoordinator:
         now = asyncio.get_running_loop().time()
         deadlines = []
         if assessment.speech_completion == AssessmentLabel.UNKNOWN:
-            if window.completion_deadline is None:
-                window.completion_deadline = now + self._config.completion_wait_sec
-            deadlines.append(window.completion_deadline)
+            if window.speech_completion_deadline is None:
+                window.speech_completion_deadline = now + self._config.speech_completion_wait_sec
+            deadlines.append(window.speech_completion_deadline)
 
         if assessment.addressing == AssessmentLabel.UNKNOWN:
             if window.addressing_deadline is None:
@@ -478,9 +478,9 @@ class TurnTakingCoordinator:
                 else AssessmentLabel.POSITIVE,
             )
         elif self._model.capabilities.uses_transcript and window.pending_transcripts:
-            if window.completion_deadline is None:
-                window.completion_deadline = (
-                    asyncio.get_running_loop().time() + self._config.completion_wait_sec
+            if window.speech_completion_deadline is None:
+                window.speech_completion_deadline = (
+                    asyncio.get_running_loop().time() + self._config.speech_completion_wait_sec
                 )
             self._wait_transcript(window, None, "awaiting_transcript_for_assessment")
             return
@@ -514,10 +514,10 @@ class TurnTakingCoordinator:
         self._trace("input.speech_completion", window, state=assessment.speech_completion.value)
         if (
             assessment.speech_completion == AssessmentLabel.UNKNOWN
-            and window.completion_deadline is None
+            and window.speech_completion_deadline is None
         ):
-            window.completion_deadline = (
-                asyncio.get_running_loop().time() + self._config.completion_wait_sec
+            window.speech_completion_deadline = (
+                asyncio.get_running_loop().time() + self._config.speech_completion_wait_sec
             )
 
         result = self._decision(window, evidence, assessment)

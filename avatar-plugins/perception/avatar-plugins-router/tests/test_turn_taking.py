@@ -31,6 +31,7 @@ from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
+    AssessmentLabel,
     InteractionEntityKind,
     TurnTakingAction,
     TurnTakingMode,
@@ -58,6 +59,7 @@ from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnNotice
 from alphaavatar.plugins.router.processors.turn_taking.assessment import AssessmentWork
 from alphaavatar.plugins.router.processors.turn_taking.config import TurnTakingConfig
 from alphaavatar.plugins.router.processors.turn_taking.coordinator import TurnTakingCoordinator
@@ -98,7 +100,8 @@ async def wait_until(condition: Callable[[], object], failure: str) -> None:
 
 
 class Model(TurnTakingModelBase):
-    """Offline endpoint model: an input ends its turn unless its last segment ``continues``.
+    """Offline turn-taking model: an input's speech is complete unless its last segment
+    ``continues``, a clear judgment either way.
     With ``transcript`` it assesses the words, as a text model would; without, the sound alone,
     as Smart Turn does. Each assessment waits for ``gate``; a ``stubborn`` one answers even when
     cancelled, as a model that cannot stop would."""
@@ -113,7 +116,7 @@ class Model(TurnTakingModelBase):
 
     @property
     def name(self) -> str:
-        return "offline_endpoint"
+        return "offline_turn_taking"
 
     @property
     def capabilities(self) -> TurnTakingModelCapabilities:
@@ -128,12 +131,14 @@ class Model(TurnTakingModelBase):
         except asyncio.CancelledError:
             if not self.stubborn:
                 raise
+        complete = evidence.segments[-1].segment_id not in self.continues
         return TurnTakingAssessment(
             input_id=evidence.input_id,
             revision=evidence.revision,
             turn_mode=evidence.turn_mode,
             confidence=1.0,
-            end_of_turn_probability=float(evidence.segments[-1].segment_id not in self.continues),
+            speech_completion=AssessmentLabel.POSITIVE if complete else AssessmentLabel.NEGATIVE,
+            speech_completion_probability=float(complete),
         )
 
 
@@ -222,6 +227,7 @@ class Inputs:
             addressees=(InteractionEntityRef(kind=InteractionEntityKind.AVATAR),),
             addressing_mode=AddressingMode.DIRECT,
             confidence=0.98,
+            label=AssessmentLabel.POSITIVE,
         )
         annotation = evidence.to_annotation(
             source=SEMANTIC, observation_id=transcript.observation_id
@@ -295,7 +301,9 @@ async def inputs(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterato
         model=model,
         policy=TurnTakingPolicy(),
         fusion=AddressingFusion(),
-        config=TurnTakingConfig(**{"max_hold_sec": HANG_GUARD} | param.get("settings", {})),
+        config=TurnTakingConfig(
+            **{"speech_completion_wait_sec": HANG_GUARD} | param.get("settings", {})
+        ),
         transcript_timeout_notice_code=NOTICE,
     )
     yield Inputs(runtime, model, coordinator, runtime.perception.next_source(SPEECH))
@@ -315,13 +323,13 @@ async def test_a_held_input_goes_on_across_segments_whoever_they_name(
 ) -> None:
     inputs.say("segment-a", first)
     inputs.final("segment-a", "What is two plus")
-    await wait_until(lambda: inputs.decisions(HOLD, "endpoint_incomplete"), "it never held")
+    await wait_until(lambda: inputs.decisions(HOLD, "speech_incomplete"), "it never held")
     inputs.say("segment-b", second)
     inputs.final("segment-b", "three?")
     await wait_until(lambda: inputs.decisions(COMMIT), "the input never committed")
 
     # One input: speaker labels are its actors, never a boundary of it.
-    (hold,) = inputs.decisions(HOLD, "endpoint_incomplete")
+    (hold,) = inputs.decisions(HOLD, "speech_incomplete")
     (commit,) = inputs.decisions(COMMIT)
     assert commit.input_id == hold.input_id and commit.revision > hold.revision
     assert inputs.texts(commit) == ["What is two plus", "three?"]
@@ -333,7 +341,7 @@ async def test_a_held_input_goes_on_across_segments_whoever_they_name(
 async def test_an_input_sealed_for_its_words_leaves_the_next_one_heard_and_decided(
     inputs: Inputs, acknowledged: bool
 ) -> None:
-    # The endpoint is decided on the sound; the words are still due when the next input begins.
+    # Speech completion is decided on the sound; the words are still due when the next input begins.
     inputs.say("segment-a")
     waiting = "awaiting_transcript_for_commit"
     await wait_until(lambda: inputs.decisions(HOLD, waiting), "the first input never sealed")
@@ -386,7 +394,15 @@ async def test_an_assessment_answering_after_its_cancellation_decides_nothing(
 
 @pytest.mark.parametrize(
     "inputs",
-    [{"settings": {"transcript_wait_sec": 0.05, "transcript_timeout_sec": 0.2}}],
+    [
+        {
+            "settings": {
+                "transcript_wait_sec": 0.05,
+                "transcript_timeout_sec": 0.2,
+                "speech_completion_wait_sec": 0.05,
+            }
+        }
+    ],
     indirect=True,
 )
 async def test_a_final_handled_past_its_deadline_is_late_though_the_deadline_timer_never_ran(
@@ -399,9 +415,13 @@ async def test_a_final_handled_past_its_deadline_is_late_though_the_deadline_tim
     inputs.final("segment-a", "Too late.")
     await wait_until(lambda: inputs.decisions(COMMIT), "the untranscribed input never ended")
 
-    # It is the notice's Turn: the words came after the deadline, whatever ran first.
+    # It is the notice's Turn: the words came after the deadline, whatever ran first. Without
+    # them the text model cannot judge completion, which its own wait then settles, said too.
     (commit,) = inputs.decisions(COMMIT)
-    assert (commit.reason, commit.system_notice_code) == ("transcript_timeout", NOTICE)
+    assert (commit.reason, commit.system_notices) == (
+        "transcript_timeout",
+        (TurnNotice("router.speech_completion_uncertain"), TurnNotice(NOTICE, ("segment-a",))),
+    )
     assert inputs.texts(commit) == []
     assert not [r for r in inputs.records("input.transcript") if r["state"] == "final"]
 
@@ -425,7 +445,7 @@ async def test_speech_joining_a_waiting_input_keeps_its_own_transcript_budget(
 
     (commit,) = inputs.decisions(COMMIT)
     assert inputs.texts(commit) == ["three?"]
-    assert (commit.system_notice_code, commit.system_notice_segment_ids) == (NOTICE, ("segment-a",))
+    assert commit.system_notices == (TurnNotice(NOTICE, ("segment-a",)),)
 
 
 @pytest.mark.parametrize(
@@ -535,32 +555,41 @@ async def test_smart_turn_hears_each_sound_once_however_often_its_input_is_reass
     runtime, inference = avatar_runtime(tmp_path / "workspace"), Inference()
     coordinator = TurnTakingCoordinator(
         runtime=runtime,
-        model=SmartTurnV3Model(inference_executor=inference),
+        model=SmartTurnV3Model(
+            inference_executor=inference, incomplete_threshold=0.3, complete_threshold=0.7
+        ),
         policy=TurnTakingPolicy(),
         fusion=AddressingFusion(),
-        config=TurnTakingConfig(max_hold_sec=HANG_GUARD, addressing_wait_sec=HANG_GUARD),
+        config=TurnTakingConfig(
+            speech_completion_wait_sec=HANG_GUARD, addressing_wait_sec=HANG_GUARD
+        ),
         required_addressing_sources=(SEMANTIC,),
     )
     inputs = Inputs(runtime, None, coordinator, runtime.perception.next_source(SPEECH))
     tone = np.full(16_000, 1000, dtype="<i2").tobytes()
-    speech = (("segment-a", "What is two", tone), ("segment-b", "plus three?", tone[::-1]))
 
-    def held(reason: str, count: int) -> Callable[[], bool]:
+    def held(reason: str, count: int = 1) -> Callable[[], bool]:
         return lambda: len(inputs.decisions(HOLD, reason)) >= count
 
-    for index, (segment_id, text, pcm) in enumerate(speech):
-        inputs.say(segment_id, pcm=pcm)  # Heard: it waits for its addressing.
-        await wait_until(held("awaiting_addressing", 2 * index + 1), "it was never assessed")
-        inputs.final(segment_id, text)  # Its words: assessed again, its sound unchanged.
-        await wait_until(held("awaiting_addressing", 2 * index + 2), "never reassessed")
-        inputs.addressed(segment_id)  # Its addressing: decided, on that same sound.
-        if index == 0:
-            await wait_until(held("smart_turn_v3.2", 1), "the first segment never held")
+    # The first sound is incomplete: held on it again as its words and addressing arrive.
+    inputs.say("segment-a", pcm=tone)
+    await wait_until(held("speech_incomplete"), "it was never assessed")
+    inputs.final("segment-a", "What is two")
+    await wait_until(held("speech_incomplete", 2), "its words never reassessed it")
+    inputs.addressed("segment-a")
+    await wait_until(held("speech_incomplete", 3), "its addressing never reassessed it")
+    # The next sound completes it: decided once its words, then their addressing, are in.
+    inputs.say("segment-b", pcm=tone[::-1])
+    await wait_until(held("awaiting_transcript_for_addressing"), "it never waited for words")
+    inputs.final("segment-b", "plus three?")
+    await wait_until(held("addressing_unknown"), "it never waited for its addressing")
+    inputs.addressed("segment-b")
     await wait_until(lambda: inputs.decisions(COMMIT), "the input never committed")
 
     assessed = inputs.records("input.assessment")
     assert len(inference.heard) == 2 and len(assessed) >= 5
     (commit,) = inputs.decisions(COMMIT)
+    assert (commit.reason, commit.system_notices) == ("speech_complete", ())
     assert inputs.texts(commit) == ["What is two", "plus three?"]
     assert commit.revision == max(r["revision"] for r in assessed)
     await coordinator.reset()

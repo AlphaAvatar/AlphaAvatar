@@ -94,7 +94,7 @@ router.init_config.addressing.visual    -> VisualAddressingConfig
 router.init_config.turn_taking          -> TurnTakingConfig
 ```
 
-Addressing owns observation/model settings. Turn Taking owns evidence fusion, coordination, interruption and deadlines. `addressing_wait_sec`, `transcript_wait_sec`, `unsegmented_alignment_sec`, `max_hold_sec` and `fusion` belong directly to turn_taking, not its policy subtree.
+Addressing owns observation/model settings. Turn Taking owns evidence fusion, coordination, interruption and deadlines. `addressing_wait_sec`, `transcript_wait_sec`, `unsegmented_alignment_sec`, `speech_completion_wait_sec` and `fusion` belong directly to turn_taking, not its policy subtree.
 
 `interruption.enabled` controls supported Turn interruption; `interruption.audio_only_speech_start` additionally selects immediate audio-only speech-start interruption. There is no parallel `voice.allow_interruptions` switch.
 

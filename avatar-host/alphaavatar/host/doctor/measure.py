@@ -1156,7 +1156,7 @@ class _Turn:
             (
                 "speech_completion_assessment",
                 ("input.assessment",),
-                "the speech completion model's assessments",
+                "the turn-taking model's assessments",
             ),
             ("decision_holds", ("input.hold", "input.addressing_wait"), "timed waits"),
         ):
@@ -1194,7 +1194,7 @@ class _Turn:
                 "assessment_queue",
                 ("assessment queued", last.get("event_time_ns")),
                 ("assessment started", last.get("start_time_ns")),
-                "the speech completion model's last assessment before the Turn's commit",
+                "the turn-taking model's last assessment before the Turn's commit",
                 "not measured: no assessment before the Turn's commit, or its router traces none",
             ),
             *figures,

@@ -213,7 +213,7 @@ Router owns the streams and jobs that borrow those components.
 | TTS provider implementations | [voice/tts/](avatar-plugins/foundation/avatar-plugins-voice/alphaavatar/plugins/voice/tts/). |
 | Audio activity and segment publication | [router/audio_activity/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/audio_activity/). |
 | Transcription consumption | [router/speech/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/speech/). |
-| Turn endpoint evaluation | [router/turn_taking/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/). |
+| Speech completion assessment | [router/turn_taking/](avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/). |
 
 - Publish normalized audio once and let independent consumers derive results.
 - A VAD segment boundary is not automatically a conversational Turn boundary.
@@ -242,7 +242,7 @@ Persona supplies speaker/identity evidence; turn-taking does not identify people
 | `InputWindow` | Input membership, active/closed segments, transcripts and revision. |
 | `TurnEvidenceBuilder` | Build model evidence from the input and retained temporal context. |
 | `TurnAddressing` / `AddressingFusion` | Match and combine addressing evidence. |
-| Turn-taking model | Estimate endpoint/interaction evidence through its declared capabilities. |
+| Turn-taking model | Estimate speech completion/interaction evidence through its declared capabilities. |
 | `TurnTakingPolicy` | Produce actions from evidence and assessment. |
 | `AssessmentWork` | Replace, cancel, trace and reap asynchronous assessment workers. |
 | `AvatarEngine` | Validate the proposed action/input and admit an actual Turn. |
@@ -251,9 +251,9 @@ Implementation: [turn_taking/](avatar-plugins/perception/avatar-plugins-router/a
 Public contracts: [agents/router/](avatar-agents/alphaavatar/agents/router/).
 
 - `input_id` identifies the proposed temporal input; `revision` detects stale assessment.
-- Speaker/entity labels do not split endpoint audio into independent person candidates.
-- An endpoint HOLD keeps the current input open for subsequent speech and reassessment.
-- Once an endpoint is decided, an input may be sealed while its STT results are pending.
+- Speaker/entity labels do not split the audio assessed for speech completion into independent person candidates.
+- A HOLD for incomplete or uncertain speech keeps the current input open for subsequent speech and reassessment.
+- Once speech completion is decided, an input may be sealed while its STT results are pending.
 - Sealed input membership stays fixed while the next input can continue arriving.
 - Pending records serve transcript/admission lifecycle; they are not a speaker registry.
 - Transcript wait has an observation point and a fixed hard deadline; reassessment must not extend it.
@@ -562,7 +562,7 @@ Doctor may download models or call remote providers when authorized/configured.
 Do not run paid experiments as an incidental consequence of import or documentation checks.
 Separate offline stubs, actual model inference, remote endpoints, RTC and renderer validation.
 Record sample/configuration identity, failures and warm/first-run conditions when reporting timings.
-Do not claim endpoint correctness from a small latency-only sample.
+Do not claim speech completion correctness from a small latency-only sample.
 
 Workflow entry points: [.github/workflows/](.github/workflows/),
 [packaging/linux/](packaging/linux/) and [scripts/maintenance/](scripts/maintenance/).

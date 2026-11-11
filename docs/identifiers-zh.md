@@ -1,6 +1,6 @@
 # AlphaAvatar 标识与关联约定
 
-本文按标识的应用功能说明其含义、所有者、唯一性范围、生命周期和初始化入口。内容对应当前时序输入窗口实现：Turn-taking 消费感知观测与标注并提出动作，Engine 接纳输入，Core 提交 Turn；人物识别与身份接受不由 Turn-taking 承担。
+本文按标识的应用功能说明其含义、所有者、唯一性范围、生命周期和初始化入口。内容对应当前时序输入窗口实现：轮次判断消费感知观测与标注并提出动作，Engine 接纳输入，Core 提交 Turn；人物识别与身份接受不由轮次判断承担。
 
 同名字段必须结合所属类型解释。唯一性范围不是访问权限；知道一个 ID 不代表可以读取它指向的用户资料。表中的初始化入口同时区分自动生成、调用方提供、复用已有引用和供应商映射。
 
@@ -74,7 +74,7 @@
 
 - 多人时序窗口保留逐段实际 actors；未知语音不回退到设备或 primary，单段证据冲突只使该段保持未知。
 - Persona 先通过 `project_turn(snapshot)` 投影 actors 的当前接受身份；任一 actor 匿名、未绑定／无法取得有效身份，或包含不同用户时，不向该 Turn 提供私有 Persona。同一已接受用户的多个参与者可使用对应资料；后台资料加载与该 Turn 的私有内容准入分别处理。Memory 另按其 identity/scope 规则控制读取。
-- 人物识别、关联与属性推理由 Persona 等处理器完成。Turn-taking 消费标注，不绑定用户，不因同一窗口含不同 entity 而使语音段无效。
+- 人物识别、关联与属性推理由 Persona 等处理器完成。轮次判断消费标注，不绑定用户，不因同一窗口含不同 entity 而使语音段无效。
 - 身份变化后的资料加载不能覆盖新身份。已冻结的模型输入和历史保持不变；运行中的身份检查及输出投递保护按既有执行契约处理。
 
 ## 4. 媒体关联：沿来源、片段和观测追溯输入
@@ -129,24 +129,24 @@
 | Router `input_id` | 一次时序输入窗口的稳定身份，也是 Engine 接纳输入的幂等键。 | 同一窗口修订保留 ID；可跨多个 segment、包含多个 entity；取消或拒绝的输入不一定产生 Turn。 | [InputWindow](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/schemas/state.py) 默认生成 UUID，由 `TurnTakingCoordinator._window_for()` 创建。 |
 | 直接输入 `input_id` | 文字／图片直接接纳入口的幂等键，不重新生成一份身份。 | 对应一次明确的直接输入；与 Router 窗口共用接纳协议。 | [AvatarEngine._admit_input()](../avatar-agents/alphaavatar/agents/avatar/engine.py) 复用该输入的 `observation_id`。 |
 | `revision` | 同一输入证据的修订版本，由输入窗口维护，随 evidence／assessment／decision 传递。 | 只在所属 `input_id` 内比较；用于丢弃异步返回的旧评估，不表示身份版本。 | `InputWindow` 从 `0` 开始；接收语音段、终稿、有效标注或上下文变化时递增，构造模型证据前已有有效版本。 |
-| `input_observation_ids` | 一次决定／Turn 明确拥有的输入观测引用集合。 | 固定实际提交成员，不等于端点模型看到的全部背景音频，也不等于 cutoff 范围内全部事件。 | [TurnEvidenceBuilder.build()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/evidence.py) 收集，Policy 写入决定，Engine 逐项核验并传入 `TurnRuntime`。 |
-| `system_notice_segment_ids` | 需要标记缺失转录的原语音段引用，沿用已有 segment ID。 | 属于同一决定拥有的语音输入；不生成新的故障语音段。 | 转录期限或不可用结算时，由 [TurnTakingCoordinator._notice()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/coordinator.py) 从完整片段引用投影。 |
+| `input_observation_ids` | 一次决定／Turn 明确拥有的输入观测引用集合。 | 固定实际提交成员，不等于轮次判断模型看到的全部背景音频，也不等于 cutoff 范围内全部事件。 | [TurnEvidenceBuilder.build()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/evidence.py) 收集，Policy 写入决定，Engine 逐项核验并传入 `TurnRuntime`。 |
+| `system_notices[].segment_ids` | 一条 [TurnNotice](../avatar-core/alphaavatar/core/turn/schemas/notice.py) 所针对的原语音段引用，沿用已有 segment ID；缺失转录的通知按代码列出受影响的段，不针对语音段的通知（如 `router.speech_completion_uncertain`）为空。 | 属于同一决定拥有的语音输入；不生成新的故障语音段。一个 Turn 最多 8 条不同通知，重复的合并。 | 转录期限或不可用结算时，由 [TurnTakingCoordinator._notice()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/coordinator.py) 按通知代码分组投影。 |
 | `turn_id` | Core 真正提交后生成的 Turn 标识，对应固定输入、cutoff 和 actors 快照。 | 一个已提交 Turn；同一输入 ID 在保留的快照范围内重复接纳会返回既有快照。 | [TurnRuntime.commit_input() / commit_event_input()](../avatar-core/alphaavatar/core/turn/runtime.py) 生成 UUID。 |
-| Turn-taking 诊断 `decision_id` | `input.decision` / `turn.admission` 中指向本次决定标注的关联引用。 | 对应一条决定的 `EnvAnnotation.annotation_id`；不同于第 8 节的展示决定 ID。 | 决定通过 `TurnTakingDecision.to_annotation()` 创建标注，发布及准入 trace 复用其 `annotation_id`。 |
+| 轮次判断诊断 `decision_id` | `input.decision` / `turn.admission` 中指向本次决定标注的关联引用。 | 对应一条决定的 `EnvAnnotation.annotation_id`；不同于第 8 节的展示决定 ID。 | 决定通过 `TurnTakingDecision.to_annotation()` 创建标注，发布及准入 trace 复用其 `annotation_id`。 |
 | `decision_event_id / decision_event_sequence` | Turn metadata 中指向决定感知事件的引用和全局顺序。 | 固定到本次准入使用的决定事件，不另外创建事件。 | [AvatarEngine._admit_decision()](../avatar-agents/alphaavatar/agents/avatar/engine.py) 复制该 `PerceptionEvent` 的 ID 和 sequence。 |
 
 - `segment_id` 标识一段 VAD 输入，`input_id` 标识待决策输入，`turn_id` 标识已提交快照。三者的对象和生命周期不同，不能互换。
-- Turn-taking 按时序消费观测和语义／视觉 addressing 标注；不按人物创建候选表，不识别人或绑定用户。
+- 轮次判断按时序消费观测和语义／视觉 addressing 标注；不按人物创建候选表，不识别人或绑定用户。
 - 语义 addressing 同样按时序窗口判断：上一次实际提交之后的全部转录按媒体时间排列，`observation_id` 用于定位、去重和标注目标，段引用用于关联，entity 只表示主体，三者都不把连续文本切成不同状态。
-- 当前未结束的窗口可跨 segment、跨 entity。有效且尚未实际确认的已封闭窗口，其音频也继续参与共享端点上下文，包括等待转录和已发布 COMMIT 尚待确认两种状态；实际拥有的输入引用仍各属原窗口。模型按支持的时间长度裁剪音频；不同人物出现在上下文中不意味着同人，也不会被强制归给一个 actor。
+- 当前未结束的窗口可跨 segment、跨 entity。有效且尚未实际确认的已封闭窗口，其音频也继续进入轮次判断模型共享的音频上下文，包括等待转录和已发布 COMMIT 尚待确认两种状态；实际拥有的输入引用仍各属原窗口。模型按支持的时间长度裁剪音频；不同人物出现在上下文中不意味着同人，也不会被强制归给一个 actor。
 - 带身份、来源、接入状态的准入核验在相应权威入口执行。决定过期、来源取消／换代或证据丢失时，Engine 可以拒绝提出的 COMMIT。
 
 ### 6.1 提出决定、封闭输入与实际提交
 
-- HOLD 保留当前输入，后续语音继续参与端点判断。端点已确定但 STT 未齐时，可固定该次输入成员并保存原决定，继续接收新的输入。
+- HOLD 保留当前输入，后续语音继续参与轮次判断。轮次判断已确定但 STT 未齐时，可固定该次输入成员并保存原决定，继续接收新的输入。
 - 转录结果按完整 segment 引用返回原输入；不因后来人物识别或来源相同而改归另一个窗口。`transcript_wait_sec` 默认 0.75 秒，是等待观察点；`transcript_timeout_sec` 默认 3 秒，规定该次等待的绝对硬期限，已有期限不能由重评延长。
 - `COMMIT` 标注只是提出接纳请求。真正提交后，`TurnRuntime` 发布 `TurnSnapshot` 到已有 Turn 事件流；[TurnTakingProcessor._consume_turns()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/processor.py) 消费它作为成功确认。
-- 成功确认更新 cutoff、回收对应 `input_id`，并刷新受影响的端点上下文。其他尚未提交的输入保留；不能按当前时间或一个消费游标一并清空。
+- 成功确认更新 cutoff、回收对应 `input_id`，并刷新受影响的轮次判断模型上下文。其他尚未提交的输入保留；不能按当前时间或一个消费游标一并清空。
 - `admission_deadline_ns` 是接纳期限，不是新 ID。未获确认的已发布记录有界回收；Engine 也核验决定携带的接纳期限，避免超时后重新生效。
 
 ### 6.2 Engine 的输入标记不是人物候选或成功确认

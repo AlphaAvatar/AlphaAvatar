@@ -36,9 +36,8 @@ class SpeakerTracks:
         self._retired: list[tuple[PerceptionSourceRef, PerceptionEntityRef]] = []
 
     def resolve(
-        self, source: PerceptionSourceRef, vector: np.ndarray, now: float, *, create: bool = True
+        self, source: PerceptionSourceRef, vector: np.ndarray, now: float
     ) -> PerceptionEntityRef | None:
-        """The track the vector matches, else a new one when ``create`` allows it."""
         for current, tracks in tuple(self._tracks.items()):
             if (
                 current.source_id == source.source_id
@@ -66,14 +65,15 @@ class SpeakerTracks:
             reverse=True,
         )
         if ranked and ranked[0][0] >= self.threshold:
-            if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < self.margin:
+            # Within the margin of the next track, a tie included, it is neither's.
+            if len(ranked) > 1 and ranked[0][0] - ranked[1][0] <= self.margin:
                 return None
 
             track = tracks[ranked[0][1]]
             track.seen_at = now
             return track.entity
 
-        if not create or sum(map(len, self._tracks.values())) >= self.max_tracks:
+        if sum(map(len, self._tracks.values())) >= self.max_tracks:
             return None
 
         entity = PerceptionEntityRef(f"speaker-{uuid4().hex}")

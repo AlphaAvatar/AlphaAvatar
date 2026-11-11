@@ -63,7 +63,7 @@ FIGURES = (
     ("association_ready", "Speech closed → speaker association ready"),
     ("addressing_queue", "Semantic addressing queued → started"),
     ("addressing_inference", "Semantic addressing inference"),
-    ("assessment_queue", "Endpoint assessment queued → started"),
+    ("assessment_queue", "Speech completion assessment queued → started"),
     ("speech_completion_assessment", "Speech completion assessments, final → commit"),
     ("decision_holds", "Holds and addressing waits, final → commit"),
     ("context_ready_wait", "Context readiness wait"),

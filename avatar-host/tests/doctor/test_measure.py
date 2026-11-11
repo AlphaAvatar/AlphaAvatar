@@ -404,17 +404,19 @@ def span(at: float, stage: str, trace_sequence: int, outcome: str, **times: floa
 def test_between_the_final_and_the_commit_the_assessments_and_waits_are_figures(
     assessed: list[tuple[float, float, float, str]], values: float, note: str
 ) -> None:
-    # O-16, from the final (1500 ms) to the commit (1600): what the endpoint model ran and the
-    # router waited for in that stretch, each span its part within it alone.
+    # O-16, from the final (1500 ms) to the commit (1600): what the turn-taking model ran
+    # and the router waited for in that stretch, each span its part within it alone. The router
+    # traces each wait for an uncertain completion or addressing as a hold with that reason.
+    uncertain = {"reason": "awaiting_uncertain_decision"}
     steps = [
         span(1320, "input.assessment", 30, "done", event=1300, start=1310, end=1320),
         span(1470, "input.hold", 31, "cancelled", start=1320, end=1470),  # Before it
-        span(1510, "input.addressing_wait", 32, "cancelled", start=1450, end=1510),
+        span(1510, "input.hold", 32, "cancelled", start=1450, end=1510) | uncertain,
         *(
             span(end, "input.assessment", 33 + i, outcome, event=queued, start=begun, end=end)
             for i, (queued, begun, end, outcome) in enumerate(assessed)
         ),
-        span(1600, "input.addressing_wait", 40, "done", start=1590, end=1599.5),
+        span(1600, "input.hold", 40, "done", start=1590, end=1599.5) | uncertain,
         trace(1600, "input.decision", 41, input_id="input-1") | {"action": "commit"},
         span(1700, "input.hold", 42, "done", start=1600, end=1700),  # After it: not its
         span(1750, "input.assessment", 43, "done", event=1700, start=1710, end=1750),
@@ -423,21 +425,21 @@ def test_between_the_final_and_the_commit_the_assessments_and_waits_are_figures(
     shown = figures(result)
     queued, begun = assessed[-1][:2]
     assert shown["assessment_queue"].value == begun - queued
-    assessments = shown["endpoint_assessment"]
+    assessments = shown["speech_completion_assessment"]
     assert (assessments.value, assessments.note) == (values, note)
     held = shown["decision_holds"]
     assert (held.value, held.samples, held.values, held.note) == (
         19.5,
         2,
         (10.0, 9.5),
-        "addressing_wait",
+        "awaiting_uncertain_decision",
     )
     queued_at = [e.detail["queued_ms"] for e in result.evidence if e.stage == "input.assessment"]
     assert queued_at == [300.0, *(q - START for q, *_ in assessed), 700.0]
     # No commit decision: nothing to measure between the final and it.
     uncommitted = [r for r in steps if r["stage"] != "input.decision"]
     shown = figures(scenario(observation(trace=uncommitted)))
-    assert shown["endpoint_assessment"].value is shown["decision_holds"].value is None
+    assert shown["speech_completion_assessment"].value is shown["decision_holds"].value is None
 
 
 def test_a_retry_is_an_attempt_of_its_own_and_the_first_is_when_the_request_went_out() -> None:
