@@ -74,10 +74,6 @@ class PersonaCache(ABC):
     @abstractmethod
     def speaker_vector(self) -> np.ndarray | None: ...
 
-    @speaker_vector.setter
-    @abstractmethod
-    def speaker_vector(self, vector: np.ndarray) -> None: ...
-
     @property
     @abstractmethod
     def face_vector(self) -> np.ndarray | None: ...
@@ -85,6 +81,10 @@ class PersonaCache(ABC):
     @face_vector.setter
     @abstractmethod
     def face_vector(self, vector: np.ndarray) -> None: ...
+
+    @abstractmethod
+    def add_speaker_vector(self, vector: np.ndarray, seconds: float) -> None:
+        """Add a segment's speaker vector, weighted by the seconds of audio it is from."""
 
     @abstractmethod
     def record_profile_operations(self, operations: dict[str, list[dict[str, Any]]]) -> None: ...

@@ -18,16 +18,19 @@ import numpy as np
 
 from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 
+from ...vectors import WeightedMean
+
 
 @dataclass(slots=True)
 class SpeakerTrack:
     entity: PerceptionEntityRef
-    vector: np.ndarray
+    voice: WeightedMean
     seen_at: float
 
 
 class SpeakerTracks:
-    """Bounded acoustic associations; matching a user never selects a track."""
+    """Bounded acoustic associations; matching a user never selects a track. A track's voice is
+    every segment it took, each by the seconds its vector is from."""
 
     def __init__(self, *, threshold: float, margin: float, max_tracks: int, ttl_sec: float) -> None:
         self.threshold, self.margin = threshold, margin
@@ -36,7 +39,7 @@ class SpeakerTracks:
         self._retired: list[tuple[PerceptionSourceRef, PerceptionEntityRef]] = []
 
     def resolve(
-        self, source: PerceptionSourceRef, vector: np.ndarray, now: float
+        self, source: PerceptionSourceRef, vector: np.ndarray, seconds: float, now: float
     ) -> PerceptionEntityRef | None:
         for current, tracks in tuple(self._tracks.items()):
             if (
@@ -58,9 +61,9 @@ class SpeakerTracks:
         tracks = self._tracks.setdefault(source, [])
         ranked = sorted(
             (
-                (float(np.dot(track.vector, vector)), i)
+                (float(np.dot(track.voice.vector, vector)), i)
                 for i, track in enumerate(tracks)
-                if track.vector.shape == vector.shape
+                if track.voice.total.shape == vector.shape
             ),
             reverse=True,
         )
@@ -70,6 +73,7 @@ class SpeakerTracks:
                 return None
 
             track = tracks[ranked[0][1]]
+            track.voice.add(vector, seconds)
             track.seen_at = now
             return track.entity
 
@@ -77,7 +81,7 @@ class SpeakerTracks:
             return None
 
         entity = PerceptionEntityRef(f"speaker-{uuid4().hex}")
-        tracks.append(SpeakerTrack(entity, vector.copy(), now))
+        tracks.append(SpeakerTrack(entity, WeightedMean.of(vector, seconds), now))
         return entity
 
     def clear(self, source: PerceptionSourceRef | None = None) -> None:

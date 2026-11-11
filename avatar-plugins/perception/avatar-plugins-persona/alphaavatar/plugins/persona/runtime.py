@@ -30,6 +30,7 @@ from alphaavatar.core.turn.schemas import TurnSnapshot
 from .cache import DefaultPersonaCache
 from .storage import PersonaStore
 from .template import PersonaPluginsTemplate
+from .vectors import WeightedMean
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,19 @@ class PersonaRuntime(PersonaBase):
 
             if user_id is not None and not targets:
                 raise PermissionError(f"No writable Persona participant for user_id={user_id!r}")
+
+            # Participants of one user write one voice, all of their speech: their writes are
+            # concurrent, and whichever lands last stores the same vector.
+            voices: dict[str, WeightedMean] = {}
+            for cache in targets:
+                if (voice := cache.voice) is not None:
+                    if (current := voices.get(cache.participant.user_id)) is None:
+                        voices[cache.participant.user_id] = voice
+                    else:
+                        current.extend(voice)
+            for cache in targets:
+                if (voice := voices.get(cache.participant.user_id)) is not None:
+                    cache.voice = voice
 
             # Each write owns a pinned identity and observation copy, independent of later rebinding.
             results = await asyncio.gather(

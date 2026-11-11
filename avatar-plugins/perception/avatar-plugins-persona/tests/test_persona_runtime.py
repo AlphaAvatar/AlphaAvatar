@@ -81,18 +81,18 @@ class ScriptedProviders(ProviderService):
 
 class PersonaInference:
     """In-process stand-in for the Persona VDB runner transport: each user's stored speaker
-    template, if ``templates`` has one, and the load of a user it ``holds`` never answering."""
+    vector, if ``speaker_vectors`` has one, and the load of a user it ``holds`` never answering."""
 
     def __init__(
         self,
         save: bytes | None = b'{"user_id":"x","error":null}',
         *,
-        templates: dict[str, list[float]] | None = None,
+        speaker_vectors: dict[str, list[float]] | None = None,
         holds: Callable[[str], bool] = lambda user_id: False,
     ) -> None:
         self.saved: list[dict] = []
         self.operations: list[str] = []
-        self._save, self._templates, self._holds = save, templates or {}, holds
+        self._save, self._speaker_vectors, self._holds = save, speaker_vectors or {}, holds
 
     async def do_inference(self, method: str, data: bytes) -> bytes | None:
         assert method == VDB
@@ -102,9 +102,9 @@ class PersonaInference:
             user_id = request["param"]["user_id"]
             if self._holds(user_id):
                 await asyncio.Event().wait()
-            template = self._templates.get(user_id)
+            vector = self._speaker_vectors.get(user_id)
             return json.dumps(
-                {"details_items": [], "speaker_vector": template, "face_vector": None}
+                {"details_items": [], "speaker_vector": vector, "face_vector": None}
             ).encode()
         self.saved.append(request["param"])
         return self._save
@@ -424,8 +424,8 @@ async def test_vdb_save_failure_surfaces_instead_of_silently_succeeding(
     runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), PersonaInference(save=result))
     participant = join(runtime)
     cache = DefaultPersonaCache(participant=participant)
-    cache.set_base(UserProfile())  # Its load found no template, so the save writes the voice.
-    cache.speaker_vector = np.ones(192, dtype=np.float32)
+    cache.set_base(UserProfile())  # Its load found none stored, so the save writes the voice.
+    cache.add_speaker_vector(np.ones(192, dtype=np.float32), 3.0)
     store = PersonaStore(runtime=runtime, inference_method=VDB)
     with pytest.raises(ExceptionGroup) as failed:
         await store.save(persona=cache)
@@ -438,19 +438,19 @@ def unit(*values: float) -> np.ndarray:
     return vector / np.linalg.norm(vector)
 
 
-def merged(current: np.ndarray, incoming: np.ndarray) -> np.ndarray:
-    """The cache's merge rule: 0.95 of what it holds, 0.05 of what arrives."""
-    return unit(*(0.95 * current + 0.05 * incoming))
+def merged(loaded: np.ndarray, voice: np.ndarray) -> np.ndarray:
+    """A save's rule: 0.95 of the vector loaded for the user, 0.05 of the session's voice."""
+    return unit(*(0.95 * loaded + 0.05 * voice))
 
 
-@pytest.mark.parametrize("stored", ["template", "none", "unloaded", "new-user"])
-async def test_a_save_merges_the_sessions_voice_into_the_template_loaded_for_its_user(
+@pytest.mark.parametrize("stored", ["vector", "none", "unloaded", "new-user"])
+async def test_a_save_merges_the_sessions_voice_into_the_stored_speaker_vector_loaded_for_its_user(
     stored: str, tmp_path: Path
 ) -> None:
-    template = unit(1, 0, 0, 0)
+    stored_vector = unit(1, 0, 0, 0)
     unloaded = stored in ("unloaded", "new-user")
     inference = PersonaInference(
-        templates={"alice": template.tolist()} if stored == "template" else {},
+        speaker_vectors={"alice": stored_vector.tolist()} if stored == "vector" else {},
         holds=lambda user_id: unloaded,
     )
     runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), inference)
@@ -462,30 +462,31 @@ async def test_a_save_merges_the_sessions_voice_into_the_template_loaded_for_its
         await persona.load_profile(participant_id=participant.participant_id)
     cache = persona.cache_for(participant.participant_id)
     first, second = unit(0, 1, 0, 0), unit(0, 0, 1, 0)
-    cache.speaker_vector, cache.speaker_vector = first, second
+    cache.add_speaker_vector(first, 1.0)
+    cache.add_speaker_vector(second, 3.0)
 
-    # While it runs, the session's voice stays its own: the stored template is not in it.
-    voice = merged(first, second)
+    # While it runs, the session's voice stays its own: the stored speaker vector is not in it.
+    voice = unit(*(1.0 * first + 3.0 * second))
     assert cache.speaker_vector == pytest.approx(voice)
     await persona.on_stop()
 
     saved = [s["speaker_vector"] for s in inference.saved if s["user_id"] == participant.user_id]
-    if stored == "template":
-        assert saved == [pytest.approx(merged(template, voice))]
-    elif stored in ("none", "new-user"):  # No template, read or known: the session's voice.
+    if stored == "vector":
+        assert saved == [pytest.approx(merged(stored_vector, voice))]
+    elif stored in ("none", "new-user"):  # None stored, read or known: the session's voice.
         assert saved == [pytest.approx(voice)]
-    else:  # The stored template was never read, so the save leaves it as it is.
+    else:  # The stored speaker vector was never read, so the save leaves it as it is.
         assert saved == []
     await runtime.aclose()
 
 
 @pytest.mark.parametrize("load", ["loaded", "unloaded"])
-async def test_a_rebound_participant_saves_into_its_new_users_template_alone(
+async def test_a_rebound_participant_saves_into_its_new_users_stored_speaker_vector_alone(
     load: str, tmp_path: Path
 ) -> None:
     alice, bob = unit(1, 0, 0, 0), unit(0, 1, 0, 0)
     inference = PersonaInference(
-        templates={"alice": alice.tolist(), "bob": bob.tolist()},
+        speaker_vectors={"alice": alice.tolist(), "bob": bob.tolist()},
         holds=lambda user_id: load == "unloaded" and user_id == "bob",
     )
     runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), inference)
@@ -506,13 +507,51 @@ async def test_a_rebound_participant_saves_into_its_new_users_template_alone(
     if load == "loaded":
         await persona.load_profile(participant_id=participant.participant_id)
     voice = unit(0, 0, 1, 0)
-    persona.cache_for(participant.participant_id).speaker_vector = voice
+    persona.cache_for(participant.participant_id).add_speaker_vector(voice, 3.0)
     await persona.on_stop()
 
-    # Alice's template, loaded first, never takes in what is saved as Bob.
+    # Alice's stored speaker vector, loaded first, never takes in what is saved as Bob.
     saved = {save["user_id"]: save["speaker_vector"] for save in inference.saved}
     if load == "loaded":
         assert saved == {"bob": pytest.approx(merged(bob, voice))}
     else:
         assert saved == {}
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("stored", ["vector", "none"])
+async def test_participants_of_one_user_save_one_voice_of_all_their_speech(
+    stored: str, tmp_path: Path
+) -> None:
+    stored_vector = unit(1, 0, 0, 0)
+    inference = PersonaInference(
+        speaker_vectors={"alice": stored_vector.tolist()} if stored == "vector" else {}
+    )
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), inference)
+    persona, _ = persona_for(runtime)
+    await persona.on_start()
+    # One voice heard as two of alice's participants, and bob's own.
+    heard = (
+        ("alice", [(unit(0, 1, 0, 0), 3.0), (unit(0, 0, 1, 0), 0.5)]),
+        ("alice", [(unit(0, 1, 1, 0), 1.0)]),
+        ("bob", [(unit(0, 0, 0, 1), 3.0)]),
+    )
+    for user, segments in heard:
+        participant = runtime.participants.join(user_id=user)
+        await persona.load_profile(participant_id=participant.participant_id)
+        for vector, seconds in segments:
+            persona.cache_for(participant.participant_id).add_speaker_vector(vector, seconds)
+    await persona.on_stop()
+
+    # Each of alice's writes carries all of her speech, so whichever lands last, it is the same.
+    alice = unit(*(3.0 * unit(0, 1, 0, 0) + 0.5 * unit(0, 0, 1, 0) + 1.0 * unit(0, 1, 1, 0)))
+    written = {
+        user: [s["speaker_vector"] for s in inference.saved if s["user_id"] == user]
+        for user in ("alice", "bob")
+    }
+    expected = merged(stored_vector, alice) if stored == "vector" else alice
+    assert written == {
+        "alice": [pytest.approx(expected)] * 2,
+        "bob": [pytest.approx(unit(0, 0, 0, 1))],
+    }
     await runtime.aclose()

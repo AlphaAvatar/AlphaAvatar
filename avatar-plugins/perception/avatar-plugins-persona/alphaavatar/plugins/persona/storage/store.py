@@ -138,8 +138,8 @@ class PersonaStore:
             if persona.profile_details is not None
             else None
         )
-        template = persona.saved_speaker_vector
-        speaker_vector = template.tolist() if template is not None else None
+        saved = persona.saved_speaker_vector
+        speaker_vector = saved.tolist() if saved is not None else None
         face_vector = persona.face_vector.tolist() if persona.face_vector is not None else None
 
         if not details_items and speaker_vector is None and face_vector is None:

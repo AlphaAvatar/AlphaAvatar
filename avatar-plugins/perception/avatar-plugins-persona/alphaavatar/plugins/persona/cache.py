@@ -28,22 +28,23 @@ from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .profile import UserProfileDetails
 from .profile.serialization import field_metadata, merge_profile_field
+from .vectors import WeightedMean
 
 
 @dataclass(frozen=True, slots=True)
 class _BaseProfile:
     """The current identity's profile as the store returned it, read-only for the session, with
     what the cache knows about that load. An empty profile is also what no load leaves, so
-    ``loaded`` tells a user without a template from a template never read."""
+    ``loaded`` tells a user without a stored speaker vector from one never read."""
 
     profile: UserProfile = field(default_factory=UserProfile)
     loaded: bool = False
 
-    def template_only(self) -> _BaseProfile:
-        """A write's copy: the speaker template alone; profile details never merge into a save."""
+    def speaker_vector_only(self) -> _BaseProfile:
+        """A write's copy: the stored speaker vector alone; no profile details merge into a save."""
         vector = self.profile.speaker_vector
-        template = UserProfile(speaker_vector=None if vector is None else vector.copy())
-        return _BaseProfile(template, self.loaded)
+        stored = UserProfile(speaker_vector=None if vector is None else vector.copy())
+        return _BaseProfile(stored, self.loaded)
 
 
 class DefaultPersonaCache(PersonaCache):
@@ -54,6 +55,7 @@ class DefaultPersonaCache(PersonaCache):
 
         self._base = _BaseProfile()
         self._observations = UserProfile()
+        self._voice: WeightedMean | None = None
 
         self._detail_fields: set[str] = set()
         self._detail_timestamps: dict[str, datetime] = {}
@@ -181,20 +183,24 @@ class DefaultPersonaCache(PersonaCache):
     def speaker_vector(self) -> np.ndarray | None:
         return self._observations.speaker_vector
 
-    @speaker_vector.setter
-    def speaker_vector(self, vector: np.ndarray) -> None:
-        self._observations.speaker_vector = self._merge_vector(
-            self._observations.speaker_vector, vector, SPEAKER_BETA
-        )
+    @property
+    def voice(self) -> WeightedMean | None:
+        """The participant's speech in this session: its segments' vectors, by their seconds."""
+        return None if self._voice is None else self._voice.copy()
+
+    @voice.setter
+    def voice(self, voice: WeightedMean) -> None:
+        self._voice = voice.copy()
+        self._observations.speaker_vector = voice.vector
 
     @property
     def saved_speaker_vector(self) -> np.ndarray | None:
-        """The speaker template a save writes, or None to leave the stored one as it is.
+        """The speaker vector a save writes, or None to leave the stored one as it is.
 
-        While the session runs, its vector stays apart from the stored template; only the save
-        merges it into the template loaded for this same identity, by the rule each segment
-        merges by. A user without a template takes the session's vector. Without a completed
-        load the stored template is unknown, so it is not overwritten."""
+        While the session runs, its vector stays apart from the user's stored speaker vector; only
+        the save merges it into the one loaded for this same identity, ``SPEAKER_BETA`` of the
+        stored. A user with none stored takes the session's vector. Without a completed load the
+        stored vector is unknown, so it is not overwritten."""
         observed = self._observations.speaker_vector
         if observed is None or not self._base.loaded:
             return None
@@ -223,6 +229,13 @@ class DefaultPersonaCache(PersonaCache):
             vector = beta * current + (1 - beta) * vector
         return NumpyOP.l2_normalize(vector).copy()
 
+    def add_speaker_vector(self, vector: np.ndarray, seconds: float) -> None:
+        if self._voice is None:
+            self._voice = WeightedMean.of(vector, seconds)
+        else:
+            self._voice.add(vector, seconds)
+        self._observations.speaker_vector = self._voice.vector
+
     def set_base(self, profile: UserProfile) -> None:
         self._base = _BaseProfile(profile.model_copy(deep=True), loaded=True)
 
@@ -247,7 +260,8 @@ class DefaultPersonaCache(PersonaCache):
     def snapshot(self) -> DefaultPersonaCache:
         result = DefaultPersonaCache(participant=self._participant)
         result._observations = self._observations.model_copy(deep=True)
-        result._base = self._base.template_only()
+        result._voice = self.voice
+        result._base = self._base.speaker_vector_only()
         result._detail_fields = self._detail_fields.copy()
         result._detail_timestamps = self._detail_timestamps.copy()
         result._detail_operations = deepcopy(self._detail_operations)

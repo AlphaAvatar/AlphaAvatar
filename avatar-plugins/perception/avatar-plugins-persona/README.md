@@ -35,7 +35,7 @@ Partially started processors are tracked before their startup awaits. Shutdown s
 
 Profile state is loaded/persisted through PersonaStore, with LanceDB and Qdrant backends accessed through the shared inference runtime rather than synchronous database calls on the realtime loop.
 
-A participant's speaker vector merges each segment 0.95 old / 0.05 new and stays apart from the stored template while the session runs. A save merges it into the template loaded for the same identity by that rule. A user without a template takes it as is, as does a user the session allocated, which has nothing stored; for another user whose load did not complete, the stored template is left unchanged.
+A speaker track's vector and a participant's speaker vector are each the mean of the segments they took, every segment's vector weighted by the seconds of audio it is from: a 3 s window, or a shorter segment's own length. The participant's vector stays apart from the user's stored speaker vector while the session runs. A save merges it into the one loaded for the same identity, 0.95 stored / 0.05 session; participants bound to one user save one vector of all their speech. A user with no stored speaker vector takes it as is, as does a user the session allocated, which has nothing stored; for another user whose load did not complete, the stored speaker vector is left unchanged.
 
 ## Capabilities and context
 

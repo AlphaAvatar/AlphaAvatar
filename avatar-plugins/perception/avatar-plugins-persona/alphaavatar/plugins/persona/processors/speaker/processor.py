@@ -72,6 +72,7 @@ class SpeakerSegmentState:
     invalid: bool = False
     inference_failed: bool = False
     vector: np.ndarray | None = None
+    vector_sec: float = 0.0  # Seconds of audio its vector is from: a window's, or its own
     last_audio: bytes | None = None
     identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
     speaker: Participant | None = None  # Its identified participant, for its attributes
@@ -457,6 +458,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         if state.vector is None:
             state.vector = vector.copy()
+            state.vector_sec = len(job.audio_f32) // 4 / self._sample_rate
 
         # Attributes keep their own input: full windows only.
         if not job.whole:
@@ -503,7 +505,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         if cache is None:
             return None
 
-        cache.speaker_vector = state.vector.copy()
+        cache.add_speaker_vector(state.vector, state.vector_sec)
         return cache.participant
 
     def _attribute_due(self, state: SpeakerSegmentState, participant: Participant) -> bool:
@@ -574,7 +576,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                     return
 
                 state.entity = self._tracks.resolve(
-                    state.segment.source, state.vector, time.monotonic()
+                    state.segment.source, state.vector, state.vector_sec, time.monotonic()
                 )
                 self._release_tracks()
                 if state.entity is None:

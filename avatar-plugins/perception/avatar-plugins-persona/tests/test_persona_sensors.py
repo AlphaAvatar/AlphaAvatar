@@ -100,6 +100,7 @@ class SensorInference:
         self.attributes: list[str] = []  # Whose speech each attribute inference heard
         self.attribute_samples: list[int] = []
         self.vector_samples: list[int] = []  # The length of each speaker vector request
+        self.voices: deque[np.ndarray] = deque()  # Speaker vectors to answer first, in order
         self.saves: list[str] = []
 
     async def _maybe_hold(self, user: str) -> None:
@@ -115,7 +116,8 @@ class SensorInference:
             if user == self.fail:
                 raise RuntimeError("speaker vector runner failed")
             await self._maybe_hold(user)
-            return embedding(user, 192).tobytes()
+            voice = self.voices.popleft() if self.voices else embedding(user, 192)
+            return voice.astype(np.float32).tobytes()
         if method == SpeakerAttributeRunner.INFERENCE_METHOD:
             self.attributes.append(LEVELS[round(np.frombuffer(data, dtype=np.float32)[0] * 32768)])
             self.attribute_samples.append(len(data) // 4)
@@ -546,15 +548,54 @@ def test_a_voice_as_close_to_two_tracks_as_the_margin_joins_neither(
 ) -> None:
     source = PerceptionSourceRef("device", 1)
     tracks = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8, ttl_sec=60.0)
-    first = tracks.resolve(source, np.array([1.0, 0.0, 0.0]), 0.0)
-    assert tracks.resolve(source, np.array([0.0, 1.0, 0.0]), 0.0) not in (None, first)
+    first = tracks.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0, 0.0)
+    assert tracks.resolve(source, np.array([0.0, 1.0, 0.0]), 3.0, 0.0) not in (None, first)
     vector = np.array([*query, 0.0]) / np.linalg.norm([*query, 0.0])
     # Both tracks are above the threshold; the closer one only when it is clear of the other.
-    assert tracks.resolve(source, vector, 1.0) == (first if joined else None)
+    assert tracks.resolve(source, vector, 3.0, 1.0) == (first if joined else None)
     # A single candidate needs only the threshold.
     alone = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8, ttl_sec=60.0)
-    only = alone.resolve(source, np.array([1.0, 0.0, 0.0]), 0.0)
-    assert alone.resolve(source, vector, 1.0) == only
+    only = alone.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0, 0.0)
+    assert alone.resolve(source, vector, 3.0, 1.0) == only
+
+
+async def test_a_voice_is_its_segments_mean_each_by_the_seconds_its_vector_is_from(
+    tmp_path: Path,
+) -> None:
+    def unit(*values: float) -> np.ndarray:
+        vector = np.zeros(192)
+        vector[: len(values)] = values
+        return vector / np.linalg.norm(vector)
+
+    # A 0.5 s utterance opens the voice, a window at 0.6 to it joins; the next window is 0 to
+    # the first and 0.59 to their mean by seconds (0.37 unweighted, 0.03 merged 0.95 / 0.05).
+    first, second, third = unit(1), unit(0.6, 0.8), unit(0, 0.82, 0.5724)
+    inference = SensorInference()
+    inference.voices.extend((first, second, third))
+    inference.replies.extend(["none"] * 3)  # Nobody's: the voice stays the session's own
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    for index, (heard, spoken) in enumerate(((0.8, 0.5), (3.0, 2.6), (3.0, 2.6))):
+        utter(runtime, source, f"u{index}", "alice", heard=heard, spoken=spoken)
+        await wait_until(
+            lambda index=index: len(inference.searches) == index + 1,
+            f"utterance {index} was never searched",
+        )
+
+    assert inference.vector_samples == [8000, 48000, 48000]
+    (participant_id,) = {
+        runtime.participants.resolve(
+            segment=PerceptionSegmentRef(source, f"u{index}")
+        ).participant_id
+        for index in range(3)
+    }  # One voice: the last utterance joined what the first two made of it.
+    cache = persona.persona_cache[participant_id]
+    expected = 0.5 * first + 3.0 * second + 3.0 * third
+    np.testing.assert_allclose(cache.speaker_vector, expected / np.linalg.norm(expected), rtol=1e-6)
+    await persona.on_stop()
+    await runtime.aclose()
 
 
 def test_the_speaker_vector_model_resolves_its_pinned_revision_and_checksum(
