@@ -8,7 +8,7 @@
 
 | 字段 | 含义与所有者 | 唯一性范围与生命周期 | 初始化入口 |
 | --- | --- | --- | --- |
-| `avatar_id` / `avatar.id` | 配置中的 Avatar 实例身份，选择 Workspace，并作为 Avatar Memory 的 owner。 | 应用配置命名空间；不等于 Avatar 的 RTC 接入端点。 | 调用方通过 [Avatar 配置](../avatar-agents/alphaavatar/agents/configs/avatar_info_config.py) 提供；Workspace 按该配置装配。 |
+| `avatar_id` / `avatar.id` | 配置中的 Avatar 实例身份，选择 Workspace，并作为 Avatar Memory 的 owner。 | 应用配置命名空间；不等于 Avatar 在 RTC 中的接入设备 `agent_device_id`。 | 调用方通过 [Avatar 配置](../avatar-agents/alphaavatar/agents/configs/avatar_info_config.py) 提供；Workspace 按该配置装配。 |
 | `session_id` | Core `SessionRuntime` 的会话标识，关联参与者、事件及会话目录。 | 在所属运行环境中标识一次 Session；默认 UUID，也可由调用方显式提供。 | [SessionRuntime.__init__()](../avatar-core/alphaavatar/core/session/runtime.py)。 |
 | `execution_id` | Host 管理的一次执行实例，由执行管理器持有。 | Host 执行管理器中的启动、停止和状态查询范围；不同于一次模型循环的 `run_id`。 | [ExecutionManager.reserve()](../avatar-host/alphaavatar/host/execution/manager.py) 独立生成 UUID。 |
 | `attachment_id` | 会话后端的一次连接附着标识，关联请求与结束通知。 | 对应一次附着；不把连接重建解释为新人物，也不等于 `execution_id` 或 `session_id`。 | `ExecutionManager.reserve()` 独立生成 UUID；后端写入 `SessionRequest`，结束通知复用。 |
@@ -19,35 +19,59 @@
 - Session 关闭不是 Episode 或 Context 的统一结束条件，也不代表所有长期数据已经保存。这些 ID 本身不承诺跨进程恢复任务。
 - 会话目录的日期来自 `SessionRuntime.created_at`，不能从 `session_id` 或设备时间串推导。
 
-## 2. 人物关联：区分端点、感知实体、参与者和用户
+## 2. 人物关联：区分设备、感知实体、参与者和用户
 
 | 字段 | 含义与所有者 | 唯一性范围与生命周期 | 初始化入口 |
 | --- | --- | --- | --- |
-| `device_id` | 接入适配层提供的应用端点标识；端点可提供文字、麦克风、摄像头及渲染连接。 | 当前接入后端的命名空间，例如 LiveKit room；不是硬件序列号，重新附着可复用或更换。 | RTC 输入适配器将 LiveKit `participant.identity` 映射为 `device_id`；参见 [音频输入](../avatar-rtc/alphaavatar/rtc/livekit/audio/input.py)、[视频输入](../avatar-rtc/alphaavatar/rtc/livekit/video/input.py)。 |
-| `agent_device_id` | Avatar 自身接入端点的角色限定引用，仍属于 `device_id`。 | 对应当前连接，不等于 `avatar_id`。 | 接入配置或后端装配时提供，沿用端点身份。 |
+| `device_id` | 接入适配层提供的设备标识；一个设备可提供文字、麦克风、摄像头及渲染连接。 | 当前接入后端的命名空间，例如 LiveKit room；不是硬件序列号，重新附着可复用或更换。 | RTC 输入适配器将 LiveKit `participant.identity` 映射为 `device_id`；参见 [音频输入](../avatar-rtc/alphaavatar/rtc/livekit/audio/input.py)、[视频输入](../avatar-rtc/alphaavatar/rtc/livekit/video/input.py)。 |
+| `agent_device_id` | Avatar 自身接入设备的角色限定引用，仍属于 `device_id`。 | 对应当前连接，不等于 `avatar_id`。 | 接入配置或后端装配时提供，沿用设备身份。 |
 | `entity_id` | 感知输入或跟踪器标记的实体，例如人脸、声纹跟踪对象。 | 用 `(session_id, source_id, source_generation, entity_id)` 完整解释；跟踪过期后不能据相同局部编号认定同人。 | 输入生产者提供；Persona 的 [人脸跟踪](../avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/processors/face/tracking.py) 和 [说话人跟踪](../avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/processors/speaker/tracking.py) 创建带 `face-` / `speaker-` 前缀的 UUID。 |
 | `participant_id` | Core Session 中的逻辑参与者，汇集已经确认的输入关联。 | 一个 `SessionRuntime` 中唯一；默认 UUID。身份更正保留该 ID。 | [SessionRuntime.join()](../avatar-core/alphaavatar/core/session/runtime.py) 创建；业务通过 [ParticipantRuntime.join() / ensure_entity()](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 使用。 |
 | `user_id` | 长期用户身份，关联 Persona、Identity、Memory 等用户数据。 | 在应用的用户数据命名空间中解释，可跨会话复用；当前身份可更正或明确解绑为 `None`。 | `ParticipantRuntime.join()` 为未指定用户的新参与者分配 UUID；显式用户由调用方提供，后续通过 `bind_user(IdentityRequest(...))` 接受更正。 |
 | `primary_participant_id` / `primary_user_id` | 主参与者引用及其当前用户投影，不是第二套人物身份。 | 当前 Session 的主参与者关系；不能作为未知音频人物的默认身份。 | [SessionRuntime.join(primary=...)](../avatar-core/alphaavatar/core/session/runtime.py) 选择主参与者；`primary_user_id` 从当前主参与者投影。 |
 
-- `SessionContext.device_id` 表示用户接入端点；`CharacterConnection.device_id` 表示渲染目标端点。字段所属对象决定角色，不要求二者相同。
-- `device_ids`、`excluded_device_ids` 是端点集合；`previous_user_id` 是历史引用，均不新增身份层。
+- `SessionContext.device_id` 表示用户的接入设备；`CharacterConnection.device_id` 表示渲染目标设备。字段所属对象决定角色，不要求二者相同。
+- `device_ids`、`excluded_device_ids` 是设备集合；`previous_user_id` 是历史引用，均不新增身份层。
 - 同设备、同局部实体编号、同 `user_id` 都不会自动合并参与者。不同媒体是否为同一人，由明确的关联证据决定。
 
 ### 2.1 映射只有一个权威维护位置
 
-- `device_id → participant_id`：`ParticipantBindings._devices`，用于明确的端点提交者；一个端点的画面仍可包含多人。
+- `device_id → participant_id`：`ParticipantBindings._devices`，用于该设备上明确提交的文字和图片；一个设备的画面仍可包含多人。
 - `(PerceptionSourceRef, entity_id) → participant_id`：`ParticipantBindings._entities`；多个来源实体可显式指向同一参与者。
 - `participant_id → user_id`：`SessionRuntime` 中当前不可变 `Participant` 快照；Bindings 不复制用户映射。
 - `PerceptionSegmentRef → entity`：`ParticipantRuntime` 的有界片段关联状态，不再生成一种人物 ID。
 - 业务统一通过 [ParticipantRuntime](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 操作。底层 [ParticipantBindings](../avatar-agents/alphaavatar/agents/runtime/modules/participants/binding.py) 不执行识别模型、目录 I/O 或用户资料读取。
 
-### 2.2 同一端点中的多人
+### 2.2 映射的数量与生命周期
+
+```mermaid
+flowchart LR
+    segment["语音段"] -- 多对一 --> entity["(来源, 实体)"]
+    entity -- 多对一 --> participant["参与者"]
+    device["设备"] -- 多对一 --> participant
+    participant -- 多对一 --> user["用户"]
+    participant -- 一对一 --> cache["Persona cache"]
+```
+
+- 反过来都是一对多：一个用户可对应多个参与者，一个参与者可对应多个实体和设备。没有任何地方检查"一个用户只对应一个参与者"。
+- 新实体由 Host 装配的 [PrimaryParticipantIdentityPolicy](../avatar-agents/alphaavatar/agents/runtime/modules/participants/policy.py) 决定归属：主参与者设备上的第一个人脸实体、第一个说话人实体交给主参与者，之后的同类实体都创建新参与者，`user_id` 为新 UUID。某类型一经占用，实体退役后也不释放；"每个参与者每类一个实体"是这条策略的结果，绑定层不记录类型。
+- 说话人跟踪超过 `track_ttl_sec`（默认 300 秒）没有收进新段、来源换代或取消、处理器停止时退役，人脸跟踪默认 60 秒。退役即解除该实体的关联；没有其他关联的参与者不再活跃，但仍留在 Session 中，Persona cache 留到会话结束保存。
+- 因此一次 Session 中同一个人可能对应多个参与者：同一来源上的声音被拆成多条跟踪，麦克风重新发布（换代），或超过 300 秒后再说话。新参与者经声纹检索接受同一用户后，就是一个用户对应多个参与者；保存时 Persona 把同一用户各参与者的会话声纹合成一份写入（[KD-39](bugs-zh.md)）。
+
+例：手机 `phone-1` 接入，Host 创建主参与者 P1（生成用户 g1）并绑定该设备。
+
+1. 麦克风第 1 代上的第一段话开跟踪 `speaker-a`，交给 P1；声纹检索为 alice，P1 改为 alice。
+2. 摄像头的 `face-x` 交给 P1，占用人脸类型。
+3. 一段与 `speaker-a` 相似度不足的话开 `speaker-b`。说话人类型已占用，创建 P2（g2），检索为 alice；此时 alice 对应 P1、P2。
+4. 麦克风重新发布为第 2 代，第 1 代上的两条关联释放：P1 仍有人脸与设备，P2 不再活跃。新一段开 `speaker-c`，创建 P3，检索为 alice；alice 对应 P1、P2、P3。
+5. `phone-1` 上提交的文字按设备归 P1。
+
+### 2.3 同一设备中的多人
 
 - 手机 `phone-1` 的摄像头中，`(camera-1, 1, face-a)` 和 `(camera-1, 1, face-b)` 可以分别关联不同参与者、不同用户。
-- 账户持有者明确提交的文字可使用 `resolve(device_id, endpoint=True)`；麦克风里的未知说话者不能因此归到该账户。
+- 账户持有者明确提交的文字可使用 `resolve(device_id, by_device=True)`；麦克风里的未知说话者不能因此归到该账户。
 - `ensure_entity(source, entity, participant_id=...)` 可建立跨媒体同人关联；省略参与者时复用已有关系或创建参与者。已有实体要改关联时应显式释放，不能无声覆盖。
-- 默认 `resolve()` 不回退到端点关联。未知实体、过期来源、冲突或淘汰片段不能回退到设备用户或主参与者。
+- 默认 `resolve()` 不回退到设备关联。未知实体、过期来源、冲突或淘汰片段不能回退到设备用户或主参与者。
 
 ## 3. 身份接受：用版本隔离更正、迟到推理和历史引用
 
@@ -81,10 +105,10 @@
 
 | 字段 | 含义与所有者 | 唯一性范围与生命周期 | 初始化入口 |
 | --- | --- | --- | --- |
-| `PerceptionSourceRef.source_id` | 一路逻辑媒体或输入来源，由接入适配器或生产者命名。 | 当前 Perception 会话；一个端点可以提供多路来源，不能仅按 `device_id` 合并。 | RTC 音频／视频适配器的 `_source_id()`；其他生产者构造 [PerceptionSourceRef](../avatar-core/alphaavatar/core/env/schemas/reference.py)。 |
+| `PerceptionSourceRef.source_id` | 一路逻辑媒体或输入来源，由接入适配器或生产者命名。 | 当前 Perception 会话；一个设备可以提供多路来源，不能仅按 `device_id` 合并。 | RTC 音频／视频适配器的 `_source_id()`；其他生产者构造 [PerceptionSourceRef](../avatar-core/alphaavatar/core/env/schemas/reference.py)。 |
 | `source_generation` | 同一逻辑来源的启用世代；媒体来源通常由感知来源注册表分配，生产者也可显式指定。 | 与 `source_id` 共同构成完整来源引用；旧世代不能向新流写入结果。 | [PerceptionRuntime.next_source()](../avatar-core/alphaavatar/core/perception/runtime.py) 调用 [MediaSourceRegistry.next_source()](../avatar-core/alphaavatar/core/perception/source_registry.py)，首次为 `1`，之后递增；当前 RTC 文字来源直接指定为 `1`。 |
 | `PerceptionSegmentRef.segment_id` | 一段 VAD 语音及其转录、取消等派生事实的关联 ID。 | 用完整 `(source_id, source_generation, segment_id)` 解释；跨 Session 还需 `session_id`。新段不等于新 Turn。 | [AudioActivitySource._start_segment()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/audio_activity/source.py) 在 VAD START 时生成 UUID，END 后关闭。 |
-| `observation_id` | 一次 `EnvObservation` 的标识，由观测生产者持有。 | 当前观测对象及其引用范围；同一片段可产生多个不同观测。 | [EnvObservation](../avatar-core/alphaavatar/core/env/observation.py) 默认 UUID；RTC 文字输入在 [`_read()`](../avatar-rtc/alphaavatar/rtc/livekit/text/input.py) 中用会话、端点、外部 stream ID 构造稳定摘要。 |
+| `observation_id` | 一次 `EnvObservation` 的标识，由观测生产者持有。 | 当前观测对象及其引用范围；同一片段可产生多个不同观测。 | [EnvObservation](../avatar-core/alphaavatar/core/env/observation.py) 默认 UUID；RTC 文字输入在 [`_read()`](../avatar-rtc/alphaavatar/rtc/livekit/text/input.py) 中用会话、设备、外部 stream ID 构造稳定摘要。 |
 | `frame_id` | 一个具体媒体帧的关联标识，音频、视频均可使用。 | 当前帧及指向该帧的标注／证据；不是人物身份，也不代替 `observation_id`。 | RTC [create_frame_id()](../avatar-rtc/alphaavatar/rtc/livekit/utils/frame_id.py) 对会话、轨道、世代、帧序号与帧时间求摘要。 |
 | `annotation_id` | 一条 `EnvAnnotation` 的标识。 | 一条独立标注的生命周期；被标注对象仍由 observation／frame 引用定位。 | [EnvAnnotation](../avatar-core/alphaavatar/core/env/annotation.py) 默认 UUID，生产者也可显式提供。 |
 | `ImagePayload.image_id` | 图像载荷的可选素材标识，由创建者提供。 | 载荷命名空间；不要求等于 `frame_id`，不能用于判断用户身份。 | [ImagePayload](../avatar-core/alphaavatar/core/media/image.py) 的载荷构造入口。 |
@@ -206,7 +230,7 @@
 | `MemoryParticipantRef.id` | 按 kind 引用 user、avatar、tool 或 entity。 | 对应引用类型的命名空间；局部 entity 值不能单独证明跨来源同人。 | [MemoryParticipantRef](../avatar-agents/alphaavatar/agents/memory/schemas/reference.py) 构造时显式传入已有 ID。 |
 | `MemorySourceRef.source_id` | 按 kind 引用原始消息、工具调用、运行事件或感知来源。 | 来源类型及原始协议范围；感知引用还保存 generation、segment 或 entity。 | `MemorySourceRef.message()`、`tool_call()`、`tool_result()`、`runtime_event()` 及感知来源工厂，均复制传入值。 |
 | `MemoryGraphNode.id` | 图节点记录的唯一标识。 | 当前图记录范围；与语义去重键 `key`、检索内容 `content` 分工不同。 | [MemoryGraphNode](../avatar-agents/alphaavatar/agents/memory/schemas/graph.py) 默认生成 `node_` 加 UUID；[graph_builder.py](../avatar-plugins/perception/avatar-plugins-memory/alphaavatar/plugins/memory/storage/graph/graph_builder.py) 构造节点。 |
-| 图边 `source_id / target_id` | 边两端的既有图节点 ID。 | 可被多条边重复引用；source 不表示媒体来源，边本身没有独立 ID。 | `build_graph_from_mentions()` 复制端点节点的 `id`；`source_key / target_key` 同时保留语义键。 |
+| 图边 `source_id / target_id` | 边两端的既有图节点 ID。 | 可被多条边重复引用；source 不表示媒体来源，边本身没有独立 ID。 | `build_graph_from_mentions()` 复制边两端节点的 `id`；`source_key / target_key` 同时保留语义键。 |
 | `MemoryOutboxEvent.event_id` | SQLite outbox 整数记录标识。 | 单个数据库表内唯一、递增；不是 Core 事件 UUID。 | [commit_sync()](../avatar-plugins/perception/avatar-plugins-memory/alphaavatar/plugins/memory/storage/sqlite/commit.py) 插入记录时，由表的 `INTEGER PRIMARY KEY AUTOINCREMENT` 分配。 |
 | Outbox `worker_id / lease_owner` | 投影 Worker 实例身份及当前认领者引用。 | Worker 实例与认领租约范围；`lease_owner` 复制 Worker ID，不另生成身份。 | [MemoryOutboxWorker.__init__()](../avatar-plugins/perception/avatar-plugins-memory/alphaavatar/plugins/memory/storage/outbox.py) 生成 `memory:target:UUID`；[claim_outbox_sync()](../avatar-plugins/perception/avatar-plugins-memory/alphaavatar/plugins/memory/storage/sqlite/outbox.py) 复制为 `lease_owner`。 |
 
@@ -223,7 +247,7 @@
 | `avatar_key / user_key / session_key / memory_key` 等路径键 | 逻辑 ID 的文件系统安全投影，由路径层派生。 | 所属根目录中的路径命名空间；逻辑 ID 保留原值，不能从摘要目录名反推身份。 | [path_key(logical_id)](../avatar-agents/alphaavatar/agents/workspace/paths.py)：可安全使用时保持原值，否则生成 `~id-` 加 SHA-256，不做小写化或截断。 |
 | `digest` / 内容 hash | 内容一致性和批次校验摘要，由相应生产者计算。 | 只对具体编码、内容和用途有效；不代替记录 ID 或访问权限。 | 对应载荷／记录／存储入口按其协议计算；不能假定整个项目只有一种摘要算法。 |
 | `pid` | 操作系统进程号。 | 当前操作系统的进程生命周期，可在进程退出后复用。 | 操作系统创建进程时分配，由进程管理代码读取。 |
-| LiveKit `participant.identity / participant_identity / sender_identity` | 外部连接端点字段，边界适配为内部 `device_id`。 | 对应 LiveKit room／连接协议命名空间，不是 Core 参与者 ID。 | LiveKit SDK／接入配置提供，RTC 与 Host 适配层映射。 |
+| LiveKit `participant.identity / participant_identity / sender_identity` | 外部连接的身份字段，边界适配为内部 `device_id`。 | 对应 LiveKit room／连接协议命名空间，不是 Core 参与者 ID。 | LiveKit SDK／接入配置提供，RTC 与 Host 适配层映射。 |
 | `track_sid / room_name / stream_id` | 第三方轨道、房间或传输流引用。 | 供应商协议命名空间，不能与内部来源／参与者编号直接互换。 | 服务端或 SDK 分配，接入适配器读取并用于构造内部引用。 |
 | 模型 `repo_id` / 语音 `voice_id` | 模型仓库或声音资产的供应商名称。 | 所属模型平台／语音服务范围，不代表人物身份。 | 配置和模型／服务适配器显式接收。 |
 | 连接 `token` | 接入认证凭据，不属于本文的身份关联键。 | 按接入协议和有效期使用；与第 3 节的片段关联 token 完全不同。 | Host／连接后端根据其认证契约提供；不作为诊断关联 ID 输出。 |

@@ -34,7 +34,7 @@ from .process import RunnerProcess
 from .protocol import (
     CLOSE,
     CONNECT,
-    INFERENCE_ENDPOINT_ENV,
+    INFERENCE_SOCKET_ENV,
     REQUEST,
     RESULT,
     RESULT_NONE,
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 class InferenceRuntime:
-    """Own one local endpoint and, per method, a bounded pool of serial spawned runners."""
+    """Own one local socket and, per method, a bounded pool of serial spawned runners."""
 
     def __init__(
         self,
@@ -103,7 +103,7 @@ class InferenceRuntime:
         }
         self._startup_started: dict[str, float] = {}
         self._server: asyncio.Server | None = None
-        self._endpoint: str | None = None
+        self._socket_path: str | None = None
         self._socket_dir: str | None = None
         self._client_tasks: set[asyncio.Task[None]] = set()
         self._client_writers: set[asyncio.StreamWriter] = set()
@@ -119,10 +119,10 @@ class InferenceRuntime:
         return tuple(self._runner_classes)
 
     @property
-    def endpoint(self) -> str:
-        if self._endpoint is None or not self._started or self._close_task is not None:
+    def socket_path(self) -> str:
+        if self._socket_path is None or not self._started or self._close_task is not None:
             raise RuntimeError("Inference runtime is not ready")
-        return self._endpoint
+        return self._socket_path
 
     @property
     def _serving(self) -> bool:
@@ -252,27 +252,27 @@ class InferenceRuntime:
 
     async def _listen(self) -> None:
         self._server = await asyncio.start_unix_server(
-            self._accept_client, path=self._endpoint, start_serving=False
+            self._accept_client, path=self._socket_path, start_serving=False
         )
 
     async def _start(self) -> None:
-        if os.environ.get(INFERENCE_ENDPOINT_ENV):
-            raise RuntimeError("An inference endpoint is already configured in this process")
+        if os.environ.get(INFERENCE_SOCKET_ENV):
+            raise RuntimeError("An inference socket is already configured in this process")
 
         self._directory_task = asyncio.create_task(
             asyncio.to_thread(private_socket_path, "alphaavatar-inference-", "runtime.sock")
         )
         self._directory_task.add_done_callback(self._observe)
-        self._socket_dir, self._endpoint = await asyncio.shield(self._directory_task)
+        self._socket_dir, self._socket_path = await asyncio.shield(self._directory_task)
         self._listen_task = asyncio.create_task(self._listen())
         self._listen_task.add_done_callback(self._observe)
         await asyncio.shield(self._listen_task)
 
         # Export before the first forkserver starts so job processes inherit the final path.
-        if os.environ.get(INFERENCE_ENDPOINT_ENV):
-            raise RuntimeError("Another inference runtime acquired the process endpoint")
+        if os.environ.get(INFERENCE_SOCKET_ENV):
+            raise RuntimeError("Another inference runtime acquired the process inference socket")
 
-        os.environ[INFERENCE_ENDPOINT_ENV] = self._endpoint
+        os.environ[INFERENCE_SOCKET_ENV] = self._socket_path
         for index, (method, pool) in enumerate(self._pools.items(), start=1):
             await self._initialize_runner(method, range(len(pool.slots)), index)
 
@@ -524,8 +524,11 @@ class InferenceRuntime:
             errors.append(self._client_error)
         self._client_tasks.clear()
         self._client_writers.clear()
-        if self._endpoint is not None and os.environ.get(INFERENCE_ENDPOINT_ENV) == self._endpoint:
-            os.environ.pop(INFERENCE_ENDPOINT_ENV, None)
+        if (
+            self._socket_path is not None
+            and os.environ.get(INFERENCE_SOCKET_ENV) == self._socket_path
+        ):
+            os.environ.pop(INFERENCE_SOCKET_ENV, None)
         if self._socket_dir is not None:
             try:
                 await asyncio.to_thread(shutil.rmtree, self._socket_dir)
@@ -533,7 +536,7 @@ class InferenceRuntime:
                 pass
             except Exception as error:
                 errors.append(error)
-        self._socket_dir = self._endpoint = None
+        self._socket_dir = self._socket_path = None
         if errors:
             raise ExceptionGroup("Inference runtime shutdown failed", errors)
 

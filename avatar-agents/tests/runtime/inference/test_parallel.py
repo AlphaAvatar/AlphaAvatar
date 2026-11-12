@@ -106,7 +106,7 @@ def journal(root: Path, method: str = PARALLEL) -> dict[str, list[int]]:
 
 
 async def test_a_replicable_runner_stays_serial_until_configured(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     config = limits()
     runtime = service(tmp_path, config, ParallelRunner)
@@ -114,8 +114,8 @@ async def test_a_replicable_runner_stays_serial_until_configured(
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executors.extend(InferenceExecutor(runtime.endpoint, config) for _ in range(2))
+        owned_addresses.add(runtime.socket_path)
+        executors.extend(InferenceExecutor(runtime.socket_path, config) for _ in range(2))
         first = asyncio.create_task(executors[0].do_inference(PARALLEL, b"gate:a"))
         await entered(tmp_path, "a")
         second = asyncio.create_task(executors[1].do_inference(PARALLEL, b"gate:b"))
@@ -138,7 +138,7 @@ async def test_a_replicable_runner_stays_serial_until_configured(
 
 
 async def test_two_workers_run_one_sessions_requests_at_once_and_never_exceed_the_limit(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     config = limits({PARALLEL: 2})
     runtime = service(tmp_path, config, ParallelRunner)
@@ -146,8 +146,8 @@ async def test_two_workers_run_one_sessions_requests_at_once_and_never_exceed_th
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        session, other = (InferenceExecutor(runtime.endpoint, config) for _ in range(2))
+        owned_addresses.add(runtime.socket_path)
+        session, other = (InferenceExecutor(runtime.socket_path, config) for _ in range(2))
         assert (view(runtime, PARALLEL).workers, view(runtime, PARALLEL).ready_workers) == (2, 2)
 
         a = asyncio.create_task(session.do_inference(PARALLEL, b"gate:a"))
@@ -183,7 +183,7 @@ async def test_two_workers_run_one_sessions_requests_at_once_and_never_exceed_th
 
 
 async def test_results_stay_with_their_callers_across_executors_and_methods(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     config = limits({PARALLEL: 2, SECOND: 2})
     runtime = service(tmp_path, config, ParallelRunner, SecondParallelRunner, EchoRunner)
@@ -191,8 +191,8 @@ async def test_results_stay_with_their_callers_across_executors_and_methods(
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executors.extend(InferenceExecutor(runtime.endpoint, config) for _ in range(3))
+        owned_addresses.add(runtime.socket_path)
+        executors.extend(InferenceExecutor(runtime.socket_path, config) for _ in range(3))
         calls = {
             (method, f"gate:{index}-{method}-{call}"): asyncio.create_task(
                 executor.do_inference(method, f"gate:{index}-{method}-{call}".encode())
@@ -232,7 +232,7 @@ async def test_results_stay_with_their_callers_across_executors_and_methods(
 
 
 async def test_full_queue_rejects_and_cancelled_requests_never_run_or_leak_results(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     # Capacity counts executing and waiting requests together: 2 running + 1 waiting.
     config = limits({PARALLEL: 2}, max_pending=3)
@@ -241,8 +241,8 @@ async def test_full_queue_rejects_and_cancelled_requests_never_run_or_leak_resul
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        first, second, third = (InferenceExecutor(runtime.endpoint, config) for _ in range(3))
+        owned_addresses.add(runtime.socket_path)
+        first, second, third = (InferenceExecutor(runtime.socket_path, config) for _ in range(3))
         executors.extend((first, second, third))
         a = asyncio.create_task(first.do_inference(PARALLEL, b"gate:a"))
         b = asyncio.create_task(first.do_inference(PARALLEL, b"gate:b"))
@@ -284,7 +284,7 @@ async def test_full_queue_rejects_and_cancelled_requests_never_run_or_leak_resul
 
 
 async def test_queue_and_execution_timeouts_withdraw_or_retire_without_replay(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     config = limits({PARALLEL: 2}, queue_timeout=0.5, request_timeout=3.0)
     runtime = service(tmp_path, config, ParallelRunner)
@@ -292,8 +292,8 @@ async def test_queue_and_execution_timeouts_withdraw_or_retire_without_replay(
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        session, other = (InferenceExecutor(runtime.endpoint, config) for _ in range(2))
+        owned_addresses.add(runtime.socket_path)
+        session, other = (InferenceExecutor(runtime.socket_path, config) for _ in range(2))
         stuck = asyncio.create_task(session.do_inference(PARALLEL, b"gate:stuck"))
         b = asyncio.create_task(session.do_inference(PARALLEL, b"gate:b"))
         await entered(tmp_path, "stuck", "b")
@@ -327,7 +327,7 @@ async def test_queue_and_execution_timeouts_withdraw_or_retire_without_replay(
 
 
 async def test_a_killed_worker_is_reaped_and_rebuilt_while_its_peer_keeps_serving(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     before = children()
     config = limits({PARALLEL: 2}, restart_limit=2)
@@ -336,8 +336,8 @@ async def test_a_killed_worker_is_reaped_and_rebuilt_while_its_peer_keeps_servin
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint, config)
+        owned_addresses.add(runtime.socket_path)
+        executor = InferenceExecutor(runtime.socket_path, config)
         lost = asyncio.create_task(executor.do_inference(PARALLEL, b"gate:lost"))
         kept = asyncio.create_task(executor.do_inference(PARALLEL, b"gate:kept"))
         await entered(tmp_path, "lost", "kept")
@@ -385,7 +385,7 @@ async def test_a_killed_worker_is_reaped_and_rebuilt_while_its_peer_keeps_servin
 
 
 async def test_waiting_requests_fail_at_once_when_no_worker_is_left(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     config = limits({PARALLEL: 2})
     runtime = service(tmp_path, config, ParallelRunner)
@@ -393,8 +393,8 @@ async def test_waiting_requests_fail_at_once_when_no_worker_is_left(
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        session, other = (InferenceExecutor(runtime.endpoint, config) for _ in range(2))
+        owned_addresses.add(runtime.socket_path)
+        session, other = (InferenceExecutor(runtime.socket_path, config) for _ in range(2))
         running = [
             asyncio.create_task(session.do_inference(PARALLEL, f"gate:{name}".encode()))
             for name in ("a", "b")
@@ -426,14 +426,14 @@ async def test_waiting_requests_fail_at_once_when_no_worker_is_left(
 
 @pytest.mark.parametrize("window", ["reaping", "starting"])
 async def test_close_during_recovery_starts_no_worker_and_reclaims_every_one(
-    window: str, tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    window: str, tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     before = children()
     runtime = service(tmp_path, limits({PARALLEL: 2}), ParallelRunner)
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
         for pid in (tmp_path / f"{PARALLEL}.inits").read_text().split():
             os.kill(int(pid), signal.SIGKILL)
         await wait_until(lambda: view(runtime, PARALLEL).ready_workers == 0, "kills unseen")
@@ -493,7 +493,7 @@ async def test_partial_start_failure_and_cancelled_initialization_release_every_
 
 
 async def test_close_is_idempotent_and_reclaims_every_worker_and_channel(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     before, fds = children(), descriptors()
     config = limits({PARALLEL: 2, SECOND: 2})
@@ -501,8 +501,8 @@ async def test_close_is_idempotent_and_reclaims_every_worker_and_channel(
         runtime = service(tmp_path, config, ParallelRunner, SecondParallelRunner)
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint, config)  # One channel per worker.
+        owned_addresses.add(runtime.socket_path)
+        executor = InferenceExecutor(runtime.socket_path, config)  # One channel per worker.
         held = asyncio.create_task(executor.do_inference(PARALLEL, f"gate:h{cycle}".encode()))
         await entered(tmp_path, f"h{cycle}")
         for method in (PARALLEL, SECOND):
@@ -587,7 +587,7 @@ def frame(sample: int, windows: int = 1) -> AudioFrame:
 
 
 async def test_concurrent_voice_sources_keep_their_own_state_results_and_cancellation(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     config = limits({SILERO: 2})
     runtime = service(tmp_path, config, SileroProtocolRunner)
@@ -596,9 +596,9 @@ async def test_concurrent_voice_sources_keep_their_own_state_results_and_cancell
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
         # One session client, as in production, shared by every source's VAD stream.
-        executor = InferenceExecutor(runtime.endpoint, config)
+        executor = InferenceExecutor(runtime.socket_path, config)
         options = SileroVADOptions(
             min_speech_duration=0.05,
             min_silence_duration=0.1,

@@ -139,7 +139,7 @@ def describe_summary(
     Only the selected file or bundle, typed selections and facts derived from them: plugin
     names, vector backend kinds, the on/off switches of vision and of the built-in router,
     memory and persona processors, enabled tools, runner workers and the health address,
-    never endpoints or other plugin-defined settings.
+    never service URLs or other plugin-defined settings.
     """
     from alphaavatar.agents.runtime.inference import plan_inference_runners
     from alphaavatar.agents.utils.vdb.config import vdb_backend

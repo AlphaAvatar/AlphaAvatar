@@ -18,13 +18,13 @@ from .bootstrap import (
     prepare_inference_runners,
     snapshot_inference_config,
 )
-from .executor import INFERENCE_ENDPOINT_ENV, InferenceExecutor
+from .executor import INFERENCE_SOCKET_ENV, InferenceExecutor
 from .runner import InferenceRunner, RunnerLaunch
 from .runtime import InferenceRuntime
 
 __all__ = [
     "RunnerLaunch",
-    "INFERENCE_ENDPOINT_ENV",
+    "INFERENCE_SOCKET_ENV",
     "InferenceExecutor",
     "InferenceRunner",
     "InferenceRuntime",

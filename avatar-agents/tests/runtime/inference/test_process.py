@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Spawned RunnerProcess ownership, using socketpair IPC and no shared runtime endpoint."""
+"""Spawned RunnerProcess ownership, using socketpair IPC and no shared runtime socket."""
 
 from __future__ import annotations
 

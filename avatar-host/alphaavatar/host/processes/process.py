@@ -38,8 +38,8 @@ from .schemas import (
 def _interpreter() -> tuple[str, ...]:
     """This Python as the execution child runs it: isolated when the Host is, as an installed
     command runs it (``python -I``), so the caller's PYTHONPATH, site customization and user
-    site reach the child no more than the Host; the environment itself (credentials, the log
-    and inference endpoints) passes either way."""
+    site reach the child no more than the Host; the environment itself (credentials, the log client
+    and the inference socket) passes either way."""
     return (sys.executable, "-I") if sys.flags.isolated else (sys.executable,)
 
 

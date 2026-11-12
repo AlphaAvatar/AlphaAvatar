@@ -10,7 +10,7 @@ alphaavatar start [<bundle> | <file>] [KEY=VALUE ...]
   [choosing a configuration](config.md#choosing-a-configuration).
 - Reads each variable from the environment, then `.env` (`ENV_FILE`), then the credentials
   [`alphaavatar setup`](setup.md) stored; see [credentials](config.md#credentials).
-- INFO logging; health endpoints on `127.0.0.1:8081`.
+- INFO logging; health server on `127.0.0.1:8081`.
 - Creates the application home and Avatar workspace on first run.
 - Ctrl+C or SIGTERM stops it after every owned resource is released.
 - Validates the configuration before starting; [`alphaavatar config check`](config.md#config-check) runs the same validation without starting.

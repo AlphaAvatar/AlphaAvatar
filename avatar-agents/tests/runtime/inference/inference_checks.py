@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Resource checks shared by the inference tests: child processes, descriptors, endpoints."""
+"""Resource checks shared by the inference tests: child processes, descriptors, sockets."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from alphaavatar.agents.runtime.inference import INFERENCE_ENDPOINT_ENV
+from alphaavatar.agents.runtime.inference import INFERENCE_SOCKET_ENV
 
 HANG_GUARD = 30
 
@@ -52,7 +52,7 @@ def descriptors() -> Counter[str] | None:
 
 def assert_released(socket_root: Path, before: set[int], fds: Counter[str] | None) -> None:
     assert children() - before == set()
-    assert INFERENCE_ENDPOINT_ENV not in os.environ
+    assert INFERENCE_SOCKET_ENV not in os.environ
     assert list(socket_root.iterdir()) == []
     after = descriptors()
     if fds is not None and after is not None:

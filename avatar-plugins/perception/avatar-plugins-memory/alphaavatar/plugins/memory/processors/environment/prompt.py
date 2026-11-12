@@ -165,7 +165,7 @@ For metadata and annotations:
 - Use them as supporting evidence.
 - They may include entity_id, source_id, source_generation, device_id, or region labels.
 - An entity_id identifies a tracked entity within one source and generation.
-- A device_id identifies the sending endpoint; these local anchors do not establish a user identity.
+- A device_id identifies the sending device; these local anchors do not establish a user identity.
 
 ----------------------------------------------------------------------
 E) IDENTITY AND SAFETY RULES

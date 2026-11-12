@@ -47,7 +47,7 @@ Both `openai` and `voiceai` are AvatarModulePlugin factories. Agents configurati
 neither constructs a vendor SDK nor wraps one in LiveKitTTSAdapter. The adapter,
 SDK chunked streams and SDK audio emitter are removed from the TTS path.
 
-| Plugin | Endpoint | Requested wire format | Core output |
+| Plugin | Request path | Requested wire format | Core output |
 | --- | --- | --- | --- |
 | OpenAI | `/v1/audio/speech` | `response_format: pcm`, `stream_format: audio` | 24 kHz mono PCM_S16LE |
 | Voice.ai | `/api/v1/tts/speech/stream` | `audio_format: pcm_32000` | 32 kHz mono PCM_S16LE |
@@ -98,11 +98,11 @@ Vendor-account integration and listening tests remain required before release.
 
 Keys come from `OPENAI_API_KEY` and `VOICEAI_API_KEY`, or the variable
 `voice.stt.api_key_env` / `voice.tts.api_key_env` names, never YAML key fields. OpenAI
-also honors `OPENAI_BASE_URL`; `voice.tts.base_url` explicitly overrides the endpoint
-base for either provider. Remote endpoints require HTTPS; loopback HTTP is permitted
+also honors `OPENAI_BASE_URL`; `voice.tts.base_url` explicitly overrides the URL
+base for either provider. Remote servers require HTTPS; loopback HTTP is permitted
 for local gateways/tests. Embedded URL credentials, query strings, fragments and
 redirect following are rejected. Errors omit credentials, input text and HTTP error
-bodies. A local provider endpoint remains a trusted operator configuration.
+bodies. A local provider server remains a trusted operator configuration.
 
 OpenAI instructions are passed through when configured; models `tts-1` and `tts-1-hd`
 reject them. Voice.ai does not accept this instructions setting and rejects it

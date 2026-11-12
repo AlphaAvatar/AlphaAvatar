@@ -275,7 +275,7 @@ Keep transport identity, perceived entities, session participants and durable us
 
 | Concept | Owner / entry |
 | --- | --- |
-| Device/transport endpoint | RTC/Host adaptation into Core session contracts. |
+| Device/transport connection | RTC/Host adaptation into Core session contracts. |
 | Speaker/face evidence | [Persona processors](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/processors/). |
 | Segment association and readiness | [ParticipantRuntime](avatar-agents/alphaavatar/agents/runtime/modules/participants/). |
 | Accepted participant/user binding | [SessionRuntime](avatar-core/alphaavatar/core/session/). |
@@ -407,7 +407,7 @@ and [Persona README](avatar-plugins/perception/avatar-plugins-persona/README.md)
 
 ## 16. Inference runners and model assets
 
-InferenceRuntime owns worker processes and the shared endpoint.
+InferenceRuntime owns worker processes and the shared inference socket.
 InferenceExecutor owns client connections, while Host supervises the service.
 
 | Concern | Entry |
@@ -560,7 +560,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing package or release autom
 Real-service checks use the effective configuration and existing external-service controls.
 Doctor may download models or call remote providers when authorized/configured.
 Do not run paid experiments as an incidental consequence of import or documentation checks.
-Separate offline stubs, actual model inference, remote endpoints, RTC and renderer validation.
+Separate offline stubs, actual model inference, remote services, RTC and renderer validation.
 Record sample/configuration identity, failures and warm/first-run conditions when reporting timings.
 Do not claim speech completion correctness from a small latency-only sample.
 

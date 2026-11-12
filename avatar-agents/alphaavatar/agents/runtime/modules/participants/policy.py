@@ -18,7 +18,7 @@ from alphaavatar.core.session.schemas import AssociationRequest, SessionSnapshot
 
 
 class PrimaryParticipantIdentityPolicy(DefaultIdentityPolicy):
-    """Bootstrap one face and speaker for an unambiguous primary endpoint."""
+    """Bootstrap one face and speaker for an unambiguous primary device."""
 
     def select(self, request: AssociationRequest, *, snapshot: SessionSnapshot) -> str | None:
         primary = snapshot.primary_participant_id
@@ -27,7 +27,7 @@ class PrimaryParticipantIdentityPolicy(DefaultIdentityPolicy):
             or primary not in snapshot.participants
             or request.kind not in {"face", "speaker"}
             or request.candidate_count != 1
-            or request.endpoint_participant_id != primary
+            or request.device_participant_id != primary
             or (primary, request.kind) in request.occupied_kinds
             or any(value != primary for value in request.peer_participant_ids)
         ):

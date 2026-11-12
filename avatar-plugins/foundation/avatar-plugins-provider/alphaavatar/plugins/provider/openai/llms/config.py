@@ -35,7 +35,7 @@ class OpenAIClientConfig(BaseModel):
     def validate_base_url(cls, value: str) -> str:
         parsed = urlparse(value)
         if parsed.scheme not in {"https", "http"} or not parsed.hostname:
-            raise ValueError("OpenAI base_url must be an HTTP(S) endpoint")
+            raise ValueError("OpenAI base_url must be an HTTP(S) URL")
         if (
             parsed.username is not None
             or parsed.password is not None

@@ -37,12 +37,12 @@ CASES = {
 
 @pytest.fixture
 async def session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owned_endpoints: set[object]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owned_addresses: set[object]
 ) -> AsyncIterator[Chain]:
     """Two segments the turn-taking model holds across, each transcribed in time."""
     answers = ((0.3, "What is two plus"), (0.3, "three?"))
     async with configured_chain(
-        tmp_path, monkeypatch, owned_endpoints, answers, frozenset({"segment-a"})
+        tmp_path, monkeypatch, owned_addresses, answers, frozenset({"segment-a"})
     ) as chain:
         yield chain
 
@@ -55,7 +55,7 @@ async def test_a_turns_actors_are_its_segments_associations_never_its_device(
     participants = runtime.participants
     # Two people heard on the device, each a participant of their own besides its owner.
     people = {voice: participants.ensure_entity(session.speech, voice) for voice in (ALICE, BOB)}
-    primary = participants.resolve(DEVICE, endpoint=True)
+    primary = participants.resolve(DEVICE, by_device=True)
     assert primary is not None and primary not in people.values()
     for segment_id, (named, associated) in zip(
         ("segment-a", "segment-b"), CASES[case], strict=True

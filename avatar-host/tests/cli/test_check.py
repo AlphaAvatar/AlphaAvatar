@@ -101,7 +101,7 @@ def test_check_reports_valid_and_invalid_configurations_with_effective_overrides
         "  mcp            default  (1 server)",
         "",
     ]
-    # Selections and backend kinds only: no endpoint, collection or plugin-defined setting.
+    # Selections and backend kinds only: no service URL, collection or plugin-defined setting.
     assert "invalid" not in text + json.dumps(report)
     # The override is the configuration that would start, including its default workspace.
     assert report.keys() == {

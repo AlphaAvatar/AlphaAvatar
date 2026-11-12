@@ -141,7 +141,7 @@ class RecordingExecutor(InferenceExecutor):
     """Offline transport double; method routing stays in the plugin code under test."""
 
     def __init__(self, responses: dict[str, bytes]) -> None:
-        super().__init__("unused-test-endpoint")
+        super().__init__("unused-test-socket")
         self.responses, self.calls = responses, []
 
     async def do_inference(self, method: str, data: bytes) -> bytes | None:
@@ -228,7 +228,7 @@ async def test_in_process_and_spawned_runners_observe_the_same_launch(
     local.configure(launch)
     local.initialize()
 
-    # The child inherits a changed ambient endpoint; it must still use the frozen section.
+    # The child inherits a changed ambient vector store URL; it must still use the frozen section.
     with mock.patch.dict(os.environ, {"QDRANT_URL": "https://ambient-vectors.example"}):
         expected = {name: json.loads(local.run(name.encode())) for name in ("memory", "persona")}
         runtime = InferenceRuntime(

@@ -40,7 +40,7 @@ from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import (
-    INFERENCE_ENDPOINT_ENV,
+    INFERENCE_SOCKET_ENV,
     InferenceRuntime,
     RunnerLaunch,
 )
@@ -51,7 +51,7 @@ from alphaavatar.agents.runtime.plugin import (
     resolution as plugin_resolution,
 )
 from alphaavatar.agents.workspace import WorkspacePaths
-from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
+from alphaavatar.core.log.records import LOG_CLIENT_ENV
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.host.application.application import AvatarHost
 from alphaavatar.host.application.bootstrap import create_avatar_runtime
@@ -176,7 +176,7 @@ class RecordingInference(InferenceRuntime):
 
 @asynccontextmanager
 async def shared_inference(
-    root: Path, owned_endpoints: set[object]
+    root: Path, owned_addresses: set[object]
 ) -> AsyncIterator[RecordingInference]:
     service = RecordingInference(
         {JOURNAL: JournalRunner},
@@ -189,7 +189,7 @@ async def shared_inference(
     try:
         async with asyncio.timeout(HANG_GUARD):
             await service.start()
-        owned_endpoints.add(service.endpoint)
+        owned_addresses.add(service.socket_path)
         yield service
     finally:
         await service.close()
@@ -241,7 +241,7 @@ def pid_exists(pid: int) -> bool:
 async def test_bootstrap_rollback_releases_every_resource_after_loop_initialization_fails(
     tmp_path: Path,
     socket_root: Path,
-    owned_endpoints: set[object],
+    owned_addresses: set[object],
     monkeypatch: pytest.MonkeyPatch,
     cleanup_failure: BaseException | None,
 ) -> None:
@@ -253,7 +253,7 @@ async def test_bootstrap_rollback_releases_every_resource_after_loop_initializat
     session = SessionRuntime(session_id="bootstrap")
     workspace = WorkspacePaths.from_root(tmp_path / "workspace")
 
-    async with shared_inference(tmp_path, owned_endpoints) as service:
+    async with shared_inference(tmp_path, owned_addresses) as service:
         with pytest.raises(RuntimeError, match="loop initialization failed") as failed:
             async with asyncio.timeout(HANG_GUARD):
                 await create_avatar_runtime(
@@ -277,7 +277,7 @@ async def test_bootstrap_rollback_releases_every_resource_after_loop_initializat
 
 
 async def test_cancelled_bootstrap_rolls_back_before_cancellation_propagates(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     events: list[str] = []
     loops = ProbePlugin(lambda runtime: ProbeLoop(runtime, events, blocked=True))
@@ -287,7 +287,7 @@ async def test_cancelled_bootstrap_rolls_back_before_cancellation_propagates(
     session = SessionRuntime(session_id="bootstrap")
     workspace = WorkspacePaths.from_root(tmp_path / "workspace")
 
-    async with shared_inference(tmp_path, owned_endpoints) as service:
+    async with shared_inference(tmp_path, owned_addresses) as service:
         bootstrap = asyncio.create_task(
             create_avatar_runtime(
                 avatar_config=AvatarConfig.model_validate({"avatar": {"id": "bootstrap"}}),
@@ -310,7 +310,7 @@ async def test_cancelled_bootstrap_rolls_back_before_cancellation_propagates(
 
 
 async def test_host_reaps_execution_children_before_releasing_shared_inference(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     site = tmp_path / "child-site"
     site.mkdir()
@@ -318,7 +318,7 @@ async def test_host_reaps_execution_children_before_releasing_shared_inference(
     avatar_host = host(tmp_path)
     manager = avatar_host._manager
 
-    async with shared_inference(tmp_path, owned_endpoints) as service:
+    async with shared_inference(tmp_path, owned_addresses) as service:
         avatar_host._inference = (
             service  # Real shared service; its model bootstrap is not under test.
         )
@@ -353,7 +353,7 @@ async def test_host_reaps_execution_children_before_releasing_shared_inference(
             "host_shutdown",
         )
         assert journal(tmp_path) == [f"final:{child.pid}"]
-        assert not service.is_alive and INFERENCE_ENDPOINT_ENV not in os.environ
+        assert not service.is_alive and INFERENCE_SOCKET_ENV not in os.environ
     assert not pid_exists(child.pid)
 
 
@@ -367,7 +367,7 @@ print(json.dumps({{
     "isolated": sys.flags.isolated,
     "caller_site": getattr(sys.modules.get("sitecustomize"), "CALLER", False),
     "environment": [os.environ.get(name) for name in
-                    ("OPENAI_API_KEY", {LOG_ENDPOINT_ENV!r}, {INFERENCE_ENDPOINT_ENV!r})],
+                    ("OPENAI_API_KEY", {LOG_CLIENT_ENV!r}, {INFERENCE_SOCKET_ENV!r})],
     "entrypoint": find_spec("alphaavatar.host.processes.entrypoint").origin,
 }}))
 """
@@ -390,7 +390,7 @@ def test_an_execution_child_is_isolated_exactly_when_its_host_is(
     (site / "sitecustomize.py").write_text("CALLER = True\n")
     passed = ["sk-fictional", "127.0.0.1:1", "/run/inference.sock"]
     environment = os.environ | dict(
-        zip(("OPENAI_API_KEY", LOG_ENDPOINT_ENV, INFERENCE_ENDPOINT_ENV), passed, strict=True)
+        zip(("OPENAI_API_KEY", LOG_CLIENT_ENV, INFERENCE_SOCKET_ENV), passed, strict=True)
     )
     # An installed command runs the Host with -I; this workspace's editable environment
     # runs it either way, the caller's PYTHONPATH set.
@@ -435,14 +435,14 @@ async def test_the_execution_child_starts_with_the_hosts_interpreter(
 
 
 async def test_host_keeps_shared_inference_while_execution_children_remain(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     avatar_host = host(tmp_path)
-    async with shared_inference(tmp_path, owned_endpoints) as service:
+    async with shared_inference(tmp_path, owned_addresses) as service:
         avatar_host._inference = service
         await avatar_host._health.on_start()
         port = avatar_host._health.port
-        # An unreaped child could still be using the endpoint: model it at the supervisor boundary.
+        # An unreaped child could still be using the socket: model it at the supervisor boundary.
         monkeypatch.setattr(ProcessSupervisor, "all_reaped", property(lambda _: False))
 
         with pytest.raises(ExceptionGroup) as failed:

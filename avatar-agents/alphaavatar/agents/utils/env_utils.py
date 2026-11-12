@@ -51,11 +51,11 @@ def resolve_env_placeholders(value: Any) -> Any:
 
 def server_key(url: str) -> str:
     """The variable `alphaavatar setup` stores a server of one's own's key in, named after that
-    endpoint: a default port and a trailing ``/`` are the same endpoint, another path is not."""
+    URL: a default port and a trailing ``/`` are the same URL, another path is not."""
     parts = urlsplit(url)
     port = parts.port or {"http": 80, "https": 443}[parts.scheme]
-    endpoint = f"{parts.scheme}://[{parts.hostname}]:{port}{parts.path.rstrip('/')}"
-    return SERVER_KEY + hashlib.sha256(endpoint.encode()).hexdigest()[:12].upper()
+    normalized = f"{parts.scheme}://[{parts.hostname}]:{port}{parts.path.rstrip('/')}"
+    return SERVER_KEY + hashlib.sha256(normalized.encode()).hexdigest()[:12].upper()
 
 
 def check_server_key(api_key_env: Any, base_url: Any) -> None:
@@ -67,7 +67,7 @@ def check_server_key(api_key_env: Any, base_url: Any) -> None:
 
     try:
         serves = isinstance(base_url, str) and server_key(base_url) == api_key_env
-    except (KeyError, ValueError):  # Not an http(s) URL, or no valid port: no endpoint.
+    except (KeyError, ValueError):  # Not an http(s) URL, or no valid port: no server URL.
         serves = False
     if not serves:
         # The URL is not repeated: it may embed credentials.

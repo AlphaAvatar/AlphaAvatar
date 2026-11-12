@@ -153,7 +153,7 @@ host:
     color: never
 ```
 
-Use the startup logs and local health endpoints to check progress:
+Use the startup logs and local health checks to check progress:
 
 ```bash
 curl --fail http://127.0.0.1:8081/live
@@ -163,7 +163,7 @@ curl --fail http://127.0.0.1:8081/status
 
 `/live` checks the Host process, `/ready` checks service readiness, and `/status` explains
 runner and execution state without configuration or credentials. Readiness is not proof of
-successful speech, tool calls or playback. These endpoints are not authenticated: they bind to
+successful speech, tool calls or playback. These paths are not authenticated: they bind to
 `127.0.0.1` unless `host.health.bind` is set, so expose them only behind your deployment
 network controls. Press Ctrl+C and wait for normal shutdown before
 installing the service.

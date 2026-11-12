@@ -37,11 +37,11 @@ async def session(
     request: pytest.FixtureRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    owned_endpoints: set[object],
+    owned_addresses: set[object],
 ) -> AsyncIterator[Chain]:
     """The parameter is (answers, continues): how its transcription service answers, request
     by request, and the segments the turn-taking model holds."""
-    async with configured_chain(tmp_path, monkeypatch, owned_endpoints, *request.param) as chain:
+    async with configured_chain(tmp_path, monkeypatch, owned_addresses, *request.param) as chain:
         yield chain
 
 

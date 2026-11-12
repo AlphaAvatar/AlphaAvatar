@@ -24,7 +24,7 @@ from typing import Any
 
 from .diagnostics import format_error
 from .events import LABELS, MAX_CONTENT_CHARS, TRACE_EVENTS, ConversationEvent, safe_fields
-from .records import LOG_ENDPOINT_ENV, MAX_TEXT_CHARS, LogEntry, Redactor, clean
+from .records import LOG_CLIENT_ENV, MAX_TEXT_CHARS, LogEntry, Redactor, clean
 
 # Diagnostic formatting must not allocate an arbitrarily padded field on a producer loop.
 _UNBOUNDED_FORMAT = re.compile(r"%(?:\([^)]*\))?[#0 +\-]*(?:\d{5,}|\*|\d*\.(?:\d{5,}|\*))")
@@ -210,11 +210,11 @@ class LogClient(logging.Handler):
 
 
 def configure_from_env() -> LogClient | None:
-    raw = os.getenv(LOG_ENDPOINT_ENV)
+    raw = os.getenv(LOG_CLIENT_ENV)
     if raw is None:
         return None
     if len(raw) > 4096:
-        raise ValueError("Invalid logging endpoint configuration")
+        raise ValueError("Invalid log client configuration")
     data = json.loads(raw)
     if not isinstance(data, dict) or set(data) != {
         "path",
@@ -223,11 +223,11 @@ def configure_from_env() -> LogClient | None:
         "third_party_level",
         "conversation",
     }:
-        raise ValueError("Invalid logging endpoint fields")
+        raise ValueError("Invalid log client fields")
     if not isinstance(data["path"], str) or not os.path.isabs(data["path"]):
-        raise ValueError("Logging endpoint must be absolute")
+        raise ValueError("Log receiver path must be absolute")
     if not isinstance(data["token"], str) or len(data["token"]) != 64:
-        raise ValueError("Invalid logging endpoint credential")
+        raise ValueError("Invalid log receiver token")
     if any(
         type(data[key]) is not int or data[key] not in (10, 20, 30, 40, 50)
         for key in ("level", "third_party_level")

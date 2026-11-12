@@ -193,7 +193,7 @@ class PCMHTTPProvider(TTSBase):
         if port == 0:
             raise ValueError("TTS URL needs a port from 1 to 65535, or none")
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
-            raise ValueError("Remote TTS endpoints require HTTPS")
+            raise ValueError("Remote TTS servers require HTTPS")
         if not isinstance(api_key, str) or not api_key.strip() or any(c.isspace() for c in api_key):
             raise ValueError(f"{provider} TTS requires a nonempty API key without whitespace")
         if type(sample_rate) is not int or sample_rate <= 0:

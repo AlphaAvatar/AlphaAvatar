@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""The shared harness rejects ambiguous stress budgets and endpoints a test does not own."""
+"""The shared harness rejects ambiguous stress budgets and addresses a test does not own."""
 
 from __future__ import annotations
 
@@ -58,26 +58,26 @@ def test_stress_budget_must_be_finite_and_nonnegative(value: str, code: int) -> 
         (socket.AF_INET6, ("::1", 443, 0, 0)),
     ],
 )
-def test_owned_endpoints_accept_only_local_addresses(
-    family: int, address: object, owned_endpoints: set[object]
+def test_owned_addresses_accept_only_local_ones(
+    family: int, address: object, owned_addresses: set[object]
 ) -> None:
     with pytest.raises(TypeError):
-        owned_endpoints.add(address)
+        owned_addresses.add(address)
     # Set operators bypass add(); the connect/sendto boundary must still refuse the address.
-    owned_endpoints ^= {address}
-    owned_endpoints.symmetric_difference_update({("192.0.2.1", 80)})
+    owned_addresses ^= {address}
+    owned_addresses.symmetric_difference_update({("192.0.2.1", 80)})
     with socket.socket(family, socket.SOCK_STREAM) as sock:
-        assert not owned_endpoints.allows(sock, address)
+        assert not owned_addresses.allows(sock, address)
         if family != socket.AF_UNIX:
-            assert not owned_endpoints.allows(sock, ("192.0.2.1", 80))
+            assert not owned_addresses.allows(sock, ("192.0.2.1", 80))
 
 
-def test_owned_unix_endpoint_is_reachable(socket_root: Path, owned_endpoints: set[object]) -> None:
+def test_owned_unix_socket_is_reachable(socket_root: Path, owned_addresses: set[object]) -> None:
     path = str(socket_root / "owned.sock")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind(path)
         server.listen()
-        owned_endpoints.add(path)
+        owned_addresses.add(path)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(path)
             accepted, _ = server.accept()

@@ -21,7 +21,7 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .protocol import (
     CONNECT,
-    INFERENCE_ENDPOINT_ENV,
+    INFERENCE_SOCKET_ENV,
     REQUEST,
     RESULT,
     RESULT_NONE,
@@ -43,14 +43,14 @@ if TYPE_CHECKING:
 class _InferenceConnection:
     def __init__(
         self,
-        endpoint: str,
+        socket_path: str,
         method: str,
         *,
         request_timeout: float,
         close_timeout: float,
         max_pending: int,
     ) -> None:
-        self._endpoint, self._method = endpoint, method
+        self._socket_path, self._method = socket_path, method
         self._request_timeout, self._close_timeout = request_timeout, close_timeout
         self._max_pending = max_pending
         self._reader: asyncio.StreamReader | None = None
@@ -91,7 +91,7 @@ class _InferenceConnection:
         if self._writer is not None:
             return
 
-        self._reader, self._writer = await asyncio.open_unix_connection(self._endpoint)
+        self._reader, self._writer = await asyncio.open_unix_connection(self._socket_path)
         await write_frame(self._writer, CONNECT + self._method.encode("utf-8"))
         response = await read_frame(self._reader)
         self._service_budget = service_budget(response)
@@ -167,7 +167,7 @@ class _InferenceChannels:
 
     def __init__(
         self,
-        endpoint: str,
+        socket_path: str,
         method: str,
         *,
         channels: int,
@@ -182,7 +182,7 @@ class _InferenceChannels:
         )
         self._connections = tuple(
             _InferenceConnection(
-                endpoint,
+                socket_path,
                 method,
                 request_timeout=request_timeout,
                 close_timeout=close_timeout,
@@ -235,16 +235,16 @@ class InferenceExecutor:
     """
 
     def __init__(
-        self, endpoint: str, config: InferenceConfig | None = None, *, max_connections: int = 128
+        self, socket_path: str, config: InferenceConfig | None = None, *, max_connections: int = 128
     ) -> None:
-        if not isinstance(endpoint, str) or not endpoint:
-            raise ValueError("Inference endpoint cannot be empty")
+        if not isinstance(socket_path, str) or not socket_path:
+            raise ValueError("Inference socket path cannot be empty")
         if config is None:
             from alphaavatar.agents.configs.runtime_config import InferenceConfig
 
             config = InferenceConfig()
 
-        self._endpoint, self._config = endpoint, config
+        self._socket_path, self._config = socket_path, config
         self._request_timeout = positive_timeout(config.client_timeout, "client_timeout")
         self._close_timeout = positive_timeout(config.close_timeout, "close_timeout")
         self._max_connections = positive_limit(max_connections, "max_connections")
@@ -254,10 +254,10 @@ class InferenceExecutor:
 
     @classmethod
     def from_env(cls, config: InferenceConfig) -> InferenceExecutor:
-        endpoint = os.getenv(INFERENCE_ENDPOINT_ENV)
-        if not endpoint:
-            raise RuntimeError(f"{INFERENCE_ENDPOINT_ENV} is not configured")
-        return cls(endpoint, config)
+        socket_path = os.getenv(INFERENCE_SOCKET_ENV)
+        if not socket_path:
+            raise RuntimeError(f"{INFERENCE_SOCKET_ENV} is not configured")
+        return cls(socket_path, config)
 
     async def do_inference(self, method: str, data: bytes) -> bytes | None:
         validate_method(method)
@@ -269,7 +269,7 @@ class InferenceExecutor:
             if len(self._connections) >= self._max_connections:
                 raise RuntimeError("Inference executor connection capacity exhausted")
             channels = _InferenceChannels(
-                self._endpoint,
+                self._socket_path,
                 method,
                 channels=self._config.workers(method),
                 request_timeout=self._request_timeout,

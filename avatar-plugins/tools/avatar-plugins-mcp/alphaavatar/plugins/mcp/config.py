@@ -48,5 +48,5 @@ class MCPServerConfig(BaseModel):
             raise ValueError("MCP URL must be HTTP(S), without embedded credentials or a fragment")
         _ = parsed.port
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
-            raise ValueError("Remote MCP endpoints require HTTPS")
+            raise ValueError("Remote MCP servers require HTTPS")
         return self

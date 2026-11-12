@@ -16,7 +16,7 @@
 The configuration is loaded and the session assembled as start assembles it: the Router from
 its own factory, which gives turn taking the segment STT's fallback notice, the segment STT
 itself, Context, Loop and Engine, at their default deadlines. Stand-ins: the transcription
-service (a loopback endpoint that answers each request after its delay), the VAD (speech
+service (a loopback server that answers each request after its delay), the VAD (speech
 published as Audio Activity publishes it), the turn-taking model, the model provider
 (it records each request), the TTS (silence, at real time) and Memory and Persona (empty).
 """
@@ -41,7 +41,7 @@ from alphaavatar.agents.avatar.provider.schemas import ModelInputMessage, ModelT
 from alphaavatar.agents.router.enums import AssessmentLabel, TurnTakingMode
 from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
 from alphaavatar.agents.router.schemas import TurnTakingAssessment, TurnTakingEvidence
-from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
+from alphaavatar.agents.runtime.inference.protocol import INFERENCE_SOCKET_ENV
 from alphaavatar.agents.runtime.plugin import AvatarModule, resolution
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.schemas import (
@@ -236,7 +236,7 @@ class Chain:
 async def configured_chain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    owned_endpoints: set[object],
+    owned_addresses: set[object],
     answers: tuple[tuple[float, str], ...],
     continues: frozenset[str] = frozenset(),
 ) -> AsyncIterator[Chain]:
@@ -244,7 +244,7 @@ async def configured_chain(
     request, its turn-taking model holds the segments it ``continues``."""
     server = await asyncio.start_server(Transcriber(*answers), "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    owned_endpoints.add(("127.0.0.1", port))
+    owned_addresses.add(("127.0.0.1", port))
     model = Recorder(tmp_path)
     for module, name, create in (
         (AvatarModule.PROVIDER_LLM, "scripted", lambda: model),
@@ -300,7 +300,7 @@ async def configured_chain(
     )
     environ = {
         "OPENAI_API_KEY": "sk-fictional",
-        INFERENCE_ENDPOINT_ENV: str(tmp_path / "unused.sock"),
+        INFERENCE_SOCKET_ENV: str(tmp_path / "unused.sock"),
     }
     try:
         with mock.patch.dict(os.environ, environ):

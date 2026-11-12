@@ -147,7 +147,7 @@ def _local_address(address: object) -> bool:
     )
 
 
-class _OwnedEndpoints(set):
+class _OwnedAddresses(set):
     """Absolute AF_UNIX paths or numeric loopback (host, port) pairs the test serves itself."""
 
     def add(self, address: object) -> None:
@@ -167,24 +167,24 @@ class _OwnedEndpoints(set):
 
 
 @pytest.fixture
-def owned_endpoints(network_denied: None, monkeypatch: pytest.MonkeyPatch) -> set[object]:
+def owned_addresses(network_denied: None, monkeypatch: pytest.MonkeyPatch) -> set[object]:
     """Opt-in: reach only the AF_UNIX paths or loopback addresses this test registers."""
-    endpoints = _OwnedEndpoints()
+    addresses = _OwnedAddresses()
     refuse_connect, refuse_sendto = socket.socket.connect, socket.socket.sendto
 
     def connect(sock: socket.socket, address: object) -> None:
-        if endpoints.allows(sock, address):
+        if addresses.allows(sock, address):
             return _socket.socket.connect(sock, address)
         return refuse_connect(sock, address)
 
     def sendto(sock: socket.socket, data: bytes, *args: object) -> int:
-        if args and endpoints.allows(sock, args[-1]):
+        if args and addresses.allows(sock, args[-1]):
             return _socket.socket.sendto(sock, data, *args)
         return refuse_sendto(sock, data, *args)
 
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "sendto", sendto)
-    return endpoints
+    return addresses
 
 
 @pytest.fixture

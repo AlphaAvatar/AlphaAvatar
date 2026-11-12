@@ -75,7 +75,7 @@ SECTIONS = {
 rtc:
   backend: livekit  # Session transport; LIVEKIT_* in the environment hold its credentials.
 health:
-  bind: 127.0.0.1  # Readiness endpoint; 0.0.0.0 would expose it to the network.
+  bind: 127.0.0.1  # Health server; 0.0.0.0 would expose it to the network.
 log:
   file: true  # Diagnostic log files in the workspace's .logs/host.
 doctor:

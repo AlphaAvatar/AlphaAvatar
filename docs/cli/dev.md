@@ -9,6 +9,6 @@ ENV_FILE=.env.dev alphaavatar dev [<bundle> | <file>] [KEY=VALUE ...]
 Same as [`alphaavatar start`](start.md), except:
 
 - DEBUG logging.
-- Health endpoints use any free port.
+- The health server uses any free port.
 
 It does not watch files or reload code.

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Shared InferenceRuntime ownership over real spawned runners and the owned local endpoint."""
+"""Shared InferenceRuntime ownership over real spawned runners and the owned local socket."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from inference_runner_samples import (
 
 from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.runtime.inference import (
-    INFERENCE_ENDPOINT_ENV,
+    INFERENCE_SOCKET_ENV,
     InferenceExecutor,
     InferenceRunner,
     InferenceRuntime,
@@ -79,15 +79,15 @@ def load(runtime: InferenceRuntime, method: str) -> tuple[int, int]:
 
 
 async def test_methods_progress_independently_while_each_method_stays_serial(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     runtime = service(tmp_path, JournalRunner, EchoRunner)
     first = second = None
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        first, second = InferenceExecutor(runtime.endpoint), InferenceExecutor(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
+        first, second = (InferenceExecutor(runtime.socket_path) for _ in range(2))
 
         blocked = asyncio.create_task(first.do_inference(JOURNAL, b"gate:a"))
         await wait_until(lambda: (tmp_path / "a.entered").exists(), "the gate was never entered")
@@ -116,18 +116,20 @@ async def test_methods_progress_independently_while_each_method_stays_serial(
 
 
 async def test_capacity_limits_reject_excess_work_without_disturbing_admitted_requests(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     runtime = service(tmp_path, JournalRunner, EchoRunner, max_pending=2)
     executors: list[InferenceExecutor] = []
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
         limited = InferenceExecutor(
-            runtime.endpoint, InferenceConfig(max_pending=1), max_connections=1
+            runtime.socket_path, InferenceConfig(max_pending=1), max_connections=1
         )
-        queued_session, rejected_session = (InferenceExecutor(runtime.endpoint) for _ in range(2))
+        queued_session, rejected_session = (
+            InferenceExecutor(runtime.socket_path) for _ in range(2)
+        )
         executors.extend((limited, queued_session, rejected_session))
 
         blocked = asyncio.create_task(limited.do_inference(JOURNAL, b"gate:b"))
@@ -156,7 +158,7 @@ async def test_capacity_limits_reject_excess_work_without_disturbing_admitted_re
 
 
 async def test_failed_runner_recovers_in_a_new_process_without_replaying_attempted_work(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     before = children()
     runtime = service(tmp_path, JournalRunner, EchoRunner, restart_limit=2)
@@ -164,8 +166,8 @@ async def test_failed_runner_recovers_in_a_new_process_without_replaying_attempt
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
+        executor = InferenceExecutor(runtime.socket_path)
         first_pid = int(await executor.do_inference(JOURNAL, b"pid"))
         assert await executor.do_inference(ECHO, b"connected") == b"connected"
 
@@ -223,15 +225,15 @@ async def test_failed_runner_recovers_in_a_new_process_without_replaying_attempt
 
 
 async def test_failed_method_does_not_refuse_first_use_of_a_healthy_method(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     runtime = service(tmp_path, JournalRunner, SecondJournalRunner)
     executor = None
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
+        executor = InferenceExecutor(runtime.socket_path)
         os.kill(int(await executor.do_inference(JOURNAL, b"pid")), signal.SIGKILL)
         await wait_until(lambda: not runtime.is_alive, "the killed runner was never observed")
 
@@ -269,15 +271,15 @@ async def test_failed_method_does_not_refuse_first_use_of_a_healthy_method(
 
 
 async def test_cancelled_client_releases_its_channel_without_receiving_a_stale_result(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     runtime = service(tmp_path, JournalRunner)
     executor = None
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
+        executor = InferenceExecutor(runtime.socket_path)
         pid = await executor.do_inference(JOURNAL, b"pid")
 
         caller = asyncio.create_task(executor.do_inference(JOURNAL, b"gate:c"))
@@ -297,7 +299,7 @@ async def test_cancelled_client_releases_its_channel_without_receiving_a_stale_r
         await runtime.close()
 
 
-async def test_partial_start_failure_reaps_started_runners_and_releases_the_endpoint(
+async def test_partial_start_failure_reaps_started_runners_and_releases_the_socket(
     tmp_path: Path, socket_root: Path
 ) -> None:
     before, fds = children(), descriptors()
@@ -314,19 +316,19 @@ async def test_partial_start_failure_reaps_started_runners_and_releases_the_endp
     # The runner after the failure was never spawned.
     assert journal(tmp_path) == [] and not (tmp_path / f"{JOURNAL}.journal").exists()
     with pytest.raises(RuntimeError, match="not ready"):
-        _ = runtime.endpoint
+        _ = runtime.socket_path
     assert_released(socket_root, before, fds)
 
 
-async def test_runner_close_failure_still_reaps_every_runner_and_releases_the_endpoint(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+async def test_runner_close_failure_still_reaps_every_runner_and_releases_the_socket(
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     before, fds = children(), descriptors()
     runtime = service(tmp_path, EchoRunner, FailingCloseRunner, JournalRunner)
     async with asyncio.timeout(HANG_GUARD):
         await runtime.start()
-    owned_endpoints.add(runtime.endpoint)
-    executor = InferenceExecutor(runtime.endpoint)
+    owned_addresses.add(runtime.socket_path)
+    executor = InferenceExecutor(runtime.socket_path)
     for method in (ECHO, FailingCloseRunner.INFERENCE_METHOD, JOURNAL):
         assert await executor.do_inference(method, method.encode()) == method.encode()
     await executor.close()
@@ -342,8 +344,8 @@ async def test_runner_close_failure_still_reaps_every_runner_and_releases_the_en
     assert_released(socket_root, before, fds)
 
 
-async def test_repeated_start_stop_reclaims_processes_descriptors_and_endpoint(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+async def test_repeated_start_stop_reclaims_processes_descriptors_and_socket(
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     before, fds = children(), descriptors()
     # The second cycle proves a full restart; longer repetition is the stress test's job.
@@ -351,16 +353,16 @@ async def test_repeated_start_stop_reclaims_processes_descriptors_and_endpoint(
         runtime = service(tmp_path, EchoRunner, JournalRunner)
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        endpoint = runtime.endpoint
-        owned_endpoints.add(endpoint)
+        socket_path = runtime.socket_path
+        owned_addresses.add(socket_path)
 
-        # A rival in the same process fails without releasing the owner's endpoint.
+        # A rival in the same process fails without releasing the owner's socket.
         rival = service(tmp_path, EchoRunner)
         with pytest.raises(RuntimeError, match="already configured"):
             await rival.start()
-        assert os.environ[INFERENCE_ENDPOINT_ENV] == endpoint and runtime.is_alive
+        assert os.environ[INFERENCE_SOCKET_ENV] == socket_path and runtime.is_alive
 
-        executor = InferenceExecutor(endpoint)
+        executor = InferenceExecutor(socket_path)
         assert (
             await executor.do_inference(ECHO, f"echo:{cycle}".encode()) == f"echo:{cycle}".encode()
         )
@@ -371,7 +373,7 @@ async def test_repeated_start_stop_reclaims_processes_descriptors_and_endpoint(
         await executor.close()
         async with asyncio.timeout(HANG_GUARD):
             await runtime.close()
-        assert not Path(endpoint).exists()
+        assert not Path(socket_path).exists()
         assert_released(socket_root, before, fds)
     assert [data for _, data in journal(tmp_path)] == ["cycle:0", "cycle:1"]
     assert len({pid for pid, _ in journal(tmp_path)}) == 2

@@ -79,7 +79,7 @@ host:
 ```
 
 LiveKit requires `LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`. Model and
-tool providers need their own credentials. Remote endpoints require TLS.
+tool providers need their own credentials. Remote services require TLS.
 
 | Connection mode | Behavior |
 | --- | --- |
@@ -111,7 +111,7 @@ PCM streams at the provider's native pace; caption publication and network sendi
 pace audio capture. PCM-only providers use estimated word timing, corrected by measured
 audio duration. LiveKit playback feedback measures the local audio queue, not remote speakers.
 
-The health endpoints are `/live`, `/ready` and `/status`. They are unauthenticated and bind
+The health check paths are `/live`, `/ready` and `/status`. They are unauthenticated and bind
 to `127.0.0.1` by default; set `host.health.bind` explicitly only behind network controls.
 `/status` reports readiness, runner startup states and recent execution ids and codes; it
 returns no configuration or credentials.

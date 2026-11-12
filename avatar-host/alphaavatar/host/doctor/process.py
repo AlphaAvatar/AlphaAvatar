@@ -13,12 +13,12 @@
 # limitations under the License.
 """Doctor's diagnostic process: the session runs in a process of Doctor's own.
 
-Its runtime starts as ``start`` starts one, model downloads included; the inference endpoint
+Its runtime starts as ``start`` starts one, model downloads included; the inference socket
 and the captured logs belong to that process, so the caller's environment, loggers and
-children stay as they were; the
-endpoints a Host caller exports are not inherited, and the caller's terminal shows its report
-alone: what the process and its runners print goes to a file beside the report, whose last line
-names why a process that ends without a report did. The
+children stay as they were; the inference socket and log client a Host caller exports are not
+inherited, and the caller's terminal shows its report alone: what the process and its runners
+print goes to a file beside the report, whose last line names why a process that ends without a
+report did. The
 process leads its own process group, so the terminal's Ctrl+C reaches only the caller, which
 asks it to stop by closing a pipe; a caller that dies closes it too. The caller owns the
 temporary directory, which is also the process's temporary root (its runtime's socket goes
@@ -221,12 +221,12 @@ def _main(
     os.dup2(output, 2)
     os.close(output)
     from alphaavatar.agents.runtime.inference.bootstrap import INFERENCE_PLAN_ENV
-    from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
-    from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
+    from alphaavatar.agents.runtime.inference.protocol import INFERENCE_SOCKET_ENV
+    from alphaavatar.core.log.records import LOG_CLIENT_ENV
 
     # A Host running Doctor exports its own inference runtime and log receiver; this process
     # and its runners use their own, never the caller's.
-    for name in (INFERENCE_ENDPOINT_ENV, INFERENCE_PLAN_ENV, LOG_ENDPOINT_ENV):
+    for name in (INFERENCE_SOCKET_ENV, INFERENCE_PLAN_ENV, LOG_CLIENT_ENV):
         os.environ.pop(name, None)
     # Temporary files of this process and its runners go where the caller removes them.
     os.environ["TMPDIR"] = os.path.join(run, "tmp")

@@ -26,7 +26,7 @@ from unittest import mock
 
 import pytest
 
-from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
+from alphaavatar.core.log.records import LOG_CLIENT_ENV
 from alphaavatar.host.log.config import LogConfig
 from alphaavatar.host.log.runtime import HostLog
 
@@ -34,12 +34,12 @@ HANG_GUARD = 30
 
 
 def test_a_record_queued_after_an_empty_wait_is_written_before_close_returns(
-    socket_root: Path, owned_endpoints: set[object]
+    socket_root: Path, owned_addresses: set[object]
 ) -> None:
     real_select, stream = select.select, io.StringIO()
     armed, parked = threading.Event(), threading.Event()
     logs = HostLog(devmode=False, stream=stream)
-    owned_endpoints.add(json.loads(os.environ[LOG_ENDPOINT_ENV])["path"])
+    owned_addresses.add(json.loads(os.environ[LOG_CLIENT_ENV])["path"])
 
     def wait(*args: object) -> tuple[list, list, list]:
         result = real_select(*args)
@@ -62,11 +62,11 @@ def test_a_record_queued_after_an_empty_wait_is_written_before_close_returns(
 
 
 def test_close_under_unending_input_fails_at_its_deadline_and_the_writer_still_exits(
-    socket_root: Path, owned_endpoints: set[object]
+    socket_root: Path, owned_addresses: set[object]
 ) -> None:
     real_select, flooding = select.select, threading.Event()
     logs = HostLog(devmode=False, stream=io.StringIO())
-    owned_endpoints.add(json.loads(os.environ[LOG_ENDPOINT_ENV])["path"])
+    owned_addresses.add(json.loads(os.environ[LOG_CLIENT_ENV])["path"])
     logs.activate(LogConfig(file=False, shutdown_timeout=0.1))
 
     def busy(*args: object) -> tuple[list, list, list]:

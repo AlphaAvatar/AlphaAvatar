@@ -817,6 +817,19 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 
 **用词**（审阅时指出）：用户库里给每个用户存的那条声纹向量，之前在文档和代码里叫"模板"/"template"，说法不准确，统一改为"用户存储的声纹"（英文 stored speaker vector）。本日志各批的文字一并改了，数字和结论不变。代码随之改名：`_BaseProfile.template_only()` 改为 `speaker_vector_only()`；`storage/store.py` 的局部变量、测试替身的 `templates` 参数改为 `speaker_vectors`；第五批的两个回归改为 `test_a_save_merges_the_sessions_voice_into_the_stored_speaker_vector_loaded_for_its_user` 与 `test_a_rebound_participant_saves_into_its_new_users_stored_speaker_vector_alone`，第五批一节保留当时的函数名。评估材料（含冻结的协议和 `examples-templates-*` 等文件名）没有改。
 
+**标识文档**（审阅时要求）：`docs/identifiers-zh.md` 新增 2.2「映射的数量与生命周期」，按当前代码用一张映射图写明语音段、实体、参与者、设备、用户和 Persona cache 之间的关系，以及主参与者策略、跟踪退役带来的"一个用户对应多个参与者"；原 2.2 改为 2.3。
+
+**按实际用途命名**（审阅时要求）：代码、测试和现行文档里的相关名称都按用途改写，旧名称见本次差异；历史工作日志和发布说明没有改。
+
+| 用途 | 现在的名称 |
+|---|---|
+| 按设备找参与者 | `ParticipantRuntime.resolve(..., by_device=)`、`AvatarEngine._participant_entity(..., by_device=)` |
+| 设备绑定的参与者 | `AssociationRequest.device_participant_id` |
+| 推理服务的 Unix socket 路径 | `ALPHAAVATAR_INFERENCE_SOCKET`／`INFERENCE_SOCKET_ENV`、`InferenceRuntime.socket_path`、`InferenceExecutor(socket_path)` |
+| 子进程日志客户端的配置（socket 路径、令牌、级别） | `ALPHAAVATAR_LOG_CLIENT`／`LOG_CLIENT_ENV` |
+| 测试允许连接的本地地址；Host 本地 socket 的测试 | `owned_addresses`；`avatar-host/tests/test_local_sockets.py` |
+| 错误信息、注释和文档 | 按语境写设备、服务器、URL、请求路径、健康检查路径 |
+
 ## 验证
 
 - **全量测试与检查**：全量跑了两次。第一次 696 个全部通过。第二次在删去未用字段之后，695 通过、1 失败。

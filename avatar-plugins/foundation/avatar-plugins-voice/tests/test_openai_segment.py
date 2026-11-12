@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""The segment STT's requests against a transcription endpoint on loopback that answers as
+"""The segment STT's requests against a transcription server on loopback that answers as
 the real one does, an HTTP/1.1 chunked event stream ended by ``data: [DONE]``: their timing,
 the connection they keep, and the response's rest after the segment's outcome."""
 
@@ -35,7 +35,7 @@ from alphaavatar.core.media import AudioFrame
 from alphaavatar.plugins.voice.stt import openai_segment
 from alphaavatar.plugins.voice.stt.openai_segment import OpenAISegmentSTT
 
-ANSWER_AFTER = 0.3  # The endpoint's own time before it answers
+ANSWER_AFTER = 0.3  # The server's own time before it answers
 FIRST_AFTER = DONE_AFTER = 0.05  # Then to its first event, and from that to the done
 LATE_END = 0.1  # A body whose end comes after its [DONE], within the tail's bound
 
@@ -51,15 +51,15 @@ def chunk(data: bytes) -> bytes:
 DELTA = line({"type": "transcript.text.delta", "delta": "Hello"})
 DONE = line({"type": "transcript.text.done", "text": "Hello"})
 AGAIN = line({"type": "transcript.text.done", "text": "Hello again"})
-FAILED = line({"error": {"message": "the endpoint failed"}})
+FAILED = line({"error": {"message": "the server failed"}})
 END = line("[DONE]")
 LAST = b"0\r\n\r\n"  # The chunked body's end
 STREAM = b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream; charset=utf-8\r\n"
 STREAM += b"transfer-encoding: chunked\r\nconnection: keep-alive\r\n\r\n"
 
 
-class Endpoint:
-    """A transcription endpoint, keep-alive: each request answered after its wait, its events
+class TranscriptionService:
+    """A transcription server, keep-alive: each request answered after its wait, its events
     spaced, as the real one answers; ``answers`` says, request by request, how the answer goes
     on or ends: ``end`` (the default), an event and [DONE] split across chunks, a second done,
     a body end that comes late, never or not at all (a cut), a done whose lines CR alone ends
@@ -147,10 +147,12 @@ class Endpoint:
         writer.close()
 
 
-async def serve(endpoint: Endpoint, owned_endpoints: set[object]) -> tuple[asyncio.Server, str]:
-    server = await asyncio.start_server(endpoint, "127.0.0.1", 0)
+async def serve(
+    service: TranscriptionService, owned_addresses: set[object]
+) -> tuple[asyncio.Server, str]:
+    server = await asyncio.start_server(service, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    owned_endpoints.add(("127.0.0.1", port))
+    owned_addresses.add(("127.0.0.1", port))
     return server, f"http://127.0.0.1:{port}/v1"
 
 
@@ -187,11 +189,11 @@ def outcomes(seen: list[tuple]) -> list[tuple[str, str, str | None]]:
 
 
 async def test_each_segment_request_is_timed_by_its_queue_connection_and_exchange(
-    caplog: pytest.LogCaptureFixture, owned_endpoints: set[object]
+    caplog: pytest.LogCaptureFixture, owned_addresses: set[object]
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="alphaavatar")
-    endpoint = Endpoint()
-    server, url = await serve(endpoint, owned_endpoints)
+    service = TranscriptionService()
+    server, url = await serve(service, owned_addresses)
     stt = OpenAISegmentSTT(model="gpt-4o-transcribe", api_key="sk-fictional", base_url=url)
     # Three segments committed back to back: each waits in the queue for the one before.
     seen = await transcribe(stt, "seg-1", "seg-2", "seg-3")
@@ -204,13 +206,13 @@ async def test_each_segment_request_is_timed_by_its_queue_connection_and_exchang
     assert {t["outcome"] for t in timings} == {"final"}
     # The first opens the connection (plain HTTP: no TLS); each body read to its end past its
     # [DONE], the next two reuse it, with no connect to time: an unset figure is left out.
-    assert endpoint.connections == 1
+    assert service.connections == 1
     first, *rest = timings
     assert first["reused"] is False and first["connect_ms"] >= 0 and "tls_ms" not in first
     for timing in rest:
         assert timing["reused"] is True and not timing.keys() & {"connect_ms", "tls_ms"}
     for timing in timings:
-        # The endpoint's wait falls between the audio sent and the answer's headers, and in
+        # The server's wait falls between the audio sent and the answer's headers, and in
         # neither figure counted from those headers: they hold the events' own spacing.
         assert timing["wait_ms"] >= ANSWER_AFTER * 1000 - 5
         assert FIRST_AFTER * 1000 - 5 <= timing["first_event_ms"] < ANSWER_AFTER * 1000
@@ -223,11 +225,11 @@ async def test_each_segment_request_is_timed_by_its_queue_connection_and_exchang
 
 @pytest.mark.parametrize("answer", ["split", "again", "late", "stall", "stall-cr", "cut"])
 async def test_the_final_goes_out_once_and_the_bodys_rest_never_holds_the_next_segment(
-    answer: str, caplog: pytest.LogCaptureFixture, owned_endpoints: set[object]
+    answer: str, caplog: pytest.LogCaptureFixture, owned_addresses: set[object]
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="alphaavatar")
-    endpoint = Endpoint(answer)
-    server, url = await serve(endpoint, owned_endpoints)
+    service = TranscriptionService(answer)
+    server, url = await serve(service, owned_addresses)
     stt = OpenAISegmentSTT(model="gpt-4o-transcribe", api_key="sk-fictional", base_url=url)
     seen = await transcribe(stt, "seg-1", "seg-2")
     server.close()
@@ -243,17 +245,17 @@ async def test_the_final_goes_out_once_and_the_bodys_rest_never_holds_the_next_s
     assert first["outcome"] == second["outcome"] == "final"
     answered = (ANSWER_AFTER + FIRST_AFTER + DONE_AFTER) * 1000
     if answer in ("split", "again", "late"):  # Read to its end within the bound: kept.
-        assert endpoint.connections == 1 and second["reused"] is True
+        assert service.connections == 1 and second["reused"] is True
         if answer == "late":  # The final did not wait for the body's end.
-            assert endpoint.ended[0] - seen[0][3] >= LATE_END - 0.02
+            assert service.ended[0] - seen[0][3] >= LATE_END - 0.02
         return
     # The connection whose body did not end is given up; the next segment opens another,
     # held by the tail no longer than its bound.
-    assert endpoint.connections == 2 and second["reused"] is False
+    assert service.connections == 2 and second["reused"] is False
     assert second["queue_ms"] < answered + openai_segment._TAIL_SEC * 1000 + 150
     if answer in ("stall", "stall-cr"):
         # The final went out as it arrived, the bound's length before its request ended.
-        assert seen[0][3] - endpoint.received[0] / 1e9 < answered / 1000 + 0.1
+        assert seen[0][3] - service.received[0] / 1e9 < answered / 1000 + 0.1
         logged = next(
             r.created for r in caplog.records if getattr(r.msg, "name", "") == "stt.request"
         )
@@ -263,10 +265,10 @@ async def test_the_final_goes_out_once_and_the_bodys_rest_never_holds_the_next_s
 
 
 async def test_a_close_that_hangs_is_bounded_with_the_tail_and_the_next_segment_goes_on(
-    caplog: pytest.LogCaptureFixture, owned_endpoints: set[object], monkeypatch: pytest.MonkeyPatch
+    caplog: pytest.LogCaptureFixture, owned_addresses: set[object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="alphaavatar")
-    server, url = await serve(Endpoint("stall"), owned_endpoints)
+    server, url = await serve(TranscriptionService("stall"), owned_addresses)
     real = openai._response.AsyncAPIResponse.close
     stuck: list[int] = []
 
@@ -295,10 +297,10 @@ async def test_a_close_that_hangs_is_bounded_with_the_tail_and_the_next_segment_
 
 
 async def test_closing_the_stream_in_a_tail_cancels_it_and_releases_its_connection(
-    owned_endpoints: set[object],
+    owned_addresses: set[object],
 ) -> None:
-    endpoint = Endpoint("stall")
-    server, url = await serve(endpoint, owned_endpoints)
+    service = TranscriptionService("stall")
+    server, url = await serve(service, owned_addresses)
     stt = OpenAISegmentSTT(model="gpt-4o-transcribe", api_key="sk-fictional", base_url=url)
     closed: list[float] = []
 
@@ -311,7 +313,7 @@ async def test_closing_the_stream_in_a_tail_cancels_it_and_releases_its_connecti
 
     seen = await transcribe(stt, "seg-1", then=close_in_the_tail)
     server.close()
-    async with asyncio.timeout(2):  # The endpoint saw its connection closed.
+    async with asyncio.timeout(2):  # The server saw its connection closed.
         await server.wait_closed()
     assert outcomes(seen) == [("FINAL_TRANSCRIPT", "seg-1", "Hello")]
     # The cancellation reached the request, whose response was closed: not left to its bound.
@@ -319,7 +321,7 @@ async def test_closing_the_stream_in_a_tail_cancels_it_and_releases_its_connecti
 
 
 NULL_DONE = line({"type": "transcript.text.done", "text": None})
-# The real endpoint's line ends in another form: CR alone, a BOM before them, and a Chinese
+# The real service's line ends in another form: CR alone, a BOM before them, and a Chinese
 # final whose UTF-8 bytes are cut between chunks.
 CHINESE = "data: " + json.dumps(
     {"type": "transcript.text.done", "text": "你好"}, ensure_ascii=False
@@ -351,11 +353,11 @@ async def test_each_answer_settles_its_segment_once_and_the_next_goes_on(
     kept: bool,
     logged: str,
     caplog: pytest.LogCaptureFixture,
-    owned_endpoints: set[object],
+    owned_addresses: set[object],
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="alphaavatar")
-    endpoint = Endpoint(answer)
-    server, url = await serve(endpoint, owned_endpoints)
+    service = TranscriptionService(answer)
+    server, url = await serve(service, owned_addresses)
     stt = OpenAISegmentSTT(model="gpt-4o-transcribe", api_key="sk-fictional", base_url=url)
     stream = stt.stream(source_id="microphone")
     for segment in ("seg-1", "seg-2"):
@@ -378,12 +380,12 @@ async def test_each_answer_settles_its_segment_once_and_the_next_goes_on(
     assert [(e[0], e[1]) for e in seen] == [(kind, "seg-1"), ("FINAL_TRANSCRIPT", "seg-2")]
     assert (seen[0][2], seen[0][3]) == (text, reason)
     # Read to its end, the answer kept its connection for the next segment.
-    assert (endpoint.connections, requests(caplog)[1]["reused"]) == (2 - kept, kept)
+    assert (service.connections, requests(caplog)[1]["reused"]) == (2 - kept, kept)
     # The request's log says what its consumer got: a final time for a valid final alone.
     first = requests(caplog)[0]
     assert first["outcome"] == logged
     assert ("final_ms" in first) is (logged == "final")
-    # A first event when the endpoint sent one before its outcome: none before a bare [DONE].
+    # A first event when the server sent one before its outcome: none before a bare [DONE].
     if logged in ("final", "invalid_final"):
         assert first["first_event_ms"] >= 0
     if logged == "missing_final":
@@ -391,10 +393,10 @@ async def test_each_answer_settles_its_segment_once_and_the_next_goes_on(
 
 
 async def test_a_request_the_transport_did_not_trace_is_not_counted_as_reused(
-    caplog: pytest.LogCaptureFixture, owned_endpoints: set[object], monkeypatch: pytest.MonkeyPatch
+    caplog: pytest.LogCaptureFixture, owned_addresses: set[object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="alphaavatar")
-    server, url = await serve(Endpoint(), owned_endpoints)
+    server, url = await serve(TranscriptionService(), owned_addresses)
     # A client of the caller's own carries no trace of its connection.
     client = openai.AsyncOpenAI(api_key="sk-fictional", base_url=url, max_retries=0)
     seen = await transcribe(OpenAISegmentSTT(model="gpt-4o-transcribe", client=client), "seg-1")
@@ -407,7 +409,7 @@ async def test_a_request_the_transport_did_not_trace_is_not_counted_as_reused(
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         closed = probe.getsockname()[1]
-    owned_endpoints.add(("127.0.0.1", closed))
+    owned_addresses.add(("127.0.0.1", closed))
     refused = OpenAISegmentSTT(
         model="gpt-4o-transcribe", api_key="sk-fictional", base_url=f"http://127.0.0.1:{closed}/v1"
     )
@@ -434,11 +436,11 @@ async def test_a_request_the_transport_did_not_trace_is_not_counted_as_reused(
 
 
 async def test_the_sdk_prepares_its_transcription_off_the_event_loop_before_any_request(
-    caplog: pytest.LogCaptureFixture, owned_endpoints: set[object], monkeypatch: pytest.MonkeyPatch
+    caplog: pytest.LogCaptureFixture, owned_addresses: set[object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="alphaavatar")
-    endpoint = Endpoint()
-    server, url = await serve(endpoint, owned_endpoints)
+    service = TranscriptionService()
+    server, url = await serve(service, owned_addresses)
     prepared: list[tuple[bool, int]] = []
     real = openai_segment._prepare
 
@@ -469,7 +471,7 @@ async def test_the_sdk_prepares_its_transcription_off_the_event_loop_before_any_
     ((on_loop, done_at),) = prepared
     assert not on_loop
     assert max(later - earlier for earlier, later in zip(ticks, ticks[1:], strict=False)) < 0.1
-    assert endpoint.received[0] > done_at
+    assert service.received[0] > done_at
     (timing,) = requests(caplog)
     assert timing["queue_ms"] >= 300 - 50
 
@@ -483,10 +485,10 @@ async def test_the_sdk_prepares_its_transcription_off_the_event_loop_before_any_
     ],
 )
 async def test_the_configured_language_and_prompt_are_what_the_request_carries(
-    language: str | None, prompt: str | None, carried: dict, owned_endpoints: set[object]
+    language: str | None, prompt: str | None, carried: dict, owned_addresses: set[object]
 ) -> None:
-    endpoint = Endpoint()
-    server, url = await serve(endpoint, owned_endpoints)
+    service = TranscriptionService()
+    server, url = await serve(service, owned_addresses)
     settings = STTConfig(
         plugin="openai_segment",
         model="gpt-4o-transcribe",
@@ -500,8 +502,8 @@ async def test_the_configured_language_and_prompt_are_what_the_request_carries(
     await server.wait_closed()
 
     assert outcomes(seen) == [("FINAL_TRANSCRIPT", "seg-1", "Hello")]
-    # The form fields the endpoint got, the audio file apart.
-    form = dict(re.findall(rb'name="([^"]+)"\r\n\r\n(.*?)\r\n--', endpoint.bodies[0], re.S))
+    # The form fields the server got, the audio file apart.
+    form = dict(re.findall(rb'name="([^"]+)"\r\n\r\n(.*?)\r\n--', service.bodies[0], re.S))
     form = {name.decode(): value.decode() for name, value in form.items()}
     assert {k: v for k, v in form.items() if k in ("language", "prompt")} == carried
     assert (form["model"], form["stream"]) == ("gpt-4o-transcribe", "true")

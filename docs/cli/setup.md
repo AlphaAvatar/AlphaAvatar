@@ -85,8 +85,8 @@ there too, and nothing is enabled.
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Session transport |
 | `QDRANT_URL`, `QDRANT_API_KEY` | Your Qdrant, when the vectors go there; the key only if it asks for one |
 
-- A server's variable is named after its endpoint: scheme, host, port and path. A default port
-  and a trailing `/` are the same endpoint; another path is another server. Its key is sent to
+- A server's variable is named after its URL: scheme, host, port and path. A default port
+  and a trailing `/` are the same URL; another path is another server. Its key is sent to
   that server alone, and a server of your own never receives `OPENAI_API_KEY`. Loading checks
   the variable against the `base_url` in effect, overrides applied: a bundle whose `base_url`
   was moved to another server, or removed, fails [`config check`](config.md#config-check) and

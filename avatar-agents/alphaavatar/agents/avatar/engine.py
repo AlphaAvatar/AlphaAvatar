@@ -256,10 +256,10 @@ class AvatarEngine(LifecycleComponent):
         entity: PerceptionEntityRef | None = None,
         source: PerceptionSourceRef | None = None,
         segment: PerceptionSegmentRef | None = None,
-        endpoint: bool = False,
+        by_device: bool = False,
     ) -> TurnEntityRef:
         participant = self._runtime.participants.resolve(
-            device_id, source=source, entity=entity, segment=segment, endpoint=endpoint
+            device_id, source=source, entity=entity, segment=segment, by_device=by_device
         )
         if entity is None and segment is not None:
             entity = self._runtime.participants.entity_for_segment(segment)
@@ -331,7 +331,7 @@ class AvatarEngine(LifecycleComponent):
                     observation.device_id,
                     source=source,
                     entity=observation.entity,
-                    endpoint=observation.kind
+                    by_device=observation.kind
                     in (ObservationKind.TEXT_INPUT, ObservationKind.IMAGE_INPUT),
                 )
 
@@ -675,7 +675,7 @@ class AvatarEngine(LifecycleComponent):
                         observation.device_id,
                         entity=observation.entity,
                         source=observation.source,
-                        endpoint=True,
+                        by_device=True,
                     ),
                 ),
                 context_ids=(self._runtime.state.context_id,),

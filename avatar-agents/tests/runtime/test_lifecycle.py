@@ -125,7 +125,7 @@ class ProbeTTS(TTSBase):
 
 
 @asynccontextmanager
-async def shared_inference(owned_endpoints: set[object]) -> AsyncIterator[InferenceRuntime]:
+async def shared_inference(owned_addresses: set[object]) -> AsyncIterator[InferenceRuntime]:
     service = InferenceRuntime(
         {ECHO: EchoRunner},
         mp_ctx=mp.get_context("spawn"),
@@ -134,13 +134,13 @@ async def shared_inference(owned_endpoints: set[object]) -> AsyncIterator[Infere
     try:
         async with asyncio.timeout(HANG_GUARD):
             await service.start()
-        owned_endpoints.add(service.endpoint)
+        owned_addresses.add(service.socket_path)
         yield service
     finally:
         await service.close()
 
 
-def avatar_runtime(root: Path, endpoint: str) -> AvatarRuntime:
+def avatar_runtime(root: Path, socket_path: str) -> AvatarRuntime:
     session = SessionRuntime(session_id="lifecycle")
     workspace = WorkspacePaths.from_root(root / "workspace")
     return AvatarRuntime.create(
@@ -149,7 +149,7 @@ def avatar_runtime(root: Path, endpoint: str) -> AvatarRuntime:
         session_path=workspace.data.sessions.get(session.session_id, date(2026, 11, 2)),
         state=StateRuntime(),
         config=RuntimeConfig(),
-        inference=InferenceExecutor(endpoint),
+        inference=InferenceExecutor(socket_path),
     )
 
 
@@ -167,10 +167,10 @@ async def assert_closed(runtime: AvatarRuntime) -> None:
 
 
 async def test_consumers_settle_while_provider_inference_and_output_remain_usable(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
-    async with shared_inference(owned_endpoints) as service:
-        runtime = avatar_runtime(tmp_path, service.endpoint)
+    async with shared_inference(owned_addresses) as service:
+        runtime = avatar_runtime(tmp_path, service.socket_path)
         events: list[tuple[str, object]] = []
         runtime.bind_foundation(
             FoundationRuntime(
@@ -188,16 +188,16 @@ async def test_consumers_settle_while_provider_inference_and_output_remain_usabl
         assert not (tmp_path / "workspace").exists()
         # A session only owns its client; the shared service keeps serving other sessions.
         assert service.is_alive
-        other = InferenceExecutor(service.endpoint)
+        other = InferenceExecutor(service.socket_path)
         assert await other.do_inference(ECHO, b"other-session") == b"other-session"
         await other.close()
 
 
 async def test_failed_or_cancelled_consumer_cleanup_does_not_skip_remaining_resources(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
-    async with shared_inference(owned_endpoints) as service:
-        runtime = avatar_runtime(tmp_path, service.endpoint)
+    async with shared_inference(owned_addresses) as service:
+        runtime = avatar_runtime(tmp_path, service.socket_path)
         events: list[tuple[str, object]] = []
         tts = ProbeTTS()
         runtime.bind_foundation(
@@ -219,10 +219,10 @@ async def test_failed_or_cancelled_consumer_cleanup_does_not_skip_remaining_reso
 
 
 async def test_cancelled_close_caller_waits_until_every_resource_is_released(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
-    async with shared_inference(owned_endpoints) as service:
-        runtime = avatar_runtime(tmp_path, service.endpoint)
+    async with shared_inference(owned_addresses) as service:
+        runtime = avatar_runtime(tmp_path, service.socket_path)
         events: list[tuple[str, object]] = []
         gate = asyncio.Event()
         loop = ProbeLoop(runtime, events, gate=gate)

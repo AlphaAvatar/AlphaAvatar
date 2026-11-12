@@ -53,10 +53,10 @@ tools:
 ```
 
 Server settings are strictly validated. `streamable_http` is the default;
-select `transport: sse` explicitly for an SSE endpoint. There is no automatic
+select `transport: sse` explicitly for an SSE server. There is no automatic
 transport fallback, reconnect-and-replay, or hidden SDK compatibility path.
-Remote endpoints require HTTPS; loopback HTTP is supported for local development.
-Embedded URL credentials and fragments are rejected. Endpoints and returned tool
+Remote servers require HTTPS; loopback HTTP is supported for local development.
+Embedded URL credentials and fragments are rejected. Servers and returned tool
 content remain deployment-specific external services.
 
 Credentials can use the existing environment-placeholder mechanism, for example:

@@ -35,7 +35,7 @@ from inference_runner_samples import EchoRunner, JournalRunner, ParallelRunner, 
 
 from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.runtime.inference import (
-    INFERENCE_ENDPOINT_ENV,
+    INFERENCE_SOCKET_ENV,
     InferenceExecutor,
     InferenceRunner,
     InferenceRuntime,
@@ -88,7 +88,7 @@ def milliseconds(samples: list[float]) -> str:
 
 
 async def test_concurrent_sessions_and_methods_never_lose_duplicate_or_misroute_results(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], stress_seconds: float
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object], stress_seconds: float
 ) -> None:
     runtime = service(tmp_path, EchoRunner, JournalRunner, SecondJournalRunner)
     executors: list[InferenceExecutor] = []
@@ -118,8 +118,8 @@ async def test_concurrent_sessions_and_methods_never_lose_duplicate_or_misroute_
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executors.extend(InferenceExecutor(runtime.endpoint) for _ in range(SESSIONS))
+        owned_addresses.add(runtime.socket_path)
+        executors.extend(InferenceExecutor(runtime.socket_path) for _ in range(SESSIONS))
         completed = 0
         async for index in rounds(stress_seconds):
             async with asyncio.timeout(HANG_GUARD):
@@ -149,7 +149,7 @@ async def test_concurrent_sessions_and_methods_never_lose_duplicate_or_misroute_
 
 
 async def test_runner_failure_churn_recovers_without_replaying_attempted_work(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], stress_seconds: float
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object], stress_seconds: float
 ) -> None:
     before = children()
     # Recoveries are always further apart than this window, so the budget never runs out.
@@ -160,8 +160,8 @@ async def test_runner_failure_churn_recovers_without_replaying_attempted_work(
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint)
+        owned_addresses.add(runtime.socket_path)
+        executor = InferenceExecutor(runtime.socket_path)
         assert await executor.do_inference(ECHO, b"connected") == b"connected"
         async for index in rounds(stress_seconds):
             pids.append(int(await executor.do_inference(JOURNAL, b"pid")))
@@ -194,8 +194,8 @@ async def test_runner_failure_churn_recovers_without_replaying_attempted_work(
     assert children() - before == set()
 
 
-async def test_repeated_runtime_start_stop_reclaims_processes_descriptors_and_endpoint(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], stress_seconds: float
+async def test_repeated_runtime_start_stop_reclaims_processes_descriptors_and_socket(
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object], stress_seconds: float
 ) -> None:
     before, fds = children(), descriptors()
     cycles: list[float] = []
@@ -205,8 +205,8 @@ async def test_repeated_runtime_start_stop_reclaims_processes_descriptors_and_en
         try:
             async with asyncio.timeout(HANG_GUARD):
                 await runtime.start()
-            owned_endpoints.add(runtime.endpoint)
-            executor = InferenceExecutor(runtime.endpoint)
+            owned_addresses.add(runtime.socket_path)
+            executor = InferenceExecutor(runtime.socket_path)
             for method in (ECHO, JOURNAL):
                 payload = f"{method}:{index}".encode()
                 assert await executor.do_inference(method, payload) == payload
@@ -215,7 +215,7 @@ async def test_repeated_runtime_start_stop_reclaims_processes_descriptors_and_en
             await runtime.close()
         cycles.append(time.perf_counter() - started)
         assert children() - before == set()
-        assert INFERENCE_ENDPOINT_ENV not in os.environ
+        assert INFERENCE_SOCKET_ENV not in os.environ
         assert list(socket_root.iterdir()) == []
         after = descriptors()
         if fds is not None and after is not None:
@@ -229,7 +229,7 @@ async def test_parallel_workers_stay_bounded_owned_and_reclaimed_under_session_l
     workers: int,
     tmp_path: Path,
     socket_root: Path,
-    owned_endpoints: set[object],
+    owned_addresses: set[object],
     stress_seconds: float,
 ) -> None:
     before, fds = children(), descriptors()
@@ -255,8 +255,8 @@ async def test_parallel_workers_stay_bounded_owned_and_reclaimed_under_session_l
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executors.extend(InferenceExecutor(runtime.endpoint, config) for _ in range(SESSIONS))
+        owned_addresses.add(runtime.socket_path)
+        executors.extend(InferenceExecutor(runtime.socket_path, config) for _ in range(SESSIONS))
         started, sent = time.perf_counter(), 0
         async for index in rounds(stress_seconds):
             # Every session issues its requests at once; channels and the pool bound them.

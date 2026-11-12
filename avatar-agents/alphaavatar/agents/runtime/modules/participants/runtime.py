@@ -99,13 +99,16 @@ class ParticipantRuntime:
         self._max_segments, self._max_sources = max_segments, max_sources
 
         self._bindings = ParticipantBindings(max_entities=max_participants, max_devices=max_sources)
+
         self._active_participants: set[str] = set(session.participants)
+
         self._association_kinds: dict[str, set[str]] = {}
         self._association_devices: dict[str, set[str]] = {}
+
         self._generations: dict[str, tuple[int, bool]] = {}
+
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
         self._segment_resolver: str | None = None
-
         self._next_segment_token = 0
 
     @property
@@ -271,14 +274,14 @@ class ParticipantRuntime:
             raise ValueError("Entity is already bound to another participant")
 
         participant = participant or existing
-        endpoint = self._bindings.get_device(device_id) if device_id is not None else None
+        device_participant = self._bindings.get_device(device_id) if device_id is not None else None
         if participant is None and kind is not None and device_id is not None:
             participant = self.session.select_participant(
                 AssociationRequest(
                     source=source,
                     entity=entity,
                     kind=kind,
-                    endpoint_participant_id=endpoint,
+                    device_participant_id=device_participant,
                     occupied_kinds=tuple(
                         (participant_id, value)
                         for participant_id, values in self._association_kinds.items()
@@ -295,11 +298,11 @@ class ParticipantRuntime:
         if kind is not None:
             # Reserve before inference/I/O; expiration cannot transfer a slot to a stranger.
             self._association_kinds.setdefault(participant.participant_id, set()).add(kind)
-            if device_id is not None and endpoint is not None:
+            if device_id is not None and device_participant is not None:
                 peers = self._association_devices.setdefault(device_id, set())
                 # One competing-person witness preserves ambiguity without retaining every visit.
-                if participant.participant_id == endpoint or not any(
-                    value != endpoint for value in peers
+                if participant.participant_id == device_participant or not any(
+                    value != device_participant for value in peers
                 ):
                     peers.add(participant.participant_id)
 
@@ -441,7 +444,7 @@ class ParticipantRuntime:
         source: PerceptionSourceRef | None = None,
         entity: PerceptionEntityRef | None = None,
         segment: PerceptionSegmentRef | None = None,
-        endpoint: bool = False,
+        by_device: bool = False,
     ) -> Participant | None:
         if self._closed:
             return None
@@ -468,7 +471,7 @@ class ParticipantRuntime:
                 self._bindings.get_entity(source, entity.entity_id) if source is not None else None
             )
         else:
-            participant_id = self._bindings.get_device(device_id or "") if endpoint else None
+            participant_id = self._bindings.get_device(device_id or "") if by_device else None
 
         return self.get(participant_id) if participant_id is not None else None
 

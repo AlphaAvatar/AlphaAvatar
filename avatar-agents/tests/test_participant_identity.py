@@ -103,9 +103,9 @@ def test_device_participant_and_user_identifiers_stay_separate(tmp_path: Path) -
     guest = runtime.ensure_entity(camera, face)
     assert guest.participant_id != owner.participant_id
     assert guest.user_id not in {None, owner.user_id}
-    # The endpoint names its explicit submitter only; it never claims people seen through it.
+    # The device names its explicit submitter only; it never claims people seen through it.
     assert runtime.resolve("phone-1") is None
-    assert runtime.resolve("phone-1", endpoint=True) == owner
+    assert runtime.resolve("phone-1", by_device=True) == owner
     assert runtime.resolve(source=camera, entity=face) == guest
 
     # Sharing a user binding never merges participants.
@@ -114,7 +114,7 @@ def test_device_participant_and_user_identifiers_stay_separate(tmp_path: Path) -
     assert runtime.session.get_participant(user_id=owner.user_id) is None
 
     assert correct(runtime, owner, "user-a") is IdentityOutcome.APPLIED
-    resolved = runtime.resolve("phone-1", endpoint=True)
+    resolved = runtime.resolve("phone-1", by_device=True)
     assert (resolved.participant_id, resolved.user_id, resolved.identity_sequence) == (
         owner.participant_id,
         "user-a",

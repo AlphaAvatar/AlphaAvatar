@@ -166,7 +166,7 @@ class OpenAITTS(PCMHTTPProvider):
             status, outcome = None, "completed"
             try:
                 async with asyncio.timeout(timeout):
-                    # Same endpoint, proxy policy and connection pool; never a speech request.
+                    # Same server, proxy policy and connection pool; never a speech request.
                     await self._get_sdk().get(
                         "/", cast_to=str, options={"timeout": httpx.Timeout(timeout)}
                     )

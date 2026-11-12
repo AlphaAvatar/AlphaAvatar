@@ -57,7 +57,7 @@ class AssociationRequest:
 
     kind: str
 
-    endpoint_participant_id: str | None
+    device_participant_id: str | None
     occupied_kinds: tuple[tuple[str, str], ...] = ()
     peer_participant_ids: frozenset[str] = frozenset()
     candidate_count: int = 1
@@ -68,8 +68,8 @@ class AssociationRequest:
         ):
             raise TypeError("Association requires explicit perception source and entity references")
         validate_identity(self.kind, name="kind")
-        if self.endpoint_participant_id is not None:
-            validate_identity(self.endpoint_participant_id, name="endpoint_participant_id")
+        if self.device_participant_id is not None:
+            validate_identity(self.device_participant_id, name="device_participant_id")
         if type(self.candidate_count) is not int or self.candidate_count < 1:
             raise ValueError("candidate_count must be a positive integer")
         object.__setattr__(

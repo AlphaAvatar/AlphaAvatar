@@ -250,7 +250,7 @@ def test_restore_keeps_frozen_paths_and_inputs_after_the_environment_changes(
     )
     headers = restored.avatar.tools.mcp.servers["docs"]["headers"]
     assert headers == {"Authorization": "Bearer frozen-token"}
-    # An endpoint absent at load stays absent; a later ambient endpoint cannot switch backends.
+    # A URL absent at load stays absent; a later ambient URL cannot switch backends.
     assert restored_absent.avatar.memory.vdb_config["url"] is None
     assert vdb_backend(restored_absent.avatar.memory.vdb_config) == "lancedb"
     assert json.loads(restored_absent.payload) == json.loads(absent.payload)

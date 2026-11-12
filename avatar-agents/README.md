@@ -59,7 +59,7 @@ settles Loop execution while its canonical record consumers still exist. Plugin
 finalization remains in each plugin. Host owns the surrounding execution lifecycle;
 transport detachment releases RTC subscriptions independently of Engine destruction.
 
-InferenceRuntime owns the shared endpoint and serial runner processes. InferenceExecutor
+InferenceRuntime owns the shared socket and serial runner processes. InferenceExecutor
 owns only client connections. Host supervises the service but does not create a second
 owner for runner processes. Neither failed jobs nor state-changing requests are
 replayed automatically by the Host.

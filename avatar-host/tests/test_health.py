@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Health endpoints stay local by default and report operational state, never configuration."""
+"""Health checks stay local by default and report operational state, never configuration."""
 
 from __future__ import annotations
 
@@ -126,7 +126,7 @@ async def test_health_listens_locally_unless_a_bind_is_configured(
 
 
 async def test_status_reports_operational_state_without_configuration(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+    tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     config = application(tmp_path, {"port": 0})
     credentials = {key: value for key, value in SECRETS.items() if key.startswith("LIVEKIT")}
@@ -143,7 +143,7 @@ async def test_status_reports_operational_state_without_configuration(
             await runtime.start()
         host._inference = runtime  # The Host owns this slot once its runtime is serving.
         await server.on_start()
-        owned_endpoints.add(("127.0.0.1", server.port))
+        owned_addresses.add(("127.0.0.1", server.port))
         code, body = await get(server.port, "/status")
     finally:
         await server.on_stop()

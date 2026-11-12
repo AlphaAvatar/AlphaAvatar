@@ -154,7 +154,7 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
 ) -> None:
     path = configuration(tmp_path)
     level = logging.getLogger("alphaavatar").level
-    # The runtime starts as start starts it; the endpoint and the log capture stay in the
+    # The runtime starts as start starts it; the inference socket and the log capture stay in the
     # diagnostic process.
     _, checks = doctor(capsys, chain, str(path), online=True)
     assert logging.getLogger("alphaavatar").level == level
@@ -827,10 +827,10 @@ def test_the_diagnostic_process_leaves_a_calling_host_and_its_terminal_alone(
     tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture
 ) -> None:
     from alphaavatar.agents.runtime.inference.bootstrap import INFERENCE_PLAN_ENV
-    from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
-    from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
+    from alphaavatar.agents.runtime.inference.protocol import INFERENCE_SOCKET_ENV
+    from alphaavatar.core.log.records import LOG_CLIENT_ENV
 
-    # Doctor run from inside a Host: its runtime endpoint, plan and log receiver are set.
+    # Doctor run from inside a Host: its inference socket, plan and log client are set.
     receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     receiver.bind(str(chain.root / "host-log.sock"))
     receiver.setblocking(False)
@@ -842,9 +842,9 @@ def test_the_diagnostic_process_leaves_a_calling_host_and_its_terminal_alone(
         "conversation": None,
     }
     host = {
-        INFERENCE_ENDPOINT_ENV: str(chain.root / "host-inference.sock"),
+        INFERENCE_SOCKET_ENV: str(chain.root / "host-inference.sock"),
         INFERENCE_PLAN_ENV: "[]",
-        LOG_ENDPOINT_ENV: json.dumps(log),
+        LOG_CLIENT_ENV: json.dumps(log),
     }
     # The stand-ins print, in the diagnostic process and in a runner of it.
     environ = dict(os.environ) | host | {doubles.SPEC: json.dumps(chain.spec | {"stdout": True})}

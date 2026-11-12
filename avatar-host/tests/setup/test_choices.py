@@ -98,7 +98,7 @@ def label(selection: Selection) -> str:
 def test_each_selection_asks_for_exactly_what_its_bundle_resolves_to(
     selection: Selection, tmp_path: Path
 ) -> None:
-    # An endpoint in the environment moves no vector store a LanceDB selection chose.
+    # A Qdrant URL in the environment moves no vector store a LanceDB selection chose.
     with mock.patch.dict(os.environ, {"QDRANT_URL": "http://qdrant.invalid:6333"}):
         config = compose(selection, tmp_path / "home")
         found = sorted({need.requirement for need in resolve_capabilities(config).needs})
@@ -236,14 +236,14 @@ async def _request_each(avatar, models: bool, speech: bool) -> None:
 
 @pytest.mark.parametrize("own", ["models", "speech", "both", "one server"])
 def test_each_server_of_ones_own_receives_its_own_key_and_never_openais(
-    own: str, tmp_path: Path, owned_endpoints: set[object]
+    own: str, tmp_path: Path, owned_addresses: set[object]
 ) -> None:
     model_server, speech_server = Server(), Server()
     if own == "one server":
         speech_server.close()
         speech_server = model_server
     for server in (model_server, speech_server):
-        owned_endpoints.add(server.http.server_address[:2])
+        owned_addresses.add(server.http.server_address[:2])
     try:
         check_keys(own, model_server, speech_server, tmp_path)
     finally:
@@ -294,7 +294,7 @@ def check_keys(own: str, model_server: Server, speech_server: Server, tmp_path: 
         assert avatar.voice.stt.api_key_env is avatar.voice.tts.api_key_env is None
 
 
-def test_a_server_of_ones_own_has_one_key_variable_for_its_endpoint_alone() -> None:
+def test_a_server_of_ones_own_has_one_key_variable_for_its_url_alone() -> None:
     same = (
         "http://gpu.invalid:8000/v1",
         "http://GPU.invalid:8000/v1/",
@@ -359,7 +359,7 @@ def test_a_key_variable_named_after_a_server_is_sent_to_that_server_alone(
         parent[place] = {**parent[place], "base_url": base_url, **changes}
         return validated(document, tmp_path / "home")
 
-    moved(url + "/")  # The same endpoint, however spelled.
+    moved(url + "/")  # The same URL, however spelled.
     moved(url.replace(".invalid", ".INVALID"))
     # Another port, another path, or none: the backend's own default URL.
     for other in (url.replace(":800", ":900"), url.replace("/v1", "/v2"), None):

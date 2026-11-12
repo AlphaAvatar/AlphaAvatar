@@ -12,7 +12,7 @@ Provider stores neither conversation history nor tool authorization. The resourc
 
 ## Backend selection
 
-`backend` selects an installed implementation; `provider` selects its vendor/endpoint family. Factory discovery uses AvatarModulePlugin and does not itself make a model request.
+`backend` selects an installed implementation; `provider` selects its vendor/API family. Factory discovery uses AvatarModulePlugin and does not itself make a model request.
 
 | Backend | Current role |
 | --- | --- |

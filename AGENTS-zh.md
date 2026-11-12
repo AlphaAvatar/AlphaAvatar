@@ -275,7 +275,7 @@ Persona 提供说话者／身份证据；轮次判断不识别人。
 
 | 概念 | 所有者／入口 |
 | --- | --- |
-| 设备／传输端点 | RTC／Host 适配为 Core 会话契约。 |
+| 设备／传输连接 | RTC／Host 适配为 Core 会话契约。 |
 | 说话者／人脸证据 | [Persona 处理器](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/processors/)。 |
 | 片段关联与就绪状态 | [ParticipantRuntime](avatar-agents/alphaavatar/agents/runtime/modules/participants/)。 |
 | 已接受的参与者／用户绑定 | [SessionRuntime](avatar-core/alphaavatar/core/session/)。 |
@@ -407,7 +407,7 @@ Memory 和 Persona 消费共享运行时事实，并保留各自的业务／存�
 
 ## 16. 推理 runner 与模型资源
 
-InferenceRuntime 拥有 worker 进程和共享端点。
+InferenceRuntime 拥有 worker 进程和共享的推理 socket。
 InferenceExecutor 拥有客户端连接，Host 负责监督服务。
 
 | 事项 | 入口 |
@@ -560,7 +560,7 @@ PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 \
 真实服务检查使用生效配置与现有的外部服务控制选项。
 Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 不要让导入或文档检查顺带触发计费实验。
-区分离线桩、真实模型推理、远端端点、RTC 与渲染器验证。
+区分离线桩、真实模型推理、远端服务、RTC 与渲染器验证。
 报告耗时时，记录样本与配置身份、失败情况，以及预热或首次运行条件。
 不要仅凭少量延迟样本就声称轮次判断正确。
 

@@ -33,9 +33,9 @@ class ParticipantBindings:
         validate_identity(participant_id, name="participant_id")
         previous = self._devices.get(device_id)
         if previous is not None and previous != participant_id:
-            raise ValueError("Device endpoint is already bound to another participant")
+            raise ValueError("Device is already bound to another participant")
         if previous is None and len(self._devices) >= self._max_devices:
-            raise RuntimeError("Participant endpoint capacity reached")
+            raise RuntimeError("Participant device capacity reached")
 
     def bind_device(self, device_id: str, participant_id: str) -> None:
         self.check_device(device_id, participant_id)

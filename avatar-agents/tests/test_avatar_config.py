@@ -136,7 +136,7 @@ def test_accepted_configuration_only_reads_its_inputs(
     assert first.avatar.workspace_root is None
     assert first.memory.vdb_config["url"] == ambient["QDRANT_URL"]
     assert first.memory.vdb_config["api_key"] == ambient["QDRANT_API_KEY"]
-    # An explicit host keeps its endpoint; only the absent credential is captured.
+    # An explicit host takes no ambient URL; only the absent credential is captured.
     assert "url" not in first.persona.vdb_config
     assert first.persona.vdb_config["api_key"] == ambient["QDRANT_API_KEY"]
     headers = first.tools.mcp.servers["docs"]["headers"]

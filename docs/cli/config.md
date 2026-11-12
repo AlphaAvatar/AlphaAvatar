@@ -218,7 +218,7 @@ The summary lists the checked file or bundle, then facts in the profile layers: 
 selections, vision and its input, the
 on/off switches of the built-in router, status, memory (including `environment`, the ENV memory)
 and persona processors, vector store kinds, enabled tools, the inference runners the Host would
-start with their worker counts, and the health address — never endpoints, collection names or
+start with their worker counts, and the health address — never service URLs, collection names or
 other plugin-defined settings. Switches are read with each plugin's own schema, so an omitted
 switch shows its default; `--json` gives the same values under `plugins`: `vision`, `router`
 and `status` are objects (`plugin` and their switches; `router` and `status` were plugin-name

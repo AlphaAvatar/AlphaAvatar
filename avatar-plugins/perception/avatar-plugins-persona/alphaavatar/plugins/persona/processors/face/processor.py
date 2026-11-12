@@ -402,7 +402,7 @@ class FaceProcessor(PersonaProcessorBase):
             logger.debug("Face entity admission unavailable source=%s", job.observation.source)
             return None
 
-        # Register late endpoint evidence without refreshing a queued identity decision.
+        # Register late device evidence without refreshing a queued identity decision.
         return job.participants.get(current.participant_id) if current is not None else participant
 
     async def _update_face(

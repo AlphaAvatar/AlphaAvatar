@@ -24,7 +24,7 @@ from .events import LABELS, MAX_CONTENT_CHARS, validate_fields
 
 MAX_PACKET_BYTES = 60_000
 MAX_TEXT_CHARS = 8192
-LOG_ENDPOINT_ENV = "ALPHAAVATAR_LOG_ENDPOINT"
+LOG_CLIENT_ENV = "ALPHAAVATAR_LOG_CLIENT"
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 _ANSI = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])")

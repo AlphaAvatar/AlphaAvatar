@@ -62,10 +62,10 @@ the Host's own `create_execution`. VAD, STT, turn taking, Context, the loop, the
 all work as the configuration says. What differs:
 
 - **Process.** The diagnosis runs in a process of Doctor's own, which leads its own process
-  group. Its inference endpoint and log capture stay there, and the caller's environment and
+  group. Its inference socket and log capture stay there, and the caller's environment and
   loggers are left as they were. Run from inside a Host, it does not inherit that Host's
-  inference endpoint, runner plan or log receiver (`ALPHAAVATAR_INFERENCE_ENDPOINT`,
-  `ALPHAAVATAR_INFERENCE_PLAN`, `ALPHAAVATAR_LOG_ENDPOINT`). What it or its runners print goes
+  inference socket, runner plan or log client (`ALPHAAVATAR_INFERENCE_SOCKET`,
+  `ALPHAAVATAR_INFERENCE_PLAN`, `ALPHAAVATAR_LOG_CLIENT`). What it or its runners print goes
   to a file in Doctor's temporary directory, not to the terminal: a runner that fails is named
   in `models.runners`, and a process that dies without a report is named with the last line it
   printed. stdout carries the report alone, so `--json` output is parseable as it is. Ctrl+C

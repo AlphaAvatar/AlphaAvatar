@@ -90,10 +90,11 @@ class TavilyDeepResearchTool:
             parts=(ModelTextPart("\n\n".join(summary)),), is_error=bool(failures) or not saved
         )
 
-    async def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self._close_task is not None:
             raise RuntimeError("Tavily client is closed")
-        response = await self._client.post(endpoint, json=payload)
+
+        response = await self._client.post(path, json=payload)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
