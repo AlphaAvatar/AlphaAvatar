@@ -985,3 +985,30 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
   - `WeightedMean`：无效的和不报错、加入不是原子的、加入后不刷新结果（Persona 的说话人测试也失败）、忽略秒数、副本与原件共用、去掉权重检查；
   - `user_profile`：接受无效的存储向量。
 - 现有测试没有覆盖三处调用点在模型输出无效时的处理，本批之前也没有。
+
+# 第八批：说话人跟踪取消超时
+
+- 基线 `1648dbd9` 上第七批之后，改动未暂存、未提交。
+- 用户的决定：取消说话人跟踪的超时。跟踪超时后，同一个人会因为与模型无关的原因成为新参与者；对库里还没有声纹的新用户，多出来的参与者无法连回去，保存后成为碎片。
+
+## 修改
+
+| 位置 | 改动 |
+|---|---|
+| `processors/speaker/tracking.py` | 删除超时退役和 `SpeakerTrack.seen_at`；`resolve(source, vector, seconds)` 不再带时间。跟踪只在同一来源换代、`clear()`（来源取消、处理器停止）时退役 |
+| `processors/speaker/config.py` | 删除 `track_ttl_sec`（配置禁止多余字段，仍写着它的配置会被拒绝） |
+| `processors/speaker/processor.py` | 构造跟踪器、调用 `resolve()` 不再传超时和时间 |
+| `docs/identifiers-zh.md` 2.2、`docs/bugs-zh.md` | 跟踪的退役条件；新增已修复的 KD-43 |
+
+- 不变的：换代后仍是新参与者（`test_short_utterances_from_a_sessions_start_open_a_voice_and_are_identified[reconnected]` 照旧通过）；跟踪总数仍受 `max_speakers`（默认 64）限制，满了之后的新声音不开跟踪，也不淘汰旧跟踪；人脸跟踪的 60 秒超时没有改。
+- 评估会话最长 224 秒，回放和真实链路核对都从未触发 300 秒超时，已有的评估结果不受影响，没有重跑。
+
+## 验证
+
+- 新增 `test_a_new_users_voice_silent_for_an_hour_is_still_one_participant`：新用户（检索不到）说一段，处理器的时钟拨后一小时，同一声音、同一来源代再说一段，两段是同一个参与者。把三个改动文件换回改动前的版本，它在断言处失败（得到另一个参与者）；换回新版本通过。
+- 跟踪的同分边界测试改用新的 `resolve()` 签名。
+- 全量测试跑了两次，都是 703 通过、1 失败：
+  - 第二次失败的是 router 的 `test_late_stt_final_after_transcript_timeout_never_revives_the_input[listening0]`，即第四批记录的间歇计时测试之一（原因见第四批"验证"），router 没有改；单独连跑 10 次、CPU 负载下连跑 20 次都通过。
+  - 第一次只截取了汇总行，失败的是哪个测试没有记录下来。
+  - 测试没有改，没有放宽断言。
+- `uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`、`git diff --check` 都通过；没有新增字节码。

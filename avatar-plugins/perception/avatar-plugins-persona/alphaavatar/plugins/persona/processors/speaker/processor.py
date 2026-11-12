@@ -125,7 +125,6 @@ class SpeakerProcessor(PersonaProcessorBase):
             threshold=config.track_match_threshold,
             margin=config.track_match_margin,
             max_tracks=config.max_speakers,
-            ttl_sec=config.track_ttl_sec,
         )
         # Three lanes: windows and the association Engine resolves a Turn's actors from; each
         # bound segment's identity, which its Turn's Context waits for within its bound; and
@@ -575,7 +574,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                     return
 
                 state.entity = self._tracks.resolve(
-                    state.segment.source, state.vector, state.vector_sec, time.monotonic()
+                    state.segment.source, state.vector, state.vector_sec
                 )
                 self._release_tracks()
                 if state.entity is None:

@@ -23,6 +23,7 @@ from collections import deque
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -547,16 +548,46 @@ def test_a_voice_as_close_to_two_tracks_as_the_margin_joins_neither(
     margin: float, query: tuple[float, float], joined: bool
 ) -> None:
     source = PerceptionSourceRef("device", 1)
-    tracks = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8, ttl_sec=60.0)
-    first = tracks.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0, 0.0)
-    assert tracks.resolve(source, np.array([0.0, 1.0, 0.0]), 3.0, 0.0) not in (None, first)
+    tracks = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8)
+    first = tracks.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0)
+    assert tracks.resolve(source, np.array([0.0, 1.0, 0.0]), 3.0) not in (None, first)
     vector = np.array([*query, 0.0]) / np.linalg.norm([*query, 0.0])
     # Both tracks are above the threshold; the closer one only when it is clear of the other.
-    assert tracks.resolve(source, vector, 3.0, 1.0) == (first if joined else None)
+    assert tracks.resolve(source, vector, 3.0) == (first if joined else None)
     # A single candidate needs only the threshold.
-    alone = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8, ttl_sec=60.0)
-    only = alone.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0, 0.0)
-    assert alone.resolve(source, vector, 3.0, 1.0) == only
+    alone = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8)
+    only = alone.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0)
+    assert alone.resolve(source, vector, 3.0) == only
+
+
+async def test_a_new_users_voice_silent_for_an_hour_is_still_one_participant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alphaavatar.plugins.persona.processors.speaker import processor as speaker_processor
+
+    inference = SensorInference()
+    inference.replies.extend(["none"] * 2)  # A new user: no stored voice to find it again
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    utter(runtime, source, "before", "alice", heard=3.0, spoken=2.6)
+    await wait_until(lambda: len(inference.searches) == 1, "the first utterance was never searched")
+    before = runtime.participants.resolve(segment=PerceptionSegmentRef(source, "before"))
+
+    # An hour later on the processor's clock, the same voice on the same source generation.
+    real = time.monotonic
+    monkeypatch.setattr(speaker_processor, "time", SimpleNamespace(monotonic=lambda: real() + 3600))
+    utter(runtime, source, "after", "alice", heard=3.0, spoken=2.6)
+    await wait_until(
+        lambda: len(inference.searches) == 2, "the second utterance was never searched"
+    )
+
+    # Its track held: the same participant and generated user, not a second one.
+    after = runtime.participants.resolve(segment=PerceptionSegmentRef(source, "after"))
+    assert before is not None and after == before
+    await persona.on_stop()
+    await runtime.aclose()
 
 
 async def test_a_voice_is_its_segments_mean_each_by_the_seconds_its_vector_is_from(

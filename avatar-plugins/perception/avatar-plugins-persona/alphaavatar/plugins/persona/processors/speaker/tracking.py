@@ -24,21 +24,21 @@ from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRe
 class SpeakerTrack:
     entity: PerceptionEntityRef
     voice: WeightedMean
-    seen_at: float
 
 
 class SpeakerTracks:
     """Bounded acoustic associations; matching a user never selects a track. A track's voice is
-    every segment it took, each by the seconds its vector is from."""
+    every segment it took, each by the seconds its vector is from. A track lasts as long as its
+    source generation: silence never retires it, since the same speaker heard again would
+    otherwise become another participant, and a new user one more generated user."""
 
-    def __init__(self, *, threshold: float, margin: float, max_tracks: int, ttl_sec: float) -> None:
-        self.threshold, self.margin = threshold, margin
-        self.max_tracks, self.ttl_sec = max_tracks, ttl_sec
+    def __init__(self, *, threshold: float, margin: float, max_tracks: int) -> None:
+        self.threshold, self.margin, self.max_tracks = threshold, margin, max_tracks
         self._tracks: dict[PerceptionSourceRef, list[SpeakerTrack]] = {}
         self._retired: list[tuple[PerceptionSourceRef, PerceptionEntityRef]] = []
 
     def resolve(
-        self, source: PerceptionSourceRef, vector: np.ndarray, seconds: float, now: float
+        self, source: PerceptionSourceRef, vector: np.ndarray, seconds: float
     ) -> PerceptionEntityRef | None:
         for current, tracks in tuple(self._tracks.items()):
             if (
@@ -47,15 +47,6 @@ class SpeakerTracks:
             ):
                 self._retired.extend((current, track.entity) for track in tracks)
                 self._tracks.pop(current)
-            else:
-                self._retired.extend(
-                    (current, track.entity)
-                    for track in tracks
-                    if now - track.seen_at > self.ttl_sec
-                )
-                tracks[:] = [track for track in tracks if now - track.seen_at <= self.ttl_sec]
-                if not tracks:
-                    self._tracks.pop(current)
 
         tracks = self._tracks.setdefault(source, [])
         ranked = sorted(
@@ -73,14 +64,13 @@ class SpeakerTracks:
 
             track = tracks[ranked[0][1]]
             track.voice.add(vector, seconds)
-            track.seen_at = now
             return track.entity
 
         if sum(map(len, self._tracks.values())) >= self.max_tracks:
             return None
 
         entity = PerceptionEntityRef(f"speaker-{uuid4().hex}")
-        tracks.append(SpeakerTrack(entity, WeightedMean.of(vector, seconds), now))
+        tracks.append(SpeakerTrack(entity, WeightedMean.of(vector, seconds)))
         return entity
 
     def clear(self, source: PerceptionSourceRef | None = None) -> None:
