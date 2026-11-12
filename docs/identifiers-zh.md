@@ -69,7 +69,7 @@ flowchart LR
 ### 2.3 同一设备中的多人
 
 - 手机 `phone-1` 的摄像头中，`(camera-1, 1, face-a)` 和 `(camera-1, 1, face-b)` 可以分别关联不同参与者、不同用户。
-- 账户持有者明确提交的文字可使用 `resolve(device_id, by_device=True)`；麦克风里的未知说话者不能因此归到该账户。
+- 主参与者明确提交的文字可使用 `resolve(device_id, by_device=True)`；麦克风里的未知说话者不能因此归到主参与者。
 - `ensure_entity(source, entity, participant_id=...)` 可建立跨媒体同人关联；省略参与者时复用已有关系或创建参与者。已有实体要改关联时应显式释放，不能无声覆盖。
 - 默认 `resolve()` 不回退到设备关联。未知实体、过期来源、冲突或淘汰片段不能回退到设备用户或主参与者。
 

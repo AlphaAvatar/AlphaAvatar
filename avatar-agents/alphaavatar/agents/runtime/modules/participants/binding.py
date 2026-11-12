@@ -24,7 +24,9 @@ class ParticipantBindings:
         if any(type(value) is not int or value <= 0 for value in (max_entities, max_devices)):
             raise ValueError("Participant binding limits must be positive integers")
 
-        self._max_entities, self._max_devices = max_entities, max_devices
+        self._max_entities = max_entities
+        self._max_devices = max_devices
+
         self._devices: dict[str, str] = {}
         self._entities: dict[tuple[PerceptionSourceRef, str], str] = {}
 

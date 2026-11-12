@@ -41,6 +41,12 @@ from ...capability.enums import AvatarCapabilityName
 from .binding import ParticipantBindings
 from .schemas import ParticipantInput
 
+type ParticipantId = str
+type DeviceId = str
+type SourceId = str
+type EntityKind = str  # "face" or "speaker"
+type ConsumerId = str
+
 
 @dataclass(slots=True)
 class _SegmentState:
@@ -100,19 +106,22 @@ class ParticipantRuntime:
 
         self._bindings = ParticipantBindings(max_entities=max_participants, max_devices=max_sources)
 
-        self._active_participants: set[str] = set(session.participants)
+        self._active_participants: set[ParticipantId] = set(session.participants)
 
-        self._association_kinds: dict[str, set[str]] = {}
-        self._association_devices: dict[str, set[str]] = {}
+        # The entity kinds each participant has taken, and the participants seen on each bound
+        # device: its own and at most one other.
+        self._association_kinds: dict[ParticipantId, set[EntityKind]] = {}
+        self._association_devices: dict[DeviceId, set[ParticipantId]] = {}
 
-        self._generations: dict[str, tuple[int, bool]] = {}
+        # Each source's latest generation, and whether that generation is still current.
+        self._generations: dict[SourceId, tuple[int, bool]] = {}
 
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
-        self._segment_resolver: str | None = None
+        self._segment_resolver: ConsumerId | None = None
         self._next_segment_token = 0
 
     @property
-    def active_participant_ids(self) -> frozenset[str]:
+    def active_participant_ids(self) -> frozenset[ParticipantId]:
         return frozenset(self._active_participants)
 
     def _require_participant(self, participant_id: str) -> Participant:
