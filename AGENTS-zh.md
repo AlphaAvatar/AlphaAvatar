@@ -183,7 +183,7 @@ Core 管理其谱系、事件顺序、保留策略和时序查询。
 | --- | --- |
 | `PerceptionSourceRef` | 来源身份及其世代。 |
 | `PerceptionSegmentRef` | 由完整来源引用限定的语音片段。 |
-| `PerceptionEntityRef` | 由所属来源限定的感知实体标签。 |
+| `PerceptionEntityRef` | 会话内唯一的感知实体（一张脸或一个声音），可以出现在多个来源和多代上。 |
 | 观测 ID | 一条观测，包括其载荷／引用和媒体时间。 |
 | 标注 ID | 一条以证据为目标的解释记录。 |
 | 事件序号 | 所属事件流内的发布顺序。 |
@@ -283,7 +283,7 @@ Persona 提供说话者／身份证据；轮次判断不识别人。
 | 限于快照范围的 Persona 访问 | [persona/runtime.py](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/runtime.py)。 |
 
 - 单凭麦克风、设备或主参与者，不能证明某个片段由谁说出。
-- 局部实体标签不能独立确立持久用户身份。
+- 实体标签不能独立确立持久用户身份。
 - 一个时序轮次可以包含多个主体或未归属片段。
 - 冲突证据不能授予私有用户身份。
 - 关联就绪、身份推断和属性提取各有独立的完成时间。

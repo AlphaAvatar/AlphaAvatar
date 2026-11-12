@@ -183,7 +183,7 @@ Core owns their lineage, event order, retention and temporal lookup.
 | --- | --- |
 | `PerceptionSourceRef` | Source identity together with its generation. |
 | `PerceptionSegmentRef` | A speech segment qualified by its complete source reference. |
-| `PerceptionEntityRef` | A perception entity label qualified by its source. |
+| `PerceptionEntityRef` | A perceived face or voice, unique within its session; it can appear on several sources and generations. |
 | Observation ID | One observation, including its payload/reference and media time. |
 | Annotation ID | One interpretation record targeting evidence. |
 | Event sequence | Publication order inside its own event stream. |
@@ -283,7 +283,7 @@ Keep transport identity, perceived entities, session participants and durable us
 | Snapshot-scoped Persona access | [persona/runtime.py](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/runtime.py). |
 
 - A microphone, device or primary participant alone does not prove who spoke a segment.
-- A local entity label does not independently establish a durable user identity.
+- An entity label does not independently establish a durable user identity.
 - One temporal Turn can contain multiple actors or unattributed segments.
 - Conflicting evidence must not grant a private user identity.
 - Association readiness, identity inference and attribute extraction have separate completion times.

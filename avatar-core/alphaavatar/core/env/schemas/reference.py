@@ -62,6 +62,9 @@ class PerceptionSegmentRef:
 
 @dataclass(frozen=True, slots=True)
 class PerceptionEntityRef:
+    """A perceived face or voice, unique within its session; it can appear on several sources
+    and generations, and it belongs to one participant."""
+
     entity_id: str
 
     def __post_init__(self) -> None:
