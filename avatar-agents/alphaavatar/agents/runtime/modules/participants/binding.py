@@ -16,6 +16,8 @@ from __future__ import annotations
 from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.session.schemas import validate_identity
 
+from .schemas import DeviceId, EntityId, ParticipantId
+
 
 class ParticipantBindings:
     """Simple links to participant IDs; identity and lifecycle belong to their runtimes."""
@@ -27,8 +29,8 @@ class ParticipantBindings:
         self._max_entities = max_entities
         self._max_devices = max_devices
 
-        self._devices: dict[str, str] = {}
-        self._entities: dict[tuple[PerceptionSourceRef, str], str] = {}
+        self._devices: dict[DeviceId, ParticipantId] = {}
+        self._entities: dict[tuple[PerceptionSourceRef, EntityId], ParticipantId] = {}
 
     def check_device(self, device_id: str, participant_id: str) -> None:
         validate_identity(device_id, name="device_id")
@@ -43,7 +45,7 @@ class ParticipantBindings:
         self.check_device(device_id, participant_id)
         self._devices[device_id] = participant_id
 
-    def get_device(self, device_id: str) -> str | None:
+    def get_device(self, device_id: str) -> ParticipantId | None:
         return self._devices.get(device_id)
 
     def has_participant(self, participant_id: str) -> bool:
@@ -64,13 +66,13 @@ class ParticipantBindings:
             raise ValueError("Entity is already bound to another participant")
         self._entities[key] = participant_id
 
-    def get_entity(self, source: PerceptionSourceRef, entity_id: str) -> str | None:
+    def get_entity(self, source: PerceptionSourceRef, entity_id: str) -> ParticipantId | None:
         return self._entities.get((source, entity_id))
 
-    def release_entity(self, source: PerceptionSourceRef, entity_id: str) -> str | None:
+    def release_entity(self, source: PerceptionSourceRef, entity_id: str) -> ParticipantId | None:
         return self._entities.pop((source, entity_id), None)
 
-    def release_source(self, source: PerceptionSourceRef) -> frozenset[str]:
+    def release_source(self, source: PerceptionSourceRef) -> frozenset[ParticipantId]:
         removed = frozenset(value for key, value in self._entities.items() if key[0] == source)
         self._entities = {key: value for key, value in self._entities.items() if key[0] != source}
         return removed

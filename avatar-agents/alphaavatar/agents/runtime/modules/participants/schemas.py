@@ -17,6 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphaavatar.core.session.schemas.validation import validate_identity
 
+type ParticipantId = str
+type DeviceId = str
+type SourceId = str
+type EntityId = str
+type EntityKind = str  # "face" or "speaker"
+type ConsumerId = str
+
 
 class ParticipantInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)

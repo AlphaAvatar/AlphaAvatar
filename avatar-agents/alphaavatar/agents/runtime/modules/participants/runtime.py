@@ -39,13 +39,7 @@ from alphaavatar.core.turn.schemas import TurnSnapshot
 from ...capability import avatar_capability
 from ...capability.enums import AvatarCapabilityName
 from .binding import ParticipantBindings
-from .schemas import ParticipantInput
-
-type ParticipantId = str
-type DeviceId = str
-type SourceId = str
-type EntityKind = str  # "face" or "speaker"
-type ConsumerId = str
+from .schemas import ConsumerId, DeviceId, EntityKind, ParticipantId, ParticipantInput, SourceId
 
 
 @dataclass(slots=True)
