@@ -27,6 +27,7 @@ from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import avatar_capability
 from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
+from alphaavatar.agents.utils.vector import VectorOps
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import (
@@ -443,12 +444,10 @@ class SpeakerProcessor(PersonaProcessorBase):
         if result is None:
             raise RuntimeError("Speaker vector runner returned no result")
 
-        vector = np.frombuffer(result, dtype=np.float32)
-        norm = float(np.linalg.norm(vector))
-        if not np.isfinite(vector).all() or not np.isfinite(norm) or norm <= 0:
+        vector = VectorOps.norm(np.frombuffer(result, dtype=np.float32))
+        if vector is None:
             raise ValueError("Speaker vector must contain finite values and have a positive norm")
 
-        vector = vector / norm
         if state.vector is not None:
             if state.vector.shape != vector.shape:
                 raise ValueError("Speaker vector shape changed within a segment")

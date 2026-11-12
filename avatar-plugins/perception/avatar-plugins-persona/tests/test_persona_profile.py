@@ -75,6 +75,15 @@ def test_profile_source_priority_is_chat_then_face_then_speech(
     assert value["value"] == winner
 
 
+def test_a_stored_vector_is_read_at_unit_length_and_one_without_a_length_is_refused() -> None:
+    profile = UserProfile(speaker_vector=[3.0, 4.0], face_vector=[0.0, 2.0])
+    assert profile.speaker_vector == pytest.approx([0.6, 0.8])
+    assert profile.face_vector == pytest.approx([0.0, 1.0])
+    for invalid in ([0.0, 0.0], [float("nan"), 1.0]):
+        with pytest.raises(ValueError, match="finite, nonzero length"):
+            UserProfile(speaker_vector=invalid)
+
+
 def test_sensor_attributes_never_override_a_chat_fact_held_by_the_cache() -> None:
     participant = Participant(participant_id="p1", user_id="alice", joined_at=RuntimeClock().now())
     cache = DefaultPersonaCache(participant=participant)

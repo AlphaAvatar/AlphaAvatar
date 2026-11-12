@@ -33,6 +33,7 @@ from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import avatar_capability
 from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
+from alphaavatar.agents.utils.vector import VectorOps
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
 from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
@@ -165,10 +166,9 @@ class FaceProcessor(PersonaProcessorBase):
         ):
             return None
         vector = np.asarray(face["embedding"], dtype=np.float32)
-        if vector.shape != (self._face_config.embedding_dim,) or not np.isfinite(vector).all():
+        if vector.shape != (self._face_config.embedding_dim,):
             return None
-        norm = float(np.linalg.norm(vector))
-        return vector / norm if np.isfinite(norm) and norm > 0 else None
+        return VectorOps.norm(vector)
 
     def _release_retired_tracks(self) -> None:
         for source, entity in self._tracks.drain_retired():

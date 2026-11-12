@@ -19,6 +19,7 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import plugin_requirement
+from alphaavatar.agents.utils.vector import VectorOps
 
 from ...namespace import NAMESPACE
 from .model_files import FACE_MODEL_CONFIG, FaceModelType, resolve_face_model_root
@@ -90,10 +91,9 @@ class FaceAnalysisRunner(InferenceRunner):
 
             if embedding is not None:
                 embedding = np.asarray(embedding, dtype=np.float32)
-                norm = float(np.linalg.norm(embedding))
-
-                if norm > 0:
-                    embedding = embedding / norm
+                normalized = VectorOps.norm(embedding)
+                if normalized is not None:
+                    embedding = normalized
 
             bbox = getattr(face, "bbox", None)
             keypoints = getattr(face, "kps", None)

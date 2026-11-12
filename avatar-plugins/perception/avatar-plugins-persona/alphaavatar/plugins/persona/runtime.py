@@ -22,6 +22,7 @@ from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcess
 from alphaavatar.agents.persona.schemas import UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
+from alphaavatar.agents.utils.vector import WeightedMean
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.session.enums import IdentitySource
 from alphaavatar.core.session.schemas import Participant
@@ -30,7 +31,6 @@ from alphaavatar.core.turn.schemas import TurnSnapshot
 from .cache import DefaultPersonaCache
 from .storage import PersonaStore
 from .template import PersonaPluginsTemplate
-from .vectors import WeightedMean
 
 logger = logging.getLogger(__name__)
 

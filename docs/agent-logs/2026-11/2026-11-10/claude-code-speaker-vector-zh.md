@@ -939,3 +939,49 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 | `results/v2/*-mean.*`、`grid-calibration-mean.npz`、`select-calibration-mean.json`、`multi-neighbourhood-calibration-mean.json` | 本批的结果 |
 | `live2/verify/save6{,b}/`、`save6{,b}-*.log` | 新代码上两次运行的 64 个核对会话 |
 | `protocol/changes.md` 第六批 | 回放的变更与对之前结果的逐字节复现 |
+
+# 第七批：统一向量库
+
+- 基线 `1648dbd9`（用户已推送第六批、按实际用途改名和参与者类型别名）。本批改动未暂存、未提交。
+- 用户的决定：
+  - `best_cosine_match` 删除；0.95/0.05 合并移入向量库；
+  - "检查有效再归一化"合成一个库函数，人脸的两处一起改，函数名为 `norm`；
+  - `l2_normalize` 与 `norm` 重复，只保留 `norm`，不加 eps；
+  - `WeightedMean` 加入新段时就算好归一化结果，不改成一次矩阵乘法；
+  - `numpy_utils.py` 改名为 `ops.py`，类名 `NumpyOP` 改为 `VectorOps`，`to_np` 改为 `as_vector`。
+  - 会话声纹放在哪里、跟踪是否存活整个会话，之后再定。
+
+## 修改
+
+| 位置 | 改动 |
+|---|---|
+| `avatar-agents/alphaavatar/agents/utils/vector/`（新） | `ops.py`：原 `agents/utils/numpy_utils.py`，类名由 `NumpyOP` 改为 `VectorOps`，`to_np` 改为 `as_vector`；删除没有调用方的 `best_cosine_match`；`norm()` 返回单位向量，模长不是有限值或为 0 时返回 None，取代 `l2_normalize`（后者加 1e-12 后照除，零向量得到全零、NaN 得到 NaN）；`merge(current, vector, beta)` 是原 Persona cache 的 `_merge_vector`，结果无效时报错。`mean.py`：从 Persona 移来的 `WeightedMean`，`vector` 改为字段，在创建和每次加入时更新；和没有长度时报错，加入失败时原值不变。`__init__.py` 导出两者 |
+| `agents/utils/__init__.py` | 不再导出 `NumpyOP`，不保留旧路径 |
+| `persona/vectors.py` | 删除 |
+| Agents `persona/schemas/user_profile.py` | 从列表读入的向量（库里读出的）用 `norm()` 归一化，无效时报校验错误 |
+| Persona `cache.py`、`runtime.py`、`processors/speaker/tracking.py` | 改从 `alphaavatar.agents.utils.vector` 导入；cache 的保存合并和人脸平滑改用 `VectorOps.merge` |
+| 说话人 `processor.py`、人脸 `processor.py`、人脸 `analysis_runner.py` | 改用 `VectorOps.norm()`，各自处理 None：说话人报错、人脸处理器丢弃、人脸推理保留原向量 |
+| `bugs-zh.md` KD-42 | `WeightedMean` 的位置改为 `agents/utils/vector` |
+
+- 正常数据的结果不变，只是不再加 1e-12。行为有变化的只有这些退化输入：
+  - 库里读出的零向量或含 NaN 的向量：原来悄悄变成全零或 NaN，现在报校验错误，这次载入失败。
+  - 合并结果、加权平均的和没有长度：原来同样悄悄变成全零或 NaN，现在报错。按 0.95/0.05 合并两个单位向量不会得到零；加权平均只有在方向恰好相反、秒数恰好相等时才会。
+  - 人脸推理拿到各值有限、但平方和溢出的向量：原来输出除以无穷后的结果，现在保留原向量；两种都会被人脸处理器的同一个检查丢弃。
+- 形状不符的错误信息由 "Identity vector shape mismatch" 改为 "Vector shape mismatch"，没有测试依赖它。
+
+## 验证
+
+- 新增 `avatar-agents/tests/utils/test_vector.py`，6 个用例：
+  - 只有有限、非零的模长才得到单位向量，且不改动输入；
+  - 合并保留 beta 的原向量；没有原向量时只归一化；形状不符报错；结果无效报错；
+  - 加权平均按秒数计、与先后无关，每次加入后保存的结果都是最新的；
+  - 和没有长度时报错，原值不变；
+  - 副本各自增长；
+  - 权重必须为正，形状必须一致。
+- `test_persona_profile.py` 新增一个用例：库里读出的向量按单位长度读入，零向量和含 NaN 的向量被拒绝。
+- 13 处变异全部被发现：
+  - `norm`：去掉有限值检查、去掉零检查；
+  - `merge`：交换权重、去掉形状检查、不归一化、无效结果不报错；
+  - `WeightedMean`：无效的和不报错、加入不是原子的、加入后不刷新结果（Persona 的说话人测试也失败）、忽略秒数、副本与原件共用、去掉权重检查；
+  - `user_profile`：接受无效的存储向量。
+- 现有测试没有覆盖三处调用点在模型输出无效时的处理，本批之前也没有。

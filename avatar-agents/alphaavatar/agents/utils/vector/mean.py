@@ -13,19 +13,31 @@
 # limitations under the License.
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from alphaavatar.agents.utils import NumpyOP
+from .ops import VectorOps
+
+
+def _unit(total: np.ndarray) -> np.ndarray:
+    vector = VectorOps.norm(total)
+    if vector is None:
+        raise ValueError("A weighted mean must have a finite, nonzero length")
+    return vector.astype(np.float32)
 
 
 @dataclass(slots=True)
 class WeightedMean:
     """Unit vectors summed, each weighted by the seconds of audio it is from. Its direction is
-    their mean in any order, and a short segment's vector counts for its length only."""
+    their mean in any order, and a short segment's vector counts for its length only. The
+    normalized mean is kept as each vector is added, not recomputed at every comparison."""
 
     total: np.ndarray
+    vector: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.vector = _unit(self.total)
 
     @classmethod
     def of(cls, vector: np.ndarray, seconds: float) -> WeightedMean:
@@ -33,19 +45,16 @@ class WeightedMean:
             raise ValueError(f"A vector's weight must be positive seconds: {seconds}")
         return cls(np.asarray(vector, dtype=np.float64) * seconds)
 
-    @property
-    def vector(self) -> np.ndarray:
-        return NumpyOP.l2_normalize(self.total).astype(np.float32)
-
     def add(self, vector: np.ndarray, seconds: float) -> None:
         self.extend(WeightedMean.of(vector, seconds))
 
     def extend(self, other: WeightedMean) -> None:
         if other.total.shape != self.total.shape:
-            raise ValueError(
-                f"Identity vector shape mismatch: {self.total.shape} vs {other.total.shape}"
-            )
-        self.total = self.total + other.total
+            raise ValueError(f"Vector shape mismatch: {self.total.shape} vs {other.total.shape}")
+        # A sum without a length is refused before either changes.
+        total = self.total + other.total
+        self.vector = _unit(total)
+        self.total = total
 
     def copy(self) -> WeightedMean:
         return WeightedMean(self.total.copy())

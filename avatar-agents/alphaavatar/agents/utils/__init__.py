@@ -16,7 +16,6 @@ from .env_utils import resolve_env_placeholders
 from .hash_utils import sha256_text, short_hash
 from .id_utils import url_to_filename_id
 from .loop_thread import AsyncLoopThread
-from .numpy_utils import NumpyOP
 
 __all__ = [
     "gpu_available",
@@ -25,5 +24,4 @@ __all__ = [
     "short_hash",
     "url_to_filename_id",
     "AsyncLoopThread",
-    "NumpyOP",
 ]

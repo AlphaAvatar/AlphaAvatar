@@ -17,7 +17,7 @@ from typing import Any, get_args, get_origin
 import numpy as np
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
-from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.agents.utils.vector import VectorOps
 
 from ..enums import ProfileItemSource
 from .user_state import UserRuntimeState
@@ -134,7 +134,11 @@ class UserProfile(BaseModel):
         if v is None:
             return None
         if isinstance(v, list):
-            v = NumpyOP.l2_normalize(NumpyOP.to_np(v))
+            v = VectorOps.norm(VectorOps.as_vector(v))
+            if v is None:
+                raise ValueError(
+                    "speaker_vector and face_vector must have a finite, nonzero length."
+                )
         elif isinstance(v, np.ndarray):
             if v.dtype != np.float32:
                 v = v.astype(np.float32, copy=False)

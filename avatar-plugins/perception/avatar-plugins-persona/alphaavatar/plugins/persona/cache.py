@@ -22,13 +22,12 @@ import numpy as np
 from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
 from alphaavatar.agents.persona.cache import PersonaCache
 from alphaavatar.agents.persona.schemas import DetailsBase, UserProfile, UserRuntimeState
-from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.agents.utils.vector import VectorOps, WeightedMean
 from alphaavatar.core.session.schemas import Participant
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .profile import UserProfileDetails
 from .profile.serialization import field_metadata, merge_profile_field
-from .vectors import WeightedMean
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +206,7 @@ class DefaultPersonaCache(PersonaCache):
         loaded = self._base.profile.speaker_vector
         if loaded is None:
             return observed.copy()
-        return self._merge_vector(loaded, observed, SPEAKER_BETA)
+        return VectorOps.merge(loaded, observed, SPEAKER_BETA)
 
     @property
     def face_vector(self) -> np.ndarray | None:
@@ -215,19 +214,9 @@ class DefaultPersonaCache(PersonaCache):
 
     @face_vector.setter
     def face_vector(self, vector: np.ndarray) -> None:
-        self._observations.face_vector = self._merge_vector(
+        self._observations.face_vector = VectorOps.merge(
             self._observations.face_vector, vector, FACE_BETA
         )
-
-    @staticmethod
-    def _merge_vector(current: np.ndarray | None, vector: np.ndarray, beta: float) -> np.ndarray:
-        if current is not None:
-            if current.shape != vector.shape:
-                raise ValueError(
-                    f"Identity vector shape mismatch: {current.shape} vs {vector.shape}"
-                )
-            vector = beta * current + (1 - beta) * vector
-        return NumpyOP.l2_normalize(vector).copy()
 
     def add_speaker_vector(self, vector: np.ndarray, seconds: float) -> None:
         if self._voice is None:
