@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryOwnerRef
-from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+from alphaavatar.agents.runtime.modules.participants import ParticipantBindings, ParticipantRuntime
 from alphaavatar.agents.runtime.modules.participants.schemas import ParticipantInput
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.env.schemas import (
@@ -100,7 +100,7 @@ def test_device_participant_and_user_identifiers_stay_separate(tmp_path: Path) -
     assert len({"phone-1", owner.participant_id, owner.user_id}) == 3
 
     camera, face = PerceptionSourceRef("camera-1", 1), PerceptionEntityRef("face-b")
-    guest = runtime.ensure_entity(camera, face)
+    guest = runtime.ensure_entity(camera, face, kind="face")
     assert guest.participant_id != owner.participant_id
     assert guest.user_id not in {None, owner.user_id}
     # The device names its explicit submitter only; it never claims people seen through it.
@@ -215,7 +215,7 @@ async def test_agent_identity_decisions_use_their_own_turn_and_version(tmp_path:
 def test_late_recognition_cannot_reopen_retired_or_evicted_associations(tmp_path: Path) -> None:
     runtime = participants(tmp_path, max_segments=1)
     microphone, voice = PerceptionSourceRef("microphone-1", 1), PerceptionEntityRef("speaker-1")
-    person = runtime.ensure_entity(microphone, voice)
+    person = runtime.ensure_entity(microphone, voice, kind="speaker")
     segment = PerceptionSegmentRef(microphone, "segment-1")
     token = runtime.observe_segment(segment)
     assert runtime.bind_segment(segment, voice, token=token)
@@ -241,9 +241,87 @@ def test_late_recognition_cannot_reopen_retired_or_evicted_associations(tmp_path
     runtime.retire_source(microphone)
     assert not runtime.bind_segment(segment, voice, token=reopened)
     assert runtime.resolve(source=microphone, entity=voice) is None
-    # Retiring media releases associations, not the participant or its accepted history.
+    # Retiring media releases its segments' associations, never the entity's participant or
+    # its accepted history.
+    assert runtime.resolve(entity=voice) == runtime.get(person.participant_id)
     assert runtime.get(person.participant_id).user_id == "user-a"
     assert len(runtime.session.identity_history(person.participant_id)) == 2
+
+
+def test_an_entity_keeps_its_participant_on_every_source_and_generation(tmp_path: Path) -> None:
+    runtime = participants(tmp_path)
+    voice = PerceptionEntityRef("speaker-a")
+    first, later = PerceptionSourceRef("microphone-1", 1), PerceptionSourceRef("microphone-1", 2)
+    laptop = PerceptionSourceRef("microphone-2", 1)
+    person = runtime.ensure_entity(first, voice, kind="speaker")
+    segment = PerceptionSegmentRef(first, "segment-1")
+    assert runtime.bind_segment(segment, voice, token=runtime.observe_segment(segment))
+
+    # A new generation releases its predecessor's segments, never the entity's participant.
+    assert runtime.ensure_entity(later, voice, kind="speaker") == person
+    assert runtime.resolve(segment=segment) is None
+    assert runtime.resolve(source=first, entity=voice) is None  # Retired: nothing resolves there
+    assert runtime.resolve(source=later, entity=voice) == person
+    assert person.participant_id in runtime.active_participant_ids
+
+    # Another device's source is the same entity's, and retiring it keeps the entity's binding.
+    assert runtime.ensure_entity(laptop, voice, kind="speaker") == person
+    runtime.retire_source(laptop)
+    assert runtime.resolve(source=later, entity=voice) == person
+
+
+def test_a_participant_has_one_entity_of_each_kind(tmp_path: Path) -> None:
+    runtime = participants(tmp_path)
+    camera, microphone = PerceptionSourceRef("camera-1", 1), PerceptionSourceRef("microphone-1", 1)
+    face, voice, other = (
+        PerceptionEntityRef(name) for name in ("face-a", "speaker-a", "speaker-b")
+    )
+    person = runtime.ensure_entity(camera, face, kind="face")
+    named = person.participant_id
+    assert runtime.ensure_entity(microphone, voice, kind="speaker", participant_id=named) == person
+
+    # A second voice for the same participant is refused, and nothing of it is kept.
+    with pytest.raises(ValueError, match="already has a speaker entity"):
+        runtime.ensure_entity(microphone, other, kind="speaker", participant_id=named)
+    assert runtime.resolve(entity=other) is None
+    # A bound entity keeps its kind and its participant.
+    with pytest.raises(ValueError, match="another kind"):
+        runtime.ensure_entity(camera, face, kind="speaker")
+    stranger = runtime.join()
+    with pytest.raises(ValueError, match="another participant"):
+        runtime.ensure_entity(
+            microphone, voice, kind="speaker", participant_id=stranger.participant_id
+        )
+
+    # Released, its kind is free again.
+    runtime.release_entity(voice)
+    assert runtime.ensure_entity(microphone, other, kind="speaker", participant_id=named) == person
+
+
+def test_bindings_keep_an_entitys_participant_and_kind_and_one_entity_of_each_kind() -> None:
+    bindings = ParticipantBindings()
+    bindings.bind_entity("speaker-a", "participant-1", "speaker")
+    bindings.bind_entity("face-a", "participant-1", "face")
+    bindings.bind_entity("speaker-a", "participant-1", "speaker")  # Again: the same binding
+    for entity_id, participant_id, kind, refused in (
+        ("speaker-a", "participant-2", "speaker", "another participant"),
+        ("speaker-a", "participant-1", "face", "another kind"),
+        ("speaker-b", "participant-1", "speaker", "already has a speaker entity"),
+    ):
+        with pytest.raises(ValueError, match=refused):
+            bindings.bind_entity(entity_id, participant_id, kind)
+    assert (bindings.get_entity("speaker-a"), bindings.get_entity("speaker-b")) == (
+        "participant-1",
+        None,
+    )
+
+    # Released, an entity frees its kind; the participant stays bound by the other.
+    assert bindings.release_entity("speaker-a") == "participant-1"
+    bindings.bind_entity("speaker-b", "participant-1", "speaker")
+    assert bindings.release_entity("speaker-b") == "participant-1"
+    assert bindings.has_participant("participant-1")
+    assert bindings.release_entity("face-a") == "participant-1"
+    assert not bindings.has_participant("participant-1")
 
 
 def test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user(tmp_path: Path) -> None:

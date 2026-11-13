@@ -175,7 +175,7 @@ class FaceProcessor(PersonaProcessorBase):
             participant = self.runtime.participants.resolve(source=source, entity=entity)
             if participant is not None:
                 self._profile_caches.pop(participant.participant_id, None)
-            self.runtime.participants.release_entity(source, entity)
+            self.runtime.participants.release_entity(entity)
 
     """Annotation operations"""
 

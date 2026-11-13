@@ -122,9 +122,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._profile_caches: dict[str, SpeakerCache] = {}
         self._attribute_times: dict[str, float] = {}
         self._tracks = SpeakerTracks(
-            threshold=config.track_match_threshold,
-            margin=config.track_match_margin,
-            max_tracks=config.max_speakers,
+            threshold=config.track_match_threshold, margin=config.track_match_margin
         )
         # Three lanes: windows and the association Engine resolves a Turn's actors from; each
         # bound segment's identity, which its Turn's Context waits for within its bound; and
@@ -201,8 +199,8 @@ class SpeakerProcessor(PersonaProcessorBase):
         self.runtime.participants.bind_segment(state.segment, None, token=state.token)
 
     def _release_tracks(self) -> None:
-        for source, entity in self._tracks.drain_retired():
-            self.runtime.participants.release_entity(source, entity)
+        for entity in self._tracks.drain_retired():
+            self.runtime.participants.release_entity(entity)
 
     def _discard_job(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
         state = job.state if isinstance(job, SpeakerWindow) else job
@@ -385,9 +383,8 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._invalidate(state)
                 self._retire(state)
 
+        # Its segments go with it; its voices stay the session's, for its other sources too.
         self.runtime.participants.retire_source(source)
-        self._tracks.clear(source)
-        self._release_tracks()
         for state, job in self._running.values():
             if state.segment.source == source:
                 job.cancel()
@@ -544,7 +541,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         if (
             participant.participant_id not in self._profile_caches
-            and len(self._profile_caches) >= self._config.max_speakers
+            and len(self._profile_caches) >= self._config.max_speaker_caches
         ):
             removed = next(iter(self._profile_caches))
             self._profile_caches.pop(removed)
@@ -576,7 +573,6 @@ class SpeakerProcessor(PersonaProcessorBase):
                 state.entity = self._tracks.resolve(
                     state.segment.source, state.vector, state.vector_sec
                 )
-                self._release_tracks()
                 if state.entity is None:
                     return
 

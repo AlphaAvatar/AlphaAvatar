@@ -158,12 +158,10 @@ class ParticipantRuntime:
         )
 
     def _drop_source(self, source: PerceptionSourceRef) -> None:
-        removed = self._bindings.release_source(source)
+        # Entities outlive a source generation: only its segments are released.
         for segment in tuple(self._segments):
             if segment.source == source:
                 self._settle(self._segments.pop(segment), "released", "source_retired")
-        for participant_id in removed:
-            self._release_participant(participant_id)
 
     def _admit_participant(self, participant_id: str) -> None:
         if participant_id not in self._active_participants:
@@ -251,12 +249,14 @@ class ParticipantRuntime:
         source: PerceptionSourceRef,
         entity: PerceptionEntityRef,
         *,
+        kind: EntityKind,
         participant_id: str | None = None,
-        kind: str | None = None,
         device_id: str | None = None,
         candidate_count: int = 1,
     ) -> Participant:
-        if kind is not None and kind not in {"face", "speaker"}:
+        """The entity's participant, on this source too: the one it is bound to, the one named,
+        or, for an entity new to the session, the one identity policy selects or a newcomer."""
+        if kind not in {"face", "speaker"}:
             raise ValueError("Participant association kind must be face or speaker")
         if device_id is not None:
             validate_identity(device_id, name="device_id")
@@ -267,7 +267,7 @@ class ParticipantRuntime:
             self._require_participant(participant_id) if participant_id is not None else None
         )
         self._activate(source)
-        self._bindings.check_entity(source, entity.entity_id)
+        self._bindings.check_entity(entity.entity_id, kind)
         existing = self.resolve(source=source, entity=entity)
         if (
             participant is not None
@@ -278,7 +278,7 @@ class ParticipantRuntime:
 
         participant = participant or existing
         device_participant = self._bindings.get_device(device_id) if device_id is not None else None
-        if participant is None and kind is not None and device_id is not None:
+        if participant is None and device_id is not None:
             participant = self.session.select_participant(
                 AssociationRequest(
                     source=source,
@@ -295,30 +295,29 @@ class ParticipantRuntime:
                 )
             )
 
+        if participant is not None:
+            # A second entity of a kind the participant has is refused before anything changes.
+            self._bindings.check_entity(entity.entity_id, kind, participant.participant_id)
+
         participant = participant or self.join()
         self._admit_participant(participant.participant_id)
-        self._bindings.bind_entity(source, entity.entity_id, participant.participant_id)
-        if kind is not None:
-            # Reserve before inference/I/O; expiration cannot transfer a slot to a stranger.
-            self._association_kinds.setdefault(participant.participant_id, set()).add(kind)
-            if device_id is not None and device_participant is not None:
-                peers = self._association_devices.setdefault(device_id, set())
-                # One competing-person witness preserves ambiguity without retaining every visit.
-                if participant.participant_id == device_participant or not any(
-                    value != device_participant for value in peers
-                ):
-                    peers.add(participant.participant_id)
+        self._bindings.bind_entity(entity.entity_id, participant.participant_id, kind)
+        # Reserve before inference/I/O; expiration cannot transfer a slot to a stranger.
+        self._association_kinds.setdefault(participant.participant_id, set()).add(kind)
+        if device_id is not None and device_participant is not None:
+            peers = self._association_devices.setdefault(device_id, set())
+            # One competing-person witness preserves ambiguity without retaining every visit.
+            if participant.participant_id == device_participant or not any(
+                value != device_participant for value in peers
+            ):
+                peers.add(participant.participant_id)
 
         return participant
 
-    def release_entity(self, source: PerceptionSourceRef, entity: PerceptionEntityRef) -> None:
-        participant_id = self._bindings.release_entity(source, entity.entity_id)
-        for segment, current in self._segments.items():
-            if (
-                segment.source == source
-                and current.entity is not None
-                and current.entity.entity_id == entity.entity_id
-            ):
+    def release_entity(self, entity: PerceptionEntityRef) -> None:
+        participant_id = self._bindings.release_entity(entity.entity_id)
+        for current in self._segments.values():
+            if current.entity is not None and current.entity.entity_id == entity.entity_id:
                 current.invalid = True
                 self._settle(current, "invalid", "entity_released")
         if participant_id is not None:
@@ -416,10 +415,7 @@ class ParticipantRuntime:
             return False
 
         current = self._segments[segment]
-        if (
-            entity is not None
-            and self._bindings.get_entity(segment.source, entity.entity_id) is None
-        ):
+        if entity is not None and self._bindings.get_entity(entity.entity_id) is None:
             raise ValueError("Segment entity must be associated with a participant first")
 
         if entity is None or (
@@ -470,9 +466,7 @@ class ParticipantRuntime:
 
         if entity is not None:
             # Each observed person needs their own association, even on a shared device.
-            participant_id = (
-                self._bindings.get_entity(source, entity.entity_id) if source is not None else None
-            )
+            participant_id = self._bindings.get_entity(entity.entity_id)
         else:
             participant_id = self._bindings.get_device(device_id or "") if by_device else None
 

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from alphaavatar.agents.runtime.modules.participants.schemas import EntityId
 from alphaavatar.agents.utils.vector import WeightedMean
 from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 
@@ -24,35 +25,28 @@ from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRe
 class SpeakerTrack:
     entity: PerceptionEntityRef
     voice: WeightedMean
+    sources: list[PerceptionSourceRef]  # Every source and generation it was heard on, in order
 
 
 class SpeakerTracks:
-    """Bounded acoustic associations; matching a user never selects a track. A track's voice is
-    every segment it took, each by the seconds its vector is from. A track lasts as long as its
-    source generation: silence never retires it, since the same speaker heard again would
-    otherwise become another participant, and a new user one more generated user."""
+    """The session's voices; matching a user never selects a track. A track's voice is every
+    segment it took, each by the seconds its vector is from. A voice is matched on any source
+    and generation, keeps each it was heard on, and lasts until the processor stops: the same
+    speaker after a pause, a new generation or on another device stays its entity when the
+    voice matches. Tracks are not bounded here; participant capacity bounds their entities."""
 
-    def __init__(self, *, threshold: float, margin: float, max_tracks: int) -> None:
-        self.threshold, self.margin, self.max_tracks = threshold, margin, max_tracks
-        self._tracks: dict[PerceptionSourceRef, list[SpeakerTrack]] = {}
-        self._retired: list[tuple[PerceptionSourceRef, PerceptionEntityRef]] = []
+    def __init__(self, *, threshold: float, margin: float) -> None:
+        self.threshold, self.margin = threshold, margin
+        self._tracks: dict[EntityId, SpeakerTrack] = {}
+        self._retired: list[PerceptionEntityRef] = []
 
     def resolve(
         self, source: PerceptionSourceRef, vector: np.ndarray, seconds: float
     ) -> PerceptionEntityRef | None:
-        for current, tracks in tuple(self._tracks.items()):
-            if (
-                current.source_id == source.source_id
-                and current.source_generation < source.source_generation
-            ):
-                self._retired.extend((current, track.entity) for track in tracks)
-                self._tracks.pop(current)
-
-        tracks = self._tracks.setdefault(source, [])
         ranked = sorted(
             (
-                (float(np.dot(track.voice.vector, vector)), i)
-                for i, track in enumerate(tracks)
+                (float(np.dot(track.voice.vector, vector)), entity_id)
+                for entity_id, track in self._tracks.items()
                 if track.voice.total.shape == vector.shape
             ),
             reverse=True,
@@ -62,29 +56,23 @@ class SpeakerTracks:
             if len(ranked) > 1 and ranked[0][0] - ranked[1][0] <= self.margin:
                 return None
 
-            track = tracks[ranked[0][1]]
+            track = self._tracks[ranked[0][1]]
             track.voice.add(vector, seconds)
+            if source not in track.sources:
+                track.sources.append(source)
             return track.entity
 
-        if sum(map(len, self._tracks.values())) >= self.max_tracks:
-            return None
-
         entity = PerceptionEntityRef(f"speaker-{uuid4().hex}")
-        tracks.append(SpeakerTrack(entity, WeightedMean.of(vector, seconds)))
+        self._tracks[entity.entity_id] = SpeakerTrack(
+            entity, WeightedMean.of(vector, seconds), [source]
+        )
         return entity
 
-    def clear(self, source: PerceptionSourceRef | None = None) -> None:
-        if source is None:
-            self._retired.extend(
-                (current, track.entity)
-                for current, tracks in self._tracks.items()
-                for track in tracks
-            )
-            self._tracks.clear()
-        else:
-            self._retired.extend((source, track.entity) for track in self._tracks.pop(source, ()))
+    def clear(self) -> None:
+        self._retired.extend(track.entity for track in self._tracks.values())
+        self._tracks.clear()
 
-    def drain_retired(self) -> tuple[tuple[PerceptionSourceRef, PerceptionEntityRef], ...]:
+    def drain_retired(self) -> tuple[PerceptionEntityRef, ...]:
         retired = tuple(self._retired)
         self._retired.clear()
         return retired

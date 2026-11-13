@@ -23,7 +23,8 @@ class SpeakerConfig(BaseModel):
     # How long a Turn's Context waits for its speech's speaker identity (a search took 1-8 ms).
     identity_wait_sec: float = Field(default=0.1, ge=0.0, allow_inf_nan=False)
     max_segments: int = Field(default=32, ge=1, le=256)
-    max_speakers: int = Field(default=64, ge=1, le=512)
+    # Participants whose speaker attributes are kept; the earliest kept goes first.
+    max_speaker_caches: int = Field(default=64, ge=1, le=512)
 
     # Cosines of the campplus speaker vectors.
     track_match_threshold: float = Field(default=0.55, ge=0, le=1)

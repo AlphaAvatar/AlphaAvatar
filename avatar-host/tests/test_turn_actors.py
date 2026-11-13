@@ -54,7 +54,10 @@ async def test_a_turns_actors_are_its_segments_associations_never_its_device(
     runtime = session.execution.runtime
     participants = runtime.participants
     # Two people heard on the device, each a participant of their own besides its owner.
-    people = {voice: participants.ensure_entity(session.speech, voice) for voice in (ALICE, BOB)}
+    people = {
+        voice: participants.ensure_entity(session.speech, voice, kind="speaker")
+        for voice in (ALICE, BOB)
+    }
     primary = participants.resolve(DEVICE, by_device=True)
     assert primary is not None and primary not in people.values()
     for segment_id, (named, associated) in zip(

@@ -1034,3 +1034,41 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 | `docs/bugs-zh.md` | 新增 KD-44：实体按来源绑定，换代或换设备后同一个人成为新参与者；契约已改，实现待做 |
 
 - `identifiers-zh.md` 2.2 开头写明了进度：绑定层和说话人跟踪的实现仍是旧规则，人脸随后。
+
+# 第十批：绑定层与说话人按会话实体实现
+
+- 第九批之后，改动未暂存、未提交。
+- 用户的决定：取消说话人跟踪的数量上限；`sources` 是列表，同一来源的新一代追加在后；同一参与者的第二个同类实体报错；人脸之后再改；原 `max_speakers` 只剩下限制属性缓存的用途，改名为 `max_speaker_caches`。
+
+## 修改
+
+| 位置 | 改动 |
+|---|---|
+| Agents `participants/binding.py` | 实体绑定以 `entity_id` 为键（记参与者和类型），新增"参与者 → {类型: 实体}"；`check_entity()` 拒绝改绑到别的参与者、改变类型、同一参与者的第二个同类实体，并检查容量；`release_entity(entity_id)` 释放后空出类型；删除 `release_source()` |
+| Agents `participants/runtime.py` | `ensure_entity()` 的 `kind` 改为必填，先查实体已有的绑定（与来源无关），选定参与者后、接纳之前先检查同类实体；`release_entity(entity)` 不再带来源；`resolve()` 和 `bind_segment()` 按实体查参与者；来源换代、`retire_source()` 只作废那个来源上的语音段，不再解除实体绑定 |
+| Persona `speaker/tracking.py` | `_tracks: dict[EntityId, SpeakerTrack]`；`SpeakerTrack.sources` 按出现顺序记录来源和代；在所有跟踪中匹配，不再按来源分开，不再随换代退役，不限数量；`clear()` 只在处理器停止时调用 |
+| Persona `speaker/processor.py` | 构造跟踪器不再传上限；来源取消只作废它的语音段，不再清空跟踪；`release_entity()` 改为只带实体；属性缓存的上限改用 `max_speaker_caches` |
+| Persona `speaker/config.py` | 删除 `max_speakers`，新增 `max_speaker_caches`（默认 64，只限制按参与者保存的属性缓存） |
+| Persona `face/processor.py` | `release_entity()` 改为只带实体；人脸跟踪器本身未改 |
+| 测试 | Agents、Host、Router 中调用 `ensure_entity()` 的地方补上 `kind`；`[reconnected]` 改为换代后仍是同一参与者 |
+| 文档 | `identifiers-zh.md` 2.2 的进度说明；`bugs-zh.md` KD-43、KD-44；Persona README |
+
+## 验证
+
+- 新增测试：
+  - `test_an_entity_keeps_its_participant_on_every_source_and_generation`：换代后旧那一代的语音段作废、实体仍是原参与者且参与者仍活跃；另一台设备的来源也是同一参与者，取消那个来源不影响实体绑定。
+  - `test_a_participant_has_one_entity_of_each_kind`：第二个同类实体报错且不留下任何绑定；已绑定的实体不能改类型、不能改到别的参与者；释放后类型空出来。
+  - `test_bindings_keep_an_entitys_participant_and_kind_and_one_entity_of_each_kind`：直接覆盖 `ParticipantBindings` 的这些规则。
+  - `test_a_track_is_one_voice_on_every_source_and_generation_it_is_heard_on`：同一声音在新一代、另一台设备上都是同一实体，`sources` 按顺序为 [第 1 代, 第 2 代, 另一台设备]，`clear()` 退役全部。
+  - `test_one_voice_is_one_participant_across_devices_and_a_cancelled_source`：新用户的同一声音在电话、电脑、电话来源取消后的新一代上都是同一参与者。
+- 10 处变异全部被发现：
+  - 绑定层：接受第二个同类实体、允许改类型、允许改参与者、释放后不空出类型。第一轮漏了"允许改参与者"，因为运行时在调用绑定层之前已经检查过，补了直接测试后能发现。
+  - 运行时：不复用实体已有的绑定；`resolve()` 只在第一个来源上能查到。
+  - 跟踪器：只在第一个来源上匹配；新一代替换同一来源的旧一代；`clear()` 不退役。
+  - 处理器：来源取消时清空跟踪。
+- 全量测试：708 通过、1 失败。失败的是 router 的 `test_late_stt_final_after_transcript_timeout_never_revives_the_input[listening0]`，即第四批记录的间歇计时测试：
+  - 它不用参与者接口；
+  - 单独连跑 15 次失败 1 次；
+  - router 全部测试单独跑 87 个通过。
+  - 测试没有改，没有放宽断言。
+- `uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`、`git diff --check` 都通过；没有新增字节码。

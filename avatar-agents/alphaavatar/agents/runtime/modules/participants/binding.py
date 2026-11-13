@@ -13,14 +13,15 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.session.schemas import validate_identity
 
-from .schemas import DeviceId, EntityId, ParticipantId
+from .schemas import DeviceId, EntityId, EntityKind, ParticipantId
 
 
 class ParticipantBindings:
-    """Simple links to participant IDs; identity and lifecycle belong to their runtimes."""
+    """Simple links to participant IDs; identity and lifecycle belong to their runtimes. An
+    entity belongs to one participant on whatever source it is seen, and a participant has at
+    most one entity of each kind."""
 
     def __init__(self, *, max_entities: int = 1024, max_devices: int = 256) -> None:
         if any(type(value) is not int or value <= 0 for value in (max_entities, max_devices)):
@@ -30,7 +31,8 @@ class ParticipantBindings:
         self._max_devices = max_devices
 
         self._devices: dict[DeviceId, ParticipantId] = {}
-        self._entities: dict[tuple[PerceptionSourceRef, EntityId], ParticipantId] = {}
+        self._entities: dict[EntityId, tuple[ParticipantId, EntityKind]] = {}
+        self._kinds: dict[ParticipantId, dict[EntityKind, EntityId]] = {}
 
     def check_device(self, device_id: str, participant_id: str) -> None:
         validate_identity(device_id, name="device_id")
@@ -49,34 +51,48 @@ class ParticipantBindings:
         return self._devices.get(device_id)
 
     def has_participant(self, participant_id: str) -> bool:
-        return participant_id in self._devices.values() or participant_id in self._entities.values()
+        return participant_id in self._devices.values() or participant_id in self._kinds
 
-    def check_entity(self, source: PerceptionSourceRef, entity_id: str) -> None:
+    def check_entity(self, entity_id: str, kind: str, participant_id: str | None = None) -> None:
+        """Whether the entity can be bound as this kind, to this participant when one is named:
+        a bound entity keeps its participant and kind, and a participant takes no second entity
+        of a kind it has."""
         if not isinstance(entity_id, str) or not entity_id:
             raise ValueError("Perception entity identifier must be a nonempty string")
-        if (source, entity_id) not in self._entities and len(self._entities) >= self._max_entities:
+        bound = self._entities.get(entity_id)
+        if bound is not None:
+            if participant_id is not None and bound[0] != participant_id:
+                raise ValueError("Entity is already bound to another participant")
+            if bound[1] != kind:
+                raise ValueError("Entity is already bound as another kind")
+            return
+        if participant_id is not None and kind in self._kinds.get(participant_id, {}):
+            raise ValueError(f"Participant already has a {kind} entity")
+        if len(self._entities) >= self._max_entities:
             raise RuntimeError("Participant entity capacity reached")
 
-    def bind_entity(self, source: PerceptionSourceRef, entity_id: str, participant_id: str) -> None:
+    def bind_entity(self, entity_id: str, participant_id: str, kind: str) -> None:
         validate_identity(participant_id, name="participant_id")
-        self.check_entity(source, entity_id)
-        key = (source, entity_id)
-        previous = self._entities.get(key)
-        if previous is not None and previous != participant_id:
-            raise ValueError("Entity is already bound to another participant")
-        self._entities[key] = participant_id
+        self.check_entity(entity_id, kind, participant_id)
+        self._entities[entity_id] = (participant_id, kind)
+        self._kinds.setdefault(participant_id, {})[kind] = entity_id
 
-    def get_entity(self, source: PerceptionSourceRef, entity_id: str) -> ParticipantId | None:
-        return self._entities.get((source, entity_id))
+    def get_entity(self, entity_id: str) -> ParticipantId | None:
+        bound = self._entities.get(entity_id)
+        return None if bound is None else bound[0]
 
-    def release_entity(self, source: PerceptionSourceRef, entity_id: str) -> ParticipantId | None:
-        return self._entities.pop((source, entity_id), None)
-
-    def release_source(self, source: PerceptionSourceRef) -> frozenset[ParticipantId]:
-        removed = frozenset(value for key, value in self._entities.items() if key[0] == source)
-        self._entities = {key: value for key, value in self._entities.items() if key[0] != source}
-        return removed
+    def release_entity(self, entity_id: str) -> ParticipantId | None:
+        bound = self._entities.pop(entity_id, None)
+        if bound is None:
+            return None
+        participant_id, kind = bound
+        kinds = self._kinds[participant_id]
+        del kinds[kind]
+        if not kinds:
+            del self._kinds[participant_id]
+        return participant_id
 
     def clear(self) -> None:
         self._devices.clear()
         self._entities.clear()
+        self._kinds.clear()

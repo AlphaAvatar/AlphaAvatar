@@ -496,7 +496,7 @@ async def test_short_utterances_from_a_sessions_start_open_a_voice_and_are_ident
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
     if case == "reconnected":
-        # Known on the first connection; the new generation starts without its tracks.
+        # Known on the first connection; the new generation keeps its voice.
         utter(runtime, source, "before", "alice", heard=3.0, spoken=2.6)
         await wait_until(lambda: participant_of(runtime, "alice"), "alice was never identified")
         await wait_until(lambda: inference.attribute_samples, "alice was never described")
@@ -532,7 +532,7 @@ async def test_short_utterances_from_a_sessions_start_open_a_voice_and_are_ident
         # The match binds what the search found: right, or wrong on wrong evidence.
         assert (current.user_id, current.identity_sequence) == (expected, 1)
     if case == "reconnected":
-        assert participant_id != before.participant_id
+        assert participant_id == before.participant_id
     # The attribute model never hears the short audio.
     assert inference.attribute_samples == ([48000] if case == "reconnected" else [])
     await persona.on_stop()
@@ -548,16 +548,77 @@ def test_a_voice_as_close_to_two_tracks_as_the_margin_joins_neither(
     margin: float, query: tuple[float, float], joined: bool
 ) -> None:
     source = PerceptionSourceRef("device", 1)
-    tracks = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8)
+    tracks = SpeakerTracks(threshold=0.6, margin=margin)
     first = tracks.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0)
     assert tracks.resolve(source, np.array([0.0, 1.0, 0.0]), 3.0) not in (None, first)
     vector = np.array([*query, 0.0]) / np.linalg.norm([*query, 0.0])
     # Both tracks are above the threshold; the closer one only when it is clear of the other.
     assert tracks.resolve(source, vector, 3.0) == (first if joined else None)
     # A single candidate needs only the threshold.
-    alone = SpeakerTracks(threshold=0.6, margin=margin, max_tracks=8)
+    alone = SpeakerTracks(threshold=0.6, margin=margin)
     only = alone.resolve(source, np.array([1.0, 0.0, 0.0]), 3.0)
     assert alone.resolve(source, vector, 3.0) == only
+
+
+def test_a_track_is_one_voice_on_every_source_and_generation_it_is_heard_on() -> None:
+    tracks = SpeakerTracks(threshold=0.6, margin=0.0)
+    voice = np.array([1.0, 0.0, 0.0])
+    first, later = PerceptionSourceRef("device", 1), PerceptionSourceRef("device", 2)
+    laptop = PerceptionSourceRef("laptop", 1)
+    entity = tracks.resolve(first, voice, 3.0)
+    assert [tracks.resolve(source, voice, 3.0) for source in (later, laptop, first)] == [entity] * 3
+
+    # Every source and generation it was heard on, in order: a new generation replaces none.
+    (track,) = tracks._tracks.values()
+    assert track.sources == [first, later, laptop]
+    assert tracks.drain_retired() == ()
+    tracks.clear()
+    assert tracks.drain_retired() == (entity,)
+
+
+async def test_one_voice_is_one_participant_across_devices_and_a_cancelled_source(
+    tmp_path: Path,
+) -> None:
+    inference = SensorInference()
+    inference.replies.extend(["none"] * 3)  # A new user: only its voice holds it together
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    phone, laptop, again = (
+        PerceptionSourceRef("device", 1),
+        PerceptionSourceRef("laptop", 1),
+        PerceptionSourceRef("device", 2),
+    )
+    utter(runtime, phone, "u0", "alice", heard=3.0, spoken=2.6)
+    await wait_until(
+        lambda: len(inference.searches) == 1, "the phone's utterance was never searched"
+    )
+    first = runtime.participants.resolve(segment=PerceptionSegmentRef(phone, "u0"))
+    utter(runtime, laptop, "u1", "alice", heard=3.0, spoken=2.6)
+    await wait_until(
+        lambda: len(inference.searches) == 2, "the laptop's utterance was never searched"
+    )
+    # The phone's source is cancelled while it speaks; it comes back as a new generation.
+    speak(runtime, phone, "open", "alice", end=False, explicit=False)
+    runtime.perception.publish_observation(
+        EnvObservation(
+            kind=ObservationKind.SPEECH_CANCELLED,
+            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            source=phone,
+            segment=PerceptionSegmentRef(phone, "open"),
+            metadata={"reason_code": "source_ended"},
+        )
+    )
+    utter(runtime, again, "u2", "alice", heard=3.0, spoken=2.6)
+    await wait_until(lambda: len(inference.searches) == 3, "the new generation was never searched")
+
+    heard = [
+        runtime.participants.resolve(segment=PerceptionSegmentRef(source, name))
+        for source, name in ((laptop, "u1"), (again, "u2"))
+    ]
+    assert first is not None and heard == [first, first]  # One participant, one generated user
+    await persona.on_stop()
+    await runtime.aclose()
 
 
 async def test_a_new_users_voice_silent_for_an_hour_is_still_one_participant(

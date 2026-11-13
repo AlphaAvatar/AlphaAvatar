@@ -311,7 +311,7 @@ async def test_transcripts_out_of_order_repeated_or_identified_late_are_read_in_
     await wait_until(lambda: speech.judged("b"), "the later segment was never judged")
     # Its speaker becomes known after its transcript: later judgments name them.
     participants, segment = speech.runtime.participants, speech.segment("b")
-    participants.ensure_entity(segment.source, BOB)
+    participants.ensure_entity(segment.source, BOB, kind="speaker")
     participants.bind_segment(segment, BOB, token=participants.observe_segment(segment))
     speech.final("a", "Hey Assistant,")
     await wait_until(lambda: len(speech.judged("b")) == 2, "the later segment was not re-judged")
