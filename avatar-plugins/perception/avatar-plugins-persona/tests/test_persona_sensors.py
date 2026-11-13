@@ -289,10 +289,12 @@ def utter(
             samples_per_channel=count,
             source_observation_ids=(f"{segment}-0",),
         )
+    now = runtime.clock.now()
     runtime.perception.publish_observation(
         EnvObservation(
             kind=ObservationKind.SPEECH_SEGMENT,
-            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            # Its VAD range: the speech it carries.
+            time_range=RuntimeTimeRange(start=now.shifted(-(spoken or 0.0)), end=now),
             payload=payload,
             **common,
         )
@@ -483,6 +485,50 @@ async def test_speech_shorter_than_a_window_is_inferred_once_at_its_own_length(
     await runtime.aclose()
 
 
+async def test_a_frame_published_again_counts_once_until_it_is_forgotten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The Router can publish a routed frame again: a segment counts it once, remembering only
+    # its last MAX_SEEN_OBSERVATIONS frames, the oldest forgotten first.
+    monkeypatch.setattr(SpeakerProcessor, "MAX_SEEN_OBSERVATIONS", 2)
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    common = {
+        "source": source,
+        "segment": PerceptionSegmentRef(source, "a"),
+        "device_id": source.source_id,
+    }
+    pcm = np.full(16000, 8192, dtype="<i2").tobytes()  # 1 s of alice
+    # r2 is still remembered when it comes again; r1 has been forgotten, so it counts again.
+    for index, routed in enumerate(("r1", "r2", "r3", "r2", "r1")):
+        frame = AudioFrame(sample_rate=16000, num_channels=1, samples_per_channel=16000, data=pcm)
+        runtime.perception.publish_observation(
+            EnvObservation(
+                kind=ObservationKind.SPEECH_FRAME,
+                time_range=RuntimeTimeRange.point(runtime.clock.now()),
+                payload=AudioFramePayload.create(frame=frame, frame_id=f"a-{index}"),
+                metadata={"source_observation_id": routed},
+                **common,
+            )
+        )
+    runtime.perception.publish_observation(
+        EnvObservation(
+            kind=ObservationKind.SPEECH_SEGMENT,
+            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            **common,
+        )
+    )
+    await wait_until(lambda: inference.searches, "the segment was never searched")
+
+    # 4 s counted: a window at 3 s and the next at 4 s, which leaves no tail.
+    assert inference.vector_samples == [48000, 48000]
+    await persona.on_stop()
+    await runtime.aclose()
+
+
 @pytest.mark.parametrize("case", ["registered", "unregistered", "mismatched", "reconnected"])
 async def test_short_utterances_from_a_sessions_start_open_a_voice_and_are_identified(
     case: str, tmp_path: Path
@@ -621,6 +667,78 @@ async def test_one_voice_is_one_participant_across_devices_and_a_cancelled_sourc
     await runtime.aclose()
 
 
+async def test_a_segment_in_flight_when_its_voice_is_identified_still_takes_its_identity_step(
+    tmp_path: Path,
+) -> None:
+    inference = SensorInference()
+    inference.hold_search = True  # The first segment's search, held while the next one begins
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
+    source = PerceptionSourceRef("device", 1)
+    utter(runtime, source, "first", "alice", heard=3.0, spoken=2.6)
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.search_held.wait()
+    speak(runtime, source, "next", "alice", end=False, explicit=False)
+    await wait_until(
+        lambda: PerceptionSegmentRef(source, "next") in speaker._segments, "it never began"
+    )
+    # The first identifies the voice: its participant takes a new identity version.
+    inference.search_release.set()
+    await wait_until(lambda: participant_of(runtime, "alice"), "the first was never identified")
+    runtime.perception.publish_observation(
+        EnvObservation(
+            kind=ObservationKind.SPEECH_SEGMENT,
+            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            source=source,
+            segment=PerceptionSegmentRef(source, "next"),
+            device_id=source.source_id,
+        )
+    )
+
+    # The segment begun before it is searched all the same, as that participant now.
+    await wait_until(lambda: len(inference.searches) == 2, "the next segment was never searched")
+    alice = participant_of(runtime, "alice")
+    assert runtime.participants.resolve(segment=PerceptionSegmentRef(source, "next")) == alice
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_segment_begun_before_its_voice_had_a_participant_is_still_identified(
+    tmp_path: Path,
+) -> None:
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    phone, laptop = PerceptionSourceRef("phone", 1), PerceptionSourceRef("laptop", 1)
+    # The laptop begins to hear a new voice; the phone's segment of it ends first and makes
+    # its participant, after the laptop's segment began.
+    speak(runtime, laptop, "b", "alice", end=False, explicit=False)
+    utter(runtime, phone, "a", "alice", heard=3.0, spoken=2.6)
+    await wait_until(lambda: len(inference.searches) == 1, "the phone's segment was never searched")
+    runtime.perception.publish_observation(
+        EnvObservation(
+            kind=ObservationKind.SPEECH_SEGMENT,
+            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            source=laptop,
+            segment=PerceptionSegmentRef(laptop, "b"),
+            device_id=laptop.source_id,
+        )
+    )
+
+    # The laptop's segment is searched with its own vector too, as that same participant.
+    await wait_until(lambda: len(inference.searches) == 2, "the laptop's segment never searched")
+    heard = [
+        runtime.participants.resolve(segment=PerceptionSegmentRef(source, name))
+        for source, name in ((phone, "a"), (laptop, "b"))
+    ]
+    assert heard[0] is not None and heard == [heard[0]] * 2
+    await persona.on_stop()
+    await runtime.aclose()
+
+
 async def test_a_new_users_voice_silent_for_an_hour_is_still_one_participant(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -651,6 +769,117 @@ async def test_a_new_users_voice_silent_for_an_hour_is_still_one_participant(
     await runtime.aclose()
 
 
+def test_short_merge_must_cover_a_short_segment() -> None:
+    from alphaavatar.plugins.persona.processors.speaker.config import SpeakerConfig
+
+    assert SpeakerConfig(short_segment_sec=1.0, short_merge_sec=1.0).short_merge_sec == 1.0
+    with pytest.raises(ValueError, match="short_merge_sec cannot be smaller"):
+        SpeakerConfig(short_segment_sec=1.5, short_merge_sec=1.0)
+
+
+async def test_short_segments_are_inferred_together_once_long_enough_and_never_waited_on(
+    tmp_path: Path,
+) -> None:
+    inference = SensorInference()
+    inference.hold_search = True  # The search of their audio is held: no Turn may wait on it
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker", identity_wait_sec=5.0)
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    for index, spoken in enumerate((0.8, 0.7, 0.6)):
+        utter(runtime, source, f"short-{index}", "alice", heard=spoken + 0.2, spoken=spoken)
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.search_held.wait()
+
+    # One vector of all three, 0.8 + 0.7 + 0.6 s, once together they reach 2 s.
+    assert inference.vector_samples == [33600]
+    # Each Turn of short speech goes on at once, never at the 5 s identity bound.
+    for index in range(3):
+        ready = runtime.turn.wait_context_ready(spoken_turn(runtime, f"short-{index}"))
+        assert await asyncio.wait_for(ready, 1) is True
+    inference.search_release.set()
+    await wait_until(lambda: participant_of(runtime, "alice"), "the merged audio never identified")
+
+    # They take the association their audio found, every one of them.
+    participants = {
+        runtime.participants.resolve(segment=PerceptionSegmentRef(source, f"short-{index}"))
+        for index in range(3)
+    }
+    assert participants == {participant_of(runtime, "alice")}
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_short_segments_lead_the_next_longer_one_into_its_vector(tmp_path: Path) -> None:
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    spoken = {"short-0": 0.8, "short-1": 0.7, "long": 1.2}
+    for name, seconds in spoken.items():
+        utter(runtime, source, name, "alice", heard=seconds + 0.2, spoken=seconds)
+    await wait_until(lambda: len(inference.searches) == 1, "the long one was never searched")
+
+    # Alone it is 1.2 s at its own length; led by the 1.5 s of short speech before it, it is
+    # one vector of 2.7 s, and the short segments take its association.
+    assert inference.vector_samples == [43200]
+    alice = participant_of(runtime, "alice")
+    heard = [
+        runtime.participants.resolve(segment=PerceptionSegmentRef(source, name)) for name in spoken
+    ]
+    assert alice is not None and heard == [alice] * 3
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_segment_with_its_own_subject_drops_the_short_speech_before_it(
+    tmp_path: Path,
+) -> None:
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
+    source = PerceptionSourceRef("device", 1)
+    utter(runtime, source, "short", "alice", heard=1.0, spoken=0.8)
+    await wait_until(lambda: speaker._shorts, "the short segment was never kept")
+    speak(runtime, source, "named", "alice")  # Its subject named on its frames
+    await wait_until(lambda: inference.searches, "the named segment was never searched")
+
+    # The short speech cannot cross it to lead a later segment: it goes, unattributed.
+    assert inference.vector_samples == [48000] and not speaker._shorts
+    assert runtime.participants.resolve(segment=PerceptionSegmentRef(source, "short")) is None
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("ended_by", ["cancelled", "new-generation"])
+async def test_a_retired_source_drops_its_short_segments(ended_by: str, tmp_path: Path) -> None:
+    runtime = avatar_runtime(tmp_path, SensorInference())
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
+    source = PerceptionSourceRef("device", 1)
+    utter(runtime, source, "short", "alice", heard=1.0, spoken=0.8)
+    await wait_until(lambda: speaker._shorts, "the short segment was never kept")
+    if ended_by == "cancelled":
+        runtime.perception.publish_observation(
+            EnvObservation(
+                kind=ObservationKind.SPEECH_CANCELLED,
+                time_range=RuntimeTimeRange.point(runtime.clock.now()),
+                source=source,
+                segment=PerceptionSegmentRef(source, "gone"),
+                metadata={"reason_code": "source_ended"},
+            )
+        )
+    else:
+        speak(runtime, PerceptionSourceRef("device", 2), "next", "alice", end=False)
+    await wait_until(lambda: not speaker._shorts, "the retired source kept its short segment")
+    await persona.on_stop()
+    await runtime.aclose()
+
+
 async def test_a_voice_is_its_segments_mean_each_by_the_seconds_its_vector_is_from(
     tmp_path: Path,
 ) -> None:
@@ -659,9 +888,9 @@ async def test_a_voice_is_its_segments_mean_each_by_the_seconds_its_vector_is_fr
         vector[: len(values)] = values
         return vector / np.linalg.norm(vector)
 
-    # A 0.5 s utterance opens the voice, a window at 0.6 to it joins; the next window is 0 to
-    # the first and 0.59 to their mean by seconds (0.37 unweighted, 0.03 merged 0.95 / 0.05).
-    first, second, third = unit(1), unit(0.6, 0.8), unit(0, 0.82, 0.5724)
+    # A 1.2 s utterance opens the voice, a window at 0.6 to it joins; the next window is 0 to
+    # the first and 0.56 to their mean by seconds (0.40 unweighted, 0.04 merged 0.95 / 0.05).
+    first, second, third = unit(1), unit(0.6, 0.8), unit(0, 0.9, 0.19**0.5)
     inference = SensorInference()
     inference.voices.extend((first, second, third))
     inference.replies.extend(["none"] * 3)  # Nobody's: the voice stays the session's own
@@ -669,14 +898,14 @@ async def test_a_voice_is_its_segments_mean_each_by_the_seconds_its_vector_is_fr
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    for index, (heard, spoken) in enumerate(((0.8, 0.5), (3.0, 2.6), (3.0, 2.6))):
+    for index, (heard, spoken) in enumerate(((1.5, 1.2), (3.0, 2.6), (3.0, 2.6))):
         utter(runtime, source, f"u{index}", "alice", heard=heard, spoken=spoken)
         await wait_until(
             lambda index=index: len(inference.searches) == index + 1,
             f"utterance {index} was never searched",
         )
 
-    assert inference.vector_samples == [8000, 48000, 48000]
+    assert inference.vector_samples == [19200, 48000, 48000]
     (participant_id,) = {
         runtime.participants.resolve(
             segment=PerceptionSegmentRef(source, f"u{index}")
@@ -684,7 +913,7 @@ async def test_a_voice_is_its_segments_mean_each_by_the_seconds_its_vector_is_fr
         for index in range(3)
     }  # One voice: the last utterance joined what the first two made of it.
     cache = persona.persona_cache[participant_id]
-    expected = 0.5 * first + 3.0 * second + 3.0 * third
+    expected = 1.2 * first + 3.0 * second + 3.0 * third
     np.testing.assert_allclose(cache.speaker_vector, expected / np.linalg.norm(expected), rtol=1e-6)
     await persona.on_stop()
     await runtime.aclose()

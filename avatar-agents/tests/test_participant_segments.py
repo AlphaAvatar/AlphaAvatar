@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""A segment's speaker association is ready once, however it is released, and the trace says
-when and how: what a Turn's commit waits for, recognized or not."""
+"""A segment's speaker association settles once, however it is released, and the trace says
+when and how, recognized or not."""
 
 from __future__ import annotations
 
@@ -79,14 +79,14 @@ def bound(runtime: ParticipantRuntime, segment: PerceptionSegmentRef, token: int
     ],
     ids=["bound", "unbound", "no-entity", "invalidated", "retired", "resolver-stopped", "closed"],
 )
-async def test_an_association_is_ready_once_and_the_trace_says_how(
+def test_an_association_settles_once_and_the_trace_says_how(
     release: Callable, outcome: str, reason: str | None, tmp_path: Path
 ) -> None:
     runtime = participants(tmp_path)
     runtime.set_segment_resolver("persona", enabled=True)
     segment = PerceptionSegmentRef(SOURCE, "seg-1")
     token = runtime.observe_segment(segment)
-    assert ready(runtime) == []  # Asked for, not ready: a commit would wait for it.
+    assert ready(runtime) == []  # Asked for, not ready yet.
     release(runtime, segment, token)
     # Released, whatever released it; and settled once: what follows changes no readiness.
     runtime.finish_segment_resolution(segment, token=token)
@@ -94,8 +94,6 @@ async def test_an_association_is_ready_once_and_the_trace_says_how(
     (record,) = ready(runtime)
     assert (record["outcome"], record.get("reason")) == (outcome, reason)
     assert record["start_time_ns"] <= record["end_time_ns"]
-    async_wait = runtime.wait_for_segments([segment])
-    await async_wait  # Released: no wait at all.
 
 
 def test_without_a_resolver_or_past_the_bound_an_association_is_released_unresolved(

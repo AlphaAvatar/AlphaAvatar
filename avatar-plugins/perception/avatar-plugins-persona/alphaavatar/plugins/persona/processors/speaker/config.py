@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class SpeakerConfig(BaseModel):
@@ -30,3 +30,15 @@ class SpeakerConfig(BaseModel):
     track_match_threshold: float = Field(default=0.55, ge=0, le=1)
     track_match_margin: float = Field(default=0.0, ge=0, le=1)
     segment_consistency_threshold: float = Field(default=0.4, ge=0, le=1)
+
+    # Speech shorter than short_segment_sec (by its VAD range) is not matched alone: it leads the
+    # next segment of its source into that one's vector, a longer one at once and short ones once
+    # together they reach short_merge_sec. A segment with its own subject drops it.
+    short_segment_sec: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+    short_merge_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _short_merge_covers_a_short_segment(self) -> "SpeakerConfig":
+        if self.short_merge_sec < self.short_segment_sec:
+            raise ValueError("short_merge_sec cannot be smaller than short_segment_sec")
+        return self

@@ -13,10 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-import asyncio
 from collections import OrderedDict
-from collections.abc import Iterable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from uuid import uuid4
 
 from alphaavatar.agents.workspace import UserPath, WorkspacePaths
@@ -49,7 +47,7 @@ class _SegmentState:
     observed_ns: int  # When its association was asked for, on the runtime clock
     entity: PerceptionEntityRef | None = None
     invalid: bool = False
-    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    settled: bool = False
 
 
 @avatar_capability(
@@ -139,12 +137,12 @@ class ParticipantRuntime:
         self._generations[source.source_id] = (source.source_generation, True)
 
     def _settle(self, current: _SegmentState, outcome: str, reason: str | None = None) -> None:
-        """Release the association's waiters, once: the first time it is ready, and how, is
-        what the trace keeps (bound, unbound, invalid, released or unresolved). Ready is not
-        recognized: a failure, an eviction or a retirement releases it too."""
-        if current.ready.is_set():
+        """Settle the association, once: the first time it is ready, and how, is what the trace
+        keeps (bound, unbound, invalid, released or unresolved). Ready is not recognized: a
+        failure, an eviction or a retirement settles it too."""
+        if current.settled:
             return
-        current.ready.set()
+        current.settled = True
         segment, perception = current.segment, self.turn.perception
         perception.input_trace.record(
             "participant.segment_ready",
@@ -381,16 +379,6 @@ class ParticipantRuntime:
                 "invalid" if current.invalid else "unbound" if current.entity is None else "bound"
             )
             self._settle(current, outcome)
-
-    async def wait_for_segments(self, segments: Iterable[PerceptionSegmentRef]) -> None:
-        """Wait for physical associations; the caller owns the deadline and rechecks identities."""
-        pending = tuple(
-            current.ready
-            for segment in dict.fromkeys(segments)
-            if (current := self._segments.get(segment)) is not None and not current.ready.is_set()
-        )
-        for ready in pending:
-            await ready.wait()
 
     def segment_is_current(self, segment: PerceptionSegmentRef, token: int) -> bool:
         current = self._segments.get(segment)

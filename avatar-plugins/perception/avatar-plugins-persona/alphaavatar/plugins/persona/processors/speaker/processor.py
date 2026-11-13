@@ -15,8 +15,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -54,20 +53,26 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
+class _ShortSpeech:
+    """A source's short speech not inferred yet: its consecutive short segments' audio in order,
+    their VAD seconds, and each one's association, for the segment that comes next to carry."""
+
+    pcm: bytes = b""
+    seconds: float = 0.0
+    segments: tuple[tuple[PerceptionSegmentRef, int], ...] = ()
+
+
+@dataclass(slots=True)
 class SpeakerSegmentState:
     segment: PerceptionSegmentRef
     entity: PerceptionEntityRef | None
-    participant: Participant | None
-    identities: Mapping[str, Participant]
+    participant: Participant | None  # Its association's; once identified, its attributes' too
     token: int
     device_id: str | None = None
     pcm: bytearray = field(default_factory=bytearray)
     recent: bytearray = field(default_factory=bytearray)
-    seen: set[str] = field(default_factory=set)
-    seen_order: deque[str] = field(default_factory=deque)
+    seen: dict[str, None] = field(default_factory=dict)  # Its frames' observations, oldest first
     window_index: int = 0
-    samples: int = 0
-    last_window_end: int = 0
     pending: int = 0
     closed: bool = False
     invalid: bool = False
@@ -76,7 +81,9 @@ class SpeakerSegmentState:
     vector_sec: float = 0.0  # Seconds of audio its vector is from: a window's, or its own
     last_audio: bytes | None = None
     identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
-    speaker: Participant | None = None  # Its identified participant, for its attributes
+    # The short speech of its source just before it, which leads its own audio; the segments it
+    # is from take the association its vector finds.
+    led: _ShortSpeech = field(default_factory=_ShortSpeech)
 
 
 @dataclass(slots=True, frozen=True)
@@ -121,9 +128,11 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._retired_segments: dict[PerceptionSegmentRef, None] = {}
         self._profile_caches: dict[str, SpeakerCache] = {}
         self._attribute_times: dict[str, float] = {}
+        self._shorts: dict[PerceptionSourceRef, _ShortSpeech] = {}
         self._tracks = SpeakerTracks(
             threshold=config.track_match_threshold, margin=config.track_match_margin
         )
+
         # Three lanes: windows and the association Engine resolves a Turn's actors from; each
         # bound segment's identity, which its Turn's Context waits for within its bound; and
         # its speaker's attributes, which nothing waits for.
@@ -188,7 +197,6 @@ class SpeakerProcessor(PersonaProcessorBase):
         state.recent.clear()
         state.last_audio = None
         state.seen.clear()
-        state.seen_order.clear()
         state.identified.set()
         self._retired_segments[state.segment] = None
         if len(self._retired_segments) > self.MAX_RETIRED_SEGMENTS:
@@ -252,6 +260,13 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._invalidate(current)
                 self._retire(current)
 
+        for source in tuple(self._shorts):
+            if (
+                source.source_id == segment.source.source_id
+                and source.source_generation < segment.source.source_generation
+            ):
+                del self._shorts[source]
+
         state = self._segments.get(segment)
         if state is not None:
             if state.device_id is None:
@@ -291,30 +306,30 @@ class SpeakerProcessor(PersonaProcessorBase):
                 segment=segment,
                 entity=entity,
                 participant=participant,
-                identities=self.session_runtime.snapshot().participants,
                 token=token,
                 device_id=observation.device_id,
             )
             self._segments[segment] = state
+            # Its source's short speech leads it; a segment with its own subject drops it.
+            if (led := self._shorts.pop(segment.source, None)) is not None and entity is None:
+                state.led = led
+                state.pcm.extend(led.pcm)
+                state.recent.extend(led.pcm[-self._window_bytes :])
         elif observation.entity is not None and observation.entity != state.entity:
             if state.entity is not None:
                 # Conflicting explicit subjects invalidate the physical association.
                 self._invalidate(state)
             else:
                 entity = observation.entity
-                existing = self.runtime.participants.resolve(source=segment.source, entity=entity)
                 try:
-                    participant = (
-                        state.identities.get(existing.participant_id)
-                        if existing is not None
-                        else self.runtime.participants.ensure_entity(
-                            segment.source, entity, kind="speaker", device_id=state.device_id
-                        )
+                    associated = self.runtime.participants.ensure_entity(
+                        segment.source, entity, kind="speaker", device_id=state.device_id
                     )
                 except Exception:
                     self._retire(state)
                     raise
-                state.entity, state.participant = entity, participant
+                state.entity = entity
+                state.participant = associated
 
         # An explicit subject is usable before optional identity inference has completed.
         if state.entity is not None and not state.invalid:
@@ -340,18 +355,15 @@ class SpeakerProcessor(PersonaProcessorBase):
         if observation_id in state.seen:
             return
 
-        state.seen.add(observation_id)
-        state.seen_order.append(observation_id)
-        if len(state.seen_order) > self.MAX_SEEN_OBSERVATIONS:
-            state.seen.discard(state.seen_order.popleft())
+        state.seen[observation_id] = None
+        if len(state.seen) > self.MAX_SEEN_OBSERVATIONS:
+            state.seen.pop(next(iter(state.seen)))
 
-        state.samples += len(frame.data) // 2
         state.pcm.extend(frame.data)
         state.recent.extend(frame.data)
         del state.recent[: -self._window_bytes]
         while len(state.pcm) >= self._window_bytes:
             self._enqueue_pcm(state, bytes(state.pcm[: self._window_bytes]))
-            state.last_window_end = state.samples - (len(state.pcm) - self._window_bytes) // 2
             del state.pcm[: self._step_bytes]
 
     def _close_segment(self, observation: EnvObservation) -> None:
@@ -359,13 +371,21 @@ class SpeakerProcessor(PersonaProcessorBase):
         if state is None or state.closed:
             return
 
-        # Include the final tail in a full window; speech that never filled one is inferred
-        # once at its own length. Neither is padded.
+        # Include the final tail in a full window: after a window, its buffer keeps that window
+        # less a step, and anything beyond is tail. Speech that never filled one is inferred
+        # once at its own length, after the short speech that leads it. Neither is padded.
         if not state.invalid and not state.inference_failed:
-            if len(state.recent) == self._window_bytes and state.last_window_end != state.samples:
+            if (
+                len(state.recent) == self._window_bytes
+                and len(state.pcm) > self._window_bytes - self._step_bytes
+            ):
                 self._enqueue_pcm(state, bytes(state.recent))
             elif state.window_index == 0 and (pcm := self._segment_pcm(observation)) is not None:
-                self._enqueue_pcm(state, pcm, whole=True)
+                seconds = observation.time_range.duration_sec
+                if state.entity is None and seconds < self._config.short_segment_sec:
+                    self._add_short(state, state.led.pcm + pcm, state.led.seconds + seconds)
+                else:
+                    self._enqueue_pcm(state, state.led.pcm + pcm, whole=True)
 
         state.closed = True
         state.pcm.clear()
@@ -377,7 +397,22 @@ class SpeakerProcessor(PersonaProcessorBase):
             else:
                 self._enqueue(state)
 
+    def _add_short(self, state: SpeakerSegmentState, pcm: bytes, seconds: float) -> None:
+        """A short segment is not matched alone, and its Turn never waits on it. With the short
+        speech it carries, it is inferred once together they reach short_merge_sec, each of them
+        taking the association its vector finds; until then, it is carried on to lead the next
+        segment of its source. A short speech is never above that bound here, so a segment with
+        its own subject, which cannot carry it, drops it."""
+        state.identified.set()
+        if seconds >= self._config.short_merge_sec:
+            self._enqueue_pcm(state, pcm, whole=True)
+            return
+        self._shorts[state.segment.source] = _ShortSpeech(
+            pcm, seconds, (*state.led.segments, (state.segment, state.token))
+        )
+
     def _cancel_source(self, source: PerceptionSourceRef) -> None:
+        self._shorts.pop(source, None)
         for state in tuple(self._segments.values()):
             if state.segment.source == source:
                 self._invalidate(state)
@@ -576,22 +611,18 @@ class SpeakerProcessor(PersonaProcessorBase):
                 if state.entity is None:
                     return
 
-                existing = self.runtime.participants.resolve(
-                    source=state.segment.source, entity=state.entity
-                )
                 associated = self.runtime.participants.ensure_entity(
                     state.segment.source, state.entity, kind="speaker", device_id=state.device_id
                 )
-                state.participant = (
-                    state.identities.get(existing.participant_id)
-                    if existing is not None
-                    else associated
-                )
+                # Its identity step judges against this version: a change while it searches stays.
+                state.participant = associated
 
             if not self.runtime.participants.bind_segment(
                 state.segment, state.entity, token=state.token
             ):
                 return
+            for segment, token in state.led.segments:
+                self.runtime.participants.bind_segment(segment, state.entity, token=token)
 
             if self.runtime.participants.resolve(segment=state.segment) is None:
                 return
@@ -618,7 +649,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 participant = await self._resolve_identity(state, state.participant)
 
             if participant is not None and self._attribute_due(state, participant):
-                state.speaker = participant
+                state.participant = participant
                 self._enqueue_attribute(state)
                 describing = True
         finally:
@@ -630,9 +661,9 @@ class SpeakerProcessor(PersonaProcessorBase):
         """An identified segment's speaker attributes: they reach later Turns, never a Turn's
         wait, and only the identity they were inferred for."""
         try:
-            if self._is_current(state) and state.speaker is not None:
+            if self._is_current(state) and state.participant is not None:
                 async with self._timed("speaker.attribute", state):
-                    await self._infer_attribute(state, state.speaker)
+                    await self._infer_attribute(state, state.participant)
         finally:
             self._retire(state)
 
@@ -697,6 +728,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                     for state in tuple(self._segments.values()):
                         self._invalidate(state)
                         self._retire(state)
+                    self._shorts.clear()  # Their order is lost with what was missed
 
                 for observation in batch.items:
                     if observation.kind == ObservationKind.SPEECH_CANCELLED:
@@ -781,6 +813,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         self._segments.clear()
         self._retired_segments.clear()
+        self._shorts.clear()
         self._tracks.clear()
         self._release_tracks()
         self._profile_caches.clear()
