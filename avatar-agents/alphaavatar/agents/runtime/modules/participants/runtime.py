@@ -37,7 +37,7 @@ from alphaavatar.core.turn.schemas import TurnSnapshot
 from ...capability import avatar_capability
 from ...capability.enums import AvatarCapabilityName
 from .binding import ParticipantBindings
-from .schemas import ConsumerId, DeviceId, EntityKind, ParticipantId, ParticipantInput, SourceId
+from .schemas import DeviceId, EntityKind, ParticipantId, ParticipantInput, SourceId
 
 
 @dataclass(slots=True)
@@ -109,7 +109,6 @@ class ParticipantRuntime:
         self._generations: dict[SourceId, tuple[int, bool]] = {}
 
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
-        self._segment_resolver: ConsumerId | None = None
         self._next_segment_token = 0
 
     @property
@@ -138,7 +137,7 @@ class ParticipantRuntime:
 
     def _settle(self, current: _SegmentState, outcome: str, reason: str | None = None) -> None:
         """Settle the association, once: the first time it is ready, and how, is what the trace
-        keeps (bound, unbound, invalid, released or unresolved). Ready is not recognized: a
+        keeps (bound, unbound, invalid or released). Ready is not recognized: a
         failure, an eviction or a retirement settles it too."""
         if current.settled:
             return
@@ -341,22 +340,6 @@ class ParticipantRuntime:
         self._activate(source)
         return True
 
-    def set_segment_resolver(self, consumer_id: str, *, enabled: bool) -> None:
-        if not isinstance(consumer_id, str) or not consumer_id:
-            raise ValueError("Segment resolver consumer_id must be a nonempty string")
-
-        if enabled:
-            if self._closed:
-                raise RuntimeError("ParticipantRuntime is closed")
-            if self._segment_resolver not in (None, consumer_id):
-                raise ValueError("A segment resolver is already registered")
-
-            self._segment_resolver = consumer_id
-        elif self._segment_resolver == consumer_id:
-            self._segment_resolver = None
-            for current in self._segments.values():
-                self._settle(current, "released", "resolver_stopped")
-
     def observe_segment(self, segment: PerceptionSegmentRef) -> int:
         self._activate(segment.source)
         current = self._segments.get(segment)
@@ -365,8 +348,6 @@ class ParticipantRuntime:
             current = self._segments[segment] = _SegmentState(
                 self._next_segment_token, segment, self.turn.perception.clock.now().monotonic_ns
             )
-            if self._segment_resolver is None:
-                self._settle(current, "unresolved", "no_resolver")
             while len(self._segments) > self._max_segments:
                 _, removed = self._segments.popitem(last=False)
                 self._settle(removed, "released", "evicted")
@@ -534,7 +515,6 @@ class ParticipantRuntime:
 
     def close(self) -> None:
         self._closed = True
-        self._segment_resolver = None
         for current in self._segments.values():
             self._settle(current, "released", "closed")
         self._bindings.clear()

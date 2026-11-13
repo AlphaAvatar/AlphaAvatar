@@ -22,7 +22,6 @@ type DeviceId = str
 type SourceId = str
 type EntityId = str
 type EntityKind = str  # "face" or "speaker"
-type ConsumerId = str
 
 
 class ParticipantInput(BaseModel):

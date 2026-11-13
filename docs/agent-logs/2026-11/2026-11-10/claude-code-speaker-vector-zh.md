@@ -1224,6 +1224,20 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 | `live2/verify/save11{,b,c}/`、`save11{,b,c}-*.log` | 三次真实链路核对；`save11` 用的是之前的记录器 |
 | `protocol/changes.md` 第十一批 | 采集、记录、回放与核对的变更 |
 
+## 第十一批之后：Context 的等待登记
+
+基线 `7becb0e4`（用户已提交第十一批）。用户逐个询问向 Turn 登记、会卡住 Context 准备的几处：
+
+| 登记 | 结论 | 处理 |
+|---|---|---|
+| Memory runtime 的 `register_context_consumer(TURN_CONSUMER_ID)`，没有 waiter | Context 要等 Memory 把这个 Turn 记进上下文状态，最多 0.5 秒（`turn.context_ready_timeout_sec`），超时则这个 Turn 的准备失败。Context 不读这些：`content_for` 自己同步会话、直接用投影后的 Turn；主动检索也接受 TurnRuntime 当前的 Turn；被动检索自己等这个游标；输出记录之前会先读完 Turn。在内存里屏蔽这处登记，Memory、Context、Loop、Core、Agents 的 171 个测试都通过 | 用户决定删除：去掉登记和注销。新增 `test_a_turn_is_ready_for_context_before_memory_records_it`，把登记加回去时失败 |
+| Persona 说话人的 `register_context_consumer(..., waiter=_await_identities)` | 只等这个 Turn 自己还没做完身份那一步的段，最多 `identity_wait_sec`（0.1 秒），超时放行。Context 按当前身份决定私有资料和记忆，去掉它，身份晚到时 Loop 会中断输出、重新准备、再请求一次模型。屏蔽后只有直接测这个等待的 3 个测试失败 | 用户决定保留；不想等时把 `identity_wait_sec` 设为 0 |
+| `ParticipantRuntime.set_segment_resolver` | 原本让 `wait_for_segments` 不至于永远等：没有解析者时段立即结算为 `unresolved`，解析者停止时结算为 `released / resolver_stopped`。等待删除后只剩 trace：前者走不到（调用 `observe_segment` 的只有说话人处理器自己，登记在先、注销在后），后者与 `close()` 的 `released / closed` 重复（组件不能热切换） | 用户决定删除：去掉方法、字段、两条结算和 Persona 的调用，删除不再使用的 `ConsumerId` 别名；测试去掉 `resolver-stopped` 参数和 `no_resolver` 部分，保留淘汰 |
+
+- 回答"Context 抛出 TimeoutError 后 Loop 是否正常"时发现 KD-46：Loop 把它当成自己的预算超时。用 Loop 测试的替身注册一个抛错的 waiter，只在第一次准备失败时 Run 以 `partial / time_budget` 结束、不调用工具，每次都失败时以 `failed / timeout` 结束、不请求模型。修法待用户决定。
+- 第一次实验时临时删掉了 Memory 的那行登记，没有先告诉用户，用户发现后停下并恢复；之后的实验改用 scratchpad 里的 pytest 插件，只在内存里屏蔽。
+- 验证：ruff、format、`git diff --check` 通过；删除 Memory 登记后全量测试 719 个通过，删除 `set_segment_resolver` 后 718 个通过（少了 `resolver-stopped` 参数）。工作区里 `context/manager.py` 的一个空行是用户自己的改动。
+
 ## 留给下一步
 
 - 身份版本改名：`identity_sequence` → `identity_revision`、`basis_sequence` → `basis_revision`（Core、Agents、Persona、Memory 及测试、`identifiers-zh.md`，约 26 个文件）。项目里 `sequence` 指事件流的发布顺序，身份版本是单个参与者的版本号，与 `revision` 的用法一致；Memory `state.py` 的 `_identity_sequence` 实际存的是会话事件序号。用户决定在本批改动、测试和评估完成后再改。

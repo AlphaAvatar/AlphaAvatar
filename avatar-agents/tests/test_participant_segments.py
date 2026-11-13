@@ -70,20 +70,14 @@ def bound(runtime: ParticipantRuntime, segment: PerceptionSegmentRef, token: int
         (lambda r, s, t: r.bind_segment(s, None, token=t), "invalid", "no_entity"),
         (lambda r, s, t: r.invalidate_segment(s), "invalid", "invalidated"),
         (lambda r, s, t: r.retire_source(SOURCE), "released", "source_retired"),
-        (
-            lambda r, s, t: r.set_segment_resolver("persona", enabled=False),
-            "released",
-            "resolver_stopped",
-        ),
         (lambda r, s, t: r.close(), "released", "closed"),
     ],
-    ids=["bound", "unbound", "no-entity", "invalidated", "retired", "resolver-stopped", "closed"],
+    ids=["bound", "unbound", "no-entity", "invalidated", "retired", "closed"],
 )
 def test_an_association_settles_once_and_the_trace_says_how(
     release: Callable, outcome: str, reason: str | None, tmp_path: Path
 ) -> None:
     runtime = participants(tmp_path)
-    runtime.set_segment_resolver("persona", enabled=True)
     segment = PerceptionSegmentRef(SOURCE, "seg-1")
     token = runtime.observe_segment(segment)
     assert ready(runtime) == []  # Asked for, not ready yet.
@@ -96,15 +90,8 @@ def test_an_association_settles_once_and_the_trace_says_how(
     assert record["start_time_ns"] <= record["end_time_ns"]
 
 
-def test_without_a_resolver_or_past_the_bound_an_association_is_released_unresolved(
-    tmp_path: Path,
-) -> None:
+def test_past_the_bound_an_association_is_released(tmp_path: Path) -> None:
     runtime = participants(tmp_path, max_segments=1)
-    runtime.observe_segment(PerceptionSegmentRef(SOURCE, "seg-1"))  # Nobody resolves it.
-    runtime.set_segment_resolver("persona", enabled=True)
-    runtime.observe_segment(PerceptionSegmentRef(SOURCE, "seg-2"))
-    runtime.observe_segment(PerceptionSegmentRef(SOURCE, "seg-3"))  # Evicts seg-2
-    assert [(r["outcome"], r["reason"]) for r in ready(runtime)] == [
-        ("unresolved", "no_resolver"),
-        ("released", "evicted"),
-    ]
+    runtime.observe_segment(PerceptionSegmentRef(SOURCE, "seg-1"))
+    runtime.observe_segment(PerceptionSegmentRef(SOURCE, "seg-2"))  # Evicts seg-1
+    assert [(r["outcome"], r["reason"]) for r in ready(runtime)] == [("released", "evicted")]

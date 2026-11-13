@@ -446,7 +446,6 @@ class MemoryRuntime(MemoryBase):
             self._record_task = None
 
     async def _stop_turn_consumer(self, *, drain: bool) -> None:
-        self._runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
         task = self._turn_task
         if task is not None:
             if not task.done():
@@ -467,8 +466,7 @@ class MemoryRuntime(MemoryBase):
         )
         self._session_task.add_done_callback(self._observe)
 
-        # turn loop
-        self._runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
+        # turn loop: Context reads nothing it records, so its readiness never waits for it
         self._turn_task = asyncio.create_task(self._consume_turns(), name="memory_turn_consumer")
         self._turn_task.add_done_callback(self._observe)
         self._start_record_consumer()

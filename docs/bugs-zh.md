@@ -13,6 +13,7 @@
 | KD-40 | persona（人脸）：会话结束保存时，人脸向量仍是本次会话的向量整份替换用户存储的人脸向量，与 KD-38 修复前的说话人相同；同一用户的几个参与者各自写人脸向量，留下哪一个也不固定（说话人的同一问题见 KD-39）。 | 第五、六批只改了说话人，人脸待决定（Speaker Vector 日志第五、六批）。 |
 | KD-41 | persona（说话人）：参与者改绑到另一个用户时，只清空载入的资料和运行状态，本次会话已攒的声纹向量不清空，人脸向量和对话里提取的资料也一样，改绑前的这些会一并保存到新用户。认错后纠正时这样是对的（例：alice 第一段被误认成 bob，之后认出 alice，会话声纹全是 alice 的）；跟踪先混进了另一个人的声音再改绑时，别人的声音会写进新用户（例：bob 说 6 秒后 alice 被并进同一条跟踪、说 9 秒并认出，会话声纹约 40% 是 bob 的，每次保存带入约 2%）。 | 根本原因是匹配问题（跟踪误加入、检索误认），不是改绑或保存的逻辑；延期，随跟踪与检索的匹配优化处理（Speaker Vector 日志第五批、第十批之后的决定）。 |
 | KD-44 | persona（说话人）与参与者绑定：实体按"（来源, 实体）"绑定参与者，说话人跟踪也按来源保存、换代即退役。麦克风重新发布（换代）或换一台设备后，同一个人的声音会开新跟踪、成为新参与者；库里还没有声纹的新用户连不回去，保存后成为碎片。 | 契约和文档已改为：实体在会话内唯一，可以跨来源和代，只对应一个参与者；每个参与者每种类型最多一个实体（`AGENTS.md` 第 8 节、`identifiers-zh.md` 第 2 节）。绑定层与说话人已实现（第十批）：绑定以实体为键，换代和来源取消只作废语音段；说话人跟踪按实体保存、在所有来源上匹配，`sources` 按顺序记录来源和代，不限数量。回归 `test_one_voice_is_one_participant_across_devices_and_a_cancelled_source`、`test_an_entity_keeps_its_participant_on_every_source_and_generation` 等，10 处变异全部被发现。人脸跟踪仍按来源、60 秒超时，待改（Speaker Vector 日志第九、十批）。 |
+| KD-46 | loop：Context 没就绪时抛出的 `TimeoutError("Required Turn context is not ready")`，被 Loop 当成自己的预算超时。探索阶段（`execution.py` 的 `_drive`）记为 `time_budget`，不再调用工具，直接进入只回答的收尾；收尾时再准备一次 Context，就绪则以 `partial / time_budget` 结束，仍不就绪则以 `failed / timeout` 结束，不请求模型。用 Loop 测试的替身注册一个抛错的 waiter，两种结果都复现。删除 Memory runtime 的 Turn 游标登记后，仍会走到这里的情况是：登记的 waiter 抛出异常，或这个 Turn 已不是它输入当前的快照。 | 待用户决定修法：waiter 失败时照常准备，Turn 被替换时抛 Context 自己的异常并取消 Run；或只把异常改成独立类型，Run 以 `context_not_ready` 失败（Speaker Vector 日志第十一批之后）。 |
 
 ## 已修复
 

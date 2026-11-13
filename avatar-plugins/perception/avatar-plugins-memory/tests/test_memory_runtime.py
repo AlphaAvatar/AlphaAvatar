@@ -247,6 +247,23 @@ async def test_failed_extraction_keeps_checkpoint_and_input_while_empty_success_
     await runtime.aclose()
 
 
+async def test_a_turn_is_ready_for_context_before_memory_records_it(tmp_path: Path) -> None:
+    # Context reads nothing Memory records from a Turn, so its readiness never waits for
+    # Memory's Turn consumer, which records the Turn on its own.
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    snapshot = commit_turn(runtime, actor, 0, "hello")
+    state = memory.context_state(memory.root_context_id)
+    assert state.message_sequence == 0  # Memory has not run since the commit
+    assert runtime.turn.pending_context_consumers(snapshot) == ()
+    assert await runtime.turn.wait_context_ready(snapshot, timeout=0)
+
+    await wait_until(lambda: state.message_sequence == 1, "Memory never recorded the Turn")
+    await memory.on_stop()
+    await runtime.aclose()
+
+
 async def test_finalization_extracts_complete_untruncated_input_without_background_updates(
     tmp_path: Path,
 ) -> None:

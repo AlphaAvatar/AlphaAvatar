@@ -315,6 +315,7 @@ class AvatarContextManager(ContextManager):
             self._ensure_open()
             if request.context_id != self._runtime.state.context_id:
                 raise ValueError("State no longer belongs to the requested context")
+
             if not ready:
                 raise TimeoutError("Required Turn context is not ready")
 

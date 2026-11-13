@@ -771,7 +771,6 @@ class SpeakerProcessor(PersonaProcessorBase):
     """Runtime operations"""
 
     async def _start(self) -> None:
-        self.runtime.participants.set_segment_resolver(self.CONSUMER_ID, enabled=True)
         self.runtime.turn.register_context_consumer(self.CONSUMER_ID, waiter=self._await_identities)
         self._lanes = (
             asyncio.create_task(
@@ -797,7 +796,6 @@ class SpeakerProcessor(PersonaProcessorBase):
         )
 
     async def _stop(self, *, finalize: bool) -> None:
-        self.runtime.participants.set_segment_resolver(self.CONSUMER_ID, enabled=False)
         self.runtime.turn.unregister_context_consumer(self.CONSUMER_ID)
         tasks = tuple(task for task in (self._consume_task, *self._lanes) if task is not None)
         for task in tasks:
