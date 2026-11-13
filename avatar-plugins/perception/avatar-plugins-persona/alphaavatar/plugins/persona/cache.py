@@ -54,6 +54,7 @@ class DefaultPersonaCache(PersonaCache):
 
         self._base = _BaseProfile()
         self._observations = UserProfile()
+
         self._voice: WeightedMean | None = None
 
         self._detail_fields: set[str] = set()
@@ -149,6 +150,7 @@ class DefaultPersonaCache(PersonaCache):
             )
             if value == old.get(name):
                 continue
+
             data[name], metadata[name] = value, effective
             self.mark_profile_fields({name}, updated_at=datetime.fromisoformat(stamp))
             self._detail_operations.pop(name, None)

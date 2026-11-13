@@ -36,7 +36,9 @@ class SpeakerTracks:
     voice matches. Tracks are not bounded here; participant capacity bounds their entities."""
 
     def __init__(self, *, threshold: float, margin: float) -> None:
-        self.threshold, self.margin = threshold, margin
+        self.threshold = threshold
+        self.margin = margin
+
         self._tracks: dict[EntityId, SpeakerTrack] = {}
         self._retired: list[PerceptionEntityRef] = []
 
