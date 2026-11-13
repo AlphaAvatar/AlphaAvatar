@@ -524,7 +524,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                     participant_id=participant.participant_id,
                     user_id=user_id,
                     source=IdentitySource.PERCEPTION,
-                    basis_sequence=participant.identity_sequence,
+                    expected_revision=participant.identity_revision,
                     reason=f"Speaker vector matched the stored user above {SPEAKER_MATCH_THRESHOLD}",
                 )
             )

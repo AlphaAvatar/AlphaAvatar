@@ -177,16 +177,16 @@ class SessionRuntime:
             return tuple(self._identity_history.get(participant_id, ()))
 
     def get_identity(
-        self, participant_id: str, identity_sequence: int | None = None
+        self, participant_id: str, identity_revision: int | None = None
     ) -> Participant | None:
-        if identity_sequence is not None:
-            validate_sequence(identity_sequence, name="identity_sequence")
+        if identity_revision is not None:
+            validate_sequence(identity_revision, name="identity_revision")
         with self._lock:
-            if identity_sequence is None:
+            if identity_revision is None:
                 return self._participants.get(participant_id)
             history = self._identity_history.get(participant_id, ())
             return (
-                history[identity_sequence].participant if identity_sequence < len(history) else None
+                history[identity_revision].participant if identity_revision < len(history) else None
             )
 
     def join(
@@ -272,7 +272,7 @@ class SessionRuntime:
                 return IdentityOutcome.CLOSED
 
             participant = self._participants[request.participant_id]
-            if participant.identity_sequence != request.basis_sequence:
+            if participant.identity_revision != request.expected_revision:
                 return IdentityOutcome.STALE
 
             snapshot = self._snapshot()
@@ -288,7 +288,7 @@ class SessionRuntime:
 
             current = self._participants[request.participant_id]
             if (
-                current.identity_sequence != request.basis_sequence
+                current.identity_revision != request.expected_revision
                 or self._events.latest_sequence != snapshot.sequence
             ):
                 return IdentityOutcome.STALE
@@ -300,7 +300,7 @@ class SessionRuntime:
                 return IdentityOutcome.UNCHANGED
 
             updated = replace(
-                current, user_id=request.user_id, identity_sequence=current.identity_sequence + 1
+                current, user_id=request.user_id, identity_revision=current.identity_revision + 1
             )
             event = SessionEvent(
                 session_id=self._session_id,

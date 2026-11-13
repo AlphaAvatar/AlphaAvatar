@@ -27,7 +27,7 @@ class IdentityRequest:
     participant_id: str
     user_id: str | None
     source: IdentitySource
-    basis_sequence: int
+    expected_revision: int
     score: float | None = None
     reason: str | None = None
 
@@ -37,7 +37,7 @@ class IdentityRequest:
             validate_identity(self.user_id, name="user_id")
         if not isinstance(self.source, IdentitySource):
             raise TypeError("source must be IdentitySource")
-        validate_sequence(self.basis_sequence, name="basis_sequence")
+        validate_sequence(self.expected_revision, name="expected_revision")
         if self.score is not None and (
             isinstance(self.score, bool) or not math.isfinite(self.score)
         ):

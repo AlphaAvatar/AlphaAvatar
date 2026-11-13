@@ -156,7 +156,7 @@ class ProfilerProcessor(PersonaProcessorBase):
             raise asyncio.CancelledError
 
         latest = self.session_runtime.get_participant(participant_id=participant_id)
-        if latest is None or latest.identity_sequence != participant.identity_sequence:
+        if latest is None or latest.identity_revision != participant.identity_revision:
             return
 
         # The provider may await while profile loading or sensor observations advance.

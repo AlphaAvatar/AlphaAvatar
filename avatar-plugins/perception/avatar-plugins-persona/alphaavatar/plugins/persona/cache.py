@@ -75,7 +75,7 @@ class DefaultPersonaCache(PersonaCache):
     def participant(self, participant: Participant) -> None:
         if participant.participant_id != self._participant.participant_id:
             raise ValueError("A Persona cache cannot be transferred to another participant")
-        if participant.identity_sequence != self._participant.identity_sequence:
+        if participant.identity_revision != self._participant.identity_revision:
             self._base = _BaseProfile()
             self._observations.runtime_state = None
         self._participant = participant

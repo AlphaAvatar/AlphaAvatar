@@ -81,7 +81,7 @@ def actor(runtime: AvatarRuntime) -> TurnEntityRef:
     return TurnEntityRef(
         kind="person",
         participant_id=person.participant_id,
-        identity_sequence=person.identity_sequence,
+        identity_revision=person.identity_revision,
         user_id=person.user_id,
     )
 

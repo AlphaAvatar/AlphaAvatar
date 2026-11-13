@@ -188,7 +188,7 @@ class MemoryRuntime(MemoryBase):
             or (
                 (current := self._runtime.participants.get(actor.participant_id)) is not None
                 and current.user_id == actor.user_id
-                and current.identity_sequence == actor.identity_sequence
+                and current.identity_revision == actor.identity_revision
             )
             for actor in identity.actors
         )

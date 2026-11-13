@@ -113,7 +113,7 @@ class PersonaRuntime(PersonaBase):
     def _allocated(self, participant: Participant) -> bool:
         """Whether this session allocated the identity's user, so nothing is stored for it."""
         history = self._runtime.session.identity_history(participant.participant_id)
-        current = participant.identity_sequence
+        current = participant.identity_revision
         return current < len(history) and history[current].source == IdentitySource.GENERATED
 
     def cache_for(self, participant_id: str) -> DefaultPersonaCache | None:
@@ -158,7 +158,7 @@ class PersonaRuntime(PersonaBase):
             if (
                 participant is None
                 or actor.user_id != participant.user_id
-                or actor.identity_sequence != participant.identity_sequence
+                or actor.identity_revision != participant.identity_revision
                 or not self._runtime.participants.accepts_identity(participant)
             ):
                 return ""
@@ -233,7 +233,7 @@ class PersonaRuntime(PersonaBase):
                 if cache is None:
                     continue
 
-                if cache.participant.identity_sequence != participant.identity_sequence:
+                if cache.participant.identity_revision != participant.identity_revision:
                     continue
 
                 targets.append(cache.snapshot())

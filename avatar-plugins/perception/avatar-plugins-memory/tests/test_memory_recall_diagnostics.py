@@ -149,7 +149,7 @@ async def recall(request: pytest.FixtureRequest, tmp_path: Path):
     actor = TurnEntityRef(
         participant_id=participant.participant_id,
         user_id=participant.user_id,
-        identity_sequence=participant.identity_sequence,
+        identity_revision=participant.identity_revision,
     )
     await memory.on_start()
     state = Recall(runtime=runtime, inference=inference, actor=actor, memory=memory)
@@ -245,7 +245,7 @@ async def test_identity_change_during_recall_is_reported(recall: Recall) -> None
         participant_id=recall.actor.participant_id,
         user_id="bob",
         source=IdentitySource.AGENT,
-        basis_sequence=recall.actor.identity_sequence,
+        expected_revision=recall.actor.identity_revision,
         reason="The user corrected their name",
     )
     assert recall.runtime.participants.bind_user(request) is IdentityOutcome.APPLIED

@@ -80,7 +80,7 @@ def commit(runtime: AvatarRuntime, input_id: str, text: str) -> TurnSnapshot:
             TurnEntityRef(
                 kind="person",
                 participant_id=person.participant_id,
-                identity_sequence=person.identity_sequence,
+                identity_revision=person.identity_revision,
                 user_id=person.user_id,
             ),
         ),
@@ -124,7 +124,7 @@ async def test_identity_correction_rebuilds_the_prefix_but_keeps_accepted_histor
                 participant_id=person.participant_id,
                 user_id="user-a",
                 source=IdentitySource.PERCEPTION,
-                basis_sequence=0,
+                expected_revision=0,
                 reason="Face recognition matched user-a",
             )
         )

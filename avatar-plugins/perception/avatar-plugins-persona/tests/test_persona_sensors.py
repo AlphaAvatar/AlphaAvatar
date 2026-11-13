@@ -576,7 +576,7 @@ async def test_short_utterances_from_a_sessions_start_open_a_voice_and_are_ident
     else:
         expected = "mallory" if case == "mismatched" else "alice"
         # The match binds what the search found: right, or wrong on wrong evidence.
-        assert (current.user_id, current.identity_sequence) == (expected, 1)
+        assert (current.user_id, current.identity_revision) == (expected, 1)
     if case == "reconnected":
         assert participant_id == before.participant_id
     # The attribute model never hears the short audio.
@@ -1241,7 +1241,7 @@ async def test_a_late_attribute_never_describes_the_identity_that_replaced_its_o
             participant_id=alice.participant_id,
             user_id="carol",
             source=IdentitySource.AGENT,
-            basis_sequence=alice.identity_sequence,
+            expected_revision=alice.identity_revision,
             reason="The speaker said they are Carol",
         )
     )
@@ -1363,7 +1363,7 @@ async def test_vector_search_miss_keeps_evidence_with_the_participant_without_bi
     assert generated.user_id not in (None, "alice")
     if reply == "matched":
         # Control: the guards still let a valid same-source match bind the stored user.
-        assert (current.user_id, current.identity_sequence) == ("alice", 1)
+        assert (current.user_id, current.identity_revision) == ("alice", 1)
     else:
         # A miss is no identity decision: the generated user and its version stay intact.
         assert current == generated
@@ -1402,7 +1402,7 @@ async def test_identity_switch_during_vector_search_discards_the_late_result(
             participant_id=before.participant_id,
             user_id="carol",
             source=IdentitySource.AGENT,
-            basis_sequence=before.identity_sequence,
+            expected_revision=before.identity_revision,
             reason="The speaker introduced themself as Carol.",
         )
     )
@@ -1413,7 +1413,7 @@ async def test_identity_switch_during_vector_search_discards_the_late_result(
     await wait_until(lambda: participant_of(runtime, "bob") is not None, "Barrier never resolved")
 
     carol = runtime.participants.get(before.participant_id)
-    assert carol.user_id == "carol" and carol.identity_sequence == before.identity_sequence + 1
+    assert carol.user_id == "carol" and carol.identity_revision == before.identity_revision + 1
     assert participant_of(runtime, "alice") is None
     # Evidence judged against the previous identity never lands in Carol's observations.
     assert observed(persona, carol.participant_id, sensor) == (None, None)
@@ -1437,7 +1437,7 @@ async def test_identity_switch_during_vector_search_discards_the_late_result(
 
 def sensor_state(runtime: AvatarRuntime, persona, sensor: str) -> tuple:
     identities = sorted(
-        (p.participant_id, p.user_id, p.identity_sequence)
+        (p.participant_id, p.user_id, p.identity_revision)
         for p in runtime.session.participants.values()
     )
     evidence = sorted(

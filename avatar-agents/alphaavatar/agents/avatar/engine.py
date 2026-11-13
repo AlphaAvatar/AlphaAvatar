@@ -268,7 +268,7 @@ class AvatarEngine(LifecycleComponent):
         return TurnEntityRef(
             kind=kind,
             participant_id=participant.participant_id if participant is not None else None,
-            identity_sequence=participant.identity_sequence if participant is not None else None,
+            identity_revision=participant.identity_revision if participant is not None else None,
             user_id=participant.user_id if participant is not None else None,
             device_id=device_id,
             entity=entity,

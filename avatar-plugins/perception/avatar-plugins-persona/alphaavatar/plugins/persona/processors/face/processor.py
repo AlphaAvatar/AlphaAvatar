@@ -372,7 +372,7 @@ class FaceProcessor(PersonaProcessorBase):
                     participant_id=participant.participant_id,
                     user_id=user_id,
                     source=IdentitySource.PERCEPTION,
-                    basis_sequence=participant.identity_sequence,
+                    expected_revision=participant.identity_revision,
                     reason=f"Face vector matched the stored user above {FACE_MATCH_THRESHOLD}",
                 )
             )

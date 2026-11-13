@@ -26,26 +26,26 @@ class IdentityRef:
 
     participant_id: str
     user_id: str | None
-    identity_sequence: int
+    identity_revision: int
 
     def __post_init__(self) -> None:
         validate_identity(self.participant_id, name="participant_id")
         if self.user_id is not None:
             validate_identity(self.user_id, name="user_id")
-        validate_sequence(self.identity_sequence, name="identity_sequence")
+        validate_sequence(self.identity_revision, name="identity_revision")
 
     @classmethod
     def from_participant(cls, participant: Participant) -> IdentityRef:
         if not isinstance(participant, Participant):
             raise TypeError("Identity references require Participant")
-        return cls(participant.participant_id, participant.user_id, participant.identity_sequence)
+        return cls(participant.participant_id, participant.user_id, participant.identity_revision)
 
     def matches(self, participant: Participant | None) -> bool:
         return (
             isinstance(participant, Participant)
             and participant.participant_id == self.participant_id
             and participant.user_id == self.user_id
-            and participant.identity_sequence == self.identity_sequence
+            and participant.identity_revision == self.identity_revision
         )
 
 

@@ -37,11 +37,11 @@ class ParticipantInput(BaseModel):
         default=None,
         description="A current Turn participant; omit only when exactly one is present",
     )
-    basis_sequence: int | None = Field(
+    expected_revision: int | None = Field(
         default=None,
         ge=0,
         strict=True,
-        description="Expected identity version; defaults to the current accepted Turn participant",
+        description="Expected identity revision; defaults to the current accepted Turn participant's",
     )
 
     @field_validator("user_id", "participant_id")

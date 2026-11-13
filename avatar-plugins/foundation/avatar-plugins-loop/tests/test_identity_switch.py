@@ -242,7 +242,7 @@ async def submit(runtime: AvatarRuntime, user_id: str) -> tuple[Participant, Tur
     actor = TurnEntityRef(
         kind="person",
         participant_id=participant.participant_id,
-        identity_sequence=participant.identity_sequence,
+        identity_revision=participant.identity_revision,
         user_id=participant.user_id,
     )
     turn = runtime.turn.commit_input(
@@ -274,7 +274,7 @@ def correct(runtime: AvatarRuntime, participant: Participant, user_id: str) -> I
             participant_id=participant.participant_id,
             user_id=user_id,
             source=IdentitySource.PERCEPTION,
-            basis_sequence=participant.identity_sequence,
+            expected_revision=participant.identity_revision,
             reason=f"Face recognition matched {user_id}",
         )
     )

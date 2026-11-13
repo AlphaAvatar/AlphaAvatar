@@ -188,7 +188,7 @@ def join(runtime: AvatarRuntime, *texts: str):
     actor = TurnEntityRef(
         participant_id=participant.participant_id,
         user_id=participant.user_id,
-        identity_sequence=participant.identity_sequence,
+        identity_revision=participant.identity_revision,
     )
     for index, text in enumerate(texts):
         runtime.turn.commit_input(
@@ -331,7 +331,7 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
     actor = TurnEntityRef(
         participant_id=newcomer.participant_id,
         user_id=newcomer.user_id,
-        identity_sequence=newcomer.identity_sequence,
+        identity_revision=newcomer.identity_revision,
     )
     runtime.turn.commit_input(
         input_id="input-0",
@@ -346,7 +346,7 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
                 participant_id=newcomer.participant_id,
                 user_id="alice",
                 source=IdentitySource.PERCEPTION,
-                basis_sequence=newcomer.identity_sequence,
+                expected_revision=newcomer.identity_revision,
                 reason="Voice matched the stored user",
             )
         )
@@ -375,7 +375,7 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
     assert not runtime.workspace.users.get(newcomer.user_id).root.exists()
     # The committed Turn keeps the identity it was accepted with.
     (frozen,) = runtime.turn.get("input-0").actors
-    assert (frozen.user_id, frozen.identity_sequence) == (newcomer.user_id, 0)
+    assert (frozen.user_id, frozen.identity_revision) == (newcomer.user_id, 0)
     await runtime.aclose()
 
 
@@ -399,7 +399,7 @@ async def test_a_turns_private_profile_needs_its_every_actor_to_be_one_accepted_
             TurnEntityRef(
                 participant_id=participant.participant_id,
                 user_id=participant.user_id,
-                identity_sequence=participant.identity_sequence,
+                identity_revision=participant.identity_revision,
             )
         )
     snapshot = runtime.turn.commit_input(
@@ -499,7 +499,7 @@ async def test_a_rebound_participant_saves_into_its_new_users_stored_speaker_vec
             participant_id=participant.participant_id,
             user_id="bob",
             source=IdentitySource.PERCEPTION,
-            basis_sequence=participant.identity_sequence,
+            expected_revision=participant.identity_revision,
             reason="Voice matched the stored user",
         )
     )

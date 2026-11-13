@@ -25,7 +25,7 @@ class Participant:
     participant_id: str
     user_id: str | None
     joined_at: RuntimeTime
-    identity_sequence: int = 0
+    identity_revision: int = 0
     timezone: str | None = None
 
     def __post_init__(self) -> None:
@@ -34,6 +34,6 @@ class Participant:
             validate_identity(self.user_id, name="user_id")
         if not isinstance(self.joined_at, RuntimeTime):
             raise TypeError("joined_at must be RuntimeTime")
-        validate_sequence(self.identity_sequence, name="identity_sequence")
+        validate_sequence(self.identity_revision, name="identity_revision")
         if self.timezone is not None:
             validate_identity(self.timezone, name="timezone")

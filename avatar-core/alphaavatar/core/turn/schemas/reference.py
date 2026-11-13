@@ -22,7 +22,7 @@ from alphaavatar.core.env.schemas import PerceptionEntityRef
 class TurnEntityRef:
     kind: str | None = None
     participant_id: str | None = None
-    identity_sequence: int | None = None
+    identity_revision: int | None = None
     user_id: str | None = None
     device_id: str | None = None
     entity: PerceptionEntityRef | None = None
@@ -36,7 +36,7 @@ class TurnEntityRef:
         ):
             if value == "":
                 raise ValueError(f"{name} cannot be empty")
-        if self.identity_sequence is not None and self.identity_sequence < 0:
-            raise ValueError("identity_sequence cannot be negative")
-        if self.identity_sequence is not None and self.participant_id is None:
+        if self.identity_revision is not None and self.identity_revision < 0:
+            raise ValueError("identity_revision cannot be negative")
+        if self.identity_revision is not None and self.participant_id is None:
             raise ValueError("Identity evidence requires an internal participant")

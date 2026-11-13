@@ -82,9 +82,9 @@ flowchart LR
 
 | 字段 | 含义与所有者 | 唯一性范围与生命周期 | 初始化入口 |
 | --- | --- | --- | --- |
-| `Participant.identity_sequence` | 一个参与者当前已接受身份的版本，由 Session 管理。 | 单个 `participant_id` 内解释，初始为 `0`；接受不同身份时递增，不等于 Session 事件序号。 | [SessionRuntime.join() / request_identity()](../avatar-core/alphaavatar/core/session/runtime.py) 创建初始快照并更新版本。 |
-| `IdentityRequest.basis_sequence` | 身份判断所依据的参与者版本，由调用方捕获。 | 一次判断的比较依据；当前版本已变化时返回 `STALE`，不得强行覆盖。 | 读取 `Participant.identity_sequence` 后构造 [IdentityRequest](../avatar-core/alphaavatar/core/session/schemas/__init__.py)。 |
-| `TurnEntityRef.participant_id / user_id / identity_sequence` | 某 Turn 捕获的身份事实与版本引用，由准入及 Session 投影维护。 | 归属于该 Turn；历史快照不随之后的身份更正而原地改写。 | [AvatarEngine._decision_actors()](../avatar-agents/alphaavatar/agents/avatar/engine.py) 按实际拥有的输入解析，写入 `TurnSnapshot.actors`。 |
+| `Participant.identity_revision` | 一个参与者当前已接受身份的版本，由 Session 管理。 | 单个 `participant_id` 内解释，初始为 `0`；接受不同身份时递增，不等于 Session 事件序号。 | [SessionRuntime.join() / request_identity()](../avatar-core/alphaavatar/core/session/runtime.py) 创建初始快照并更新版本。 |
+| `IdentityRequest.expected_revision` | 身份判断所依据的参与者版本，由调用方捕获。 | 一次判断的比较依据；当前版本已变化时返回 `STALE`，不得强行覆盖。 | 读取 `Participant.identity_revision` 后构造 [IdentityRequest](../avatar-core/alphaavatar/core/session/schemas/__init__.py)。 |
+| `TurnEntityRef.participant_id / user_id / identity_revision` | 某 Turn 捕获的身份事实与版本引用，由准入及 Session 投影维护。 | 归属于该 Turn；历史快照不随之后的身份更正而原地改写。 | [AvatarEngine._decision_actors()](../avatar-agents/alphaavatar/agents/avatar/engine.py) 按实际拥有的输入解析，写入 `TurnSnapshot.actors`。 |
 | 片段关联 `token` | `ParticipantRuntime` 内部片段登记版本，防止过期推理重新打开关联。 | 一个 Runtime 内的片段登记生命周期；与用户身份、接入凭据均无关。 | [ParticipantRuntime.observe_segment()](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 分配，绑定和完成时验证。 |
 
 - `bind_user()` 接受声明、感知、Agent 和独立决策模型的判断；不限制只识别一次，也不要求 Agent 的目标用户先被感知模块提名。
@@ -96,7 +96,7 @@ flowchart LR
 
 - 能力名为 `participant.identity`，由 Engine 注册当前 `runtime.participants`；处理入口是 `ParticipantRuntime.invoke(request, *, input_id=...)`。
 - `input_id` 来自 Loop／Registry 的显式调用上下文，不属于模型参数。读取 `TurnRuntime.get(input_id)`，缺失时拒绝，不回退到 `latest`。
-- `invoke()` 先投影该 Turn 的当前接受身份。省略 `basis_sequence` 时使用投影后的身份版本；显式传入版本仍执行比较检查。
+- `invoke()` 先投影该 Turn 的当前接受身份。省略 `expected_revision` 时使用投影后的身份版本；显式传入版本仍执行比较检查。
 - 多参与者输入不能隐式挑一个人，需明确选择目标 `participant_id`。
 
 ### 3.2 事实归属与私有资料读取分开

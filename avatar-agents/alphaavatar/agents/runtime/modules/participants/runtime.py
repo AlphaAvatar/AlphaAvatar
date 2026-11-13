@@ -56,9 +56,9 @@ class _SegmentState:
         "Identify or correct a participant speaking in this Turn using the conversation "
         "and available evidence. A user does not need a previous face or voice match. "
         "Explain the evidence in reason; use null user_id to clear a mistaken match. "
-        "The default basis is the current accepted version of this Turn's participant. "
-        "For an explicit version check, "
-        "use the version returned by the previous result and reassess the evidence. "
+        "expected_revision defaults to the current accepted revision of this Turn's "
+        "participant. For an explicit check, use the identity_revision returned by the "
+        "previous result and reassess the evidence. "
         "Never blindly retry a stale decision. This tool returns identity state, not user data."
     ),
     input_schema=ParticipantInput,
@@ -219,7 +219,7 @@ class ParticipantRuntime:
                 replace(
                     actor,
                     user_id=participant.user_id,
-                    identity_sequence=participant.identity_sequence,
+                    identity_revision=participant.identity_revision,
                 )
             )
 
@@ -451,7 +451,7 @@ class ParticipantRuntime:
             not self._closed
             and isinstance(participant, Participant)
             and self.session.get_identity(
-                participant.participant_id, None if current else participant.identity_sequence
+                participant.participant_id, None if current else participant.identity_revision
             )
             == participant
         )
@@ -479,13 +479,13 @@ class ParticipantRuntime:
                 raise ValueError("Select a participant_id from the current Turn's actors")
 
         actors = tuple(actor for actor in snapshot.actors if actor.participant_id == participant_id)
-        if not actors or len({(actor.user_id, actor.identity_sequence) for actor in actors}) != 1:
+        if not actors or len({(actor.user_id, actor.identity_revision) for actor in actors}) != 1:
             raise ValueError("The participant must have one identity in the current Turn")
 
         actor = actors[0]
-        participant = self.session.get_identity(participant_id, actor.identity_sequence)
+        participant = self.session.get_identity(participant_id, actor.identity_revision)
         if (
-            actor.identity_sequence is None
+            actor.identity_revision is None
             or participant is None
             or participant.user_id != actor.user_id
         ):
@@ -497,10 +497,10 @@ class ParticipantRuntime:
                 participant_id=participant_id,
                 user_id=request.user_id,
                 source=IdentitySource.AGENT,
-                basis_sequence=(
-                    actor.identity_sequence
-                    if request.basis_sequence is None
-                    else request.basis_sequence
+                expected_revision=(
+                    actor.identity_revision
+                    if request.expected_revision is None
+                    else request.expected_revision
                 ),
                 reason=request.reason,
             )
@@ -510,7 +510,7 @@ class ParticipantRuntime:
             "outcome": outcome.value,
             "participant_id": participant_id,
             "user_id": current.user_id if current is not None else None,
-            "identity_sequence": current.identity_sequence if current is not None else None,
+            "identity_revision": current.identity_revision if current is not None else None,
         }
 
     def close(self) -> None:

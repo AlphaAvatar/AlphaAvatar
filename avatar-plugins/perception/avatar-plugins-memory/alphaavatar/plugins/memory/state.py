@@ -263,7 +263,7 @@ class MemoryContextState:
                         TurnEntityRef(
                             participant_id=ref.participant_id,
                             user_id=ref.user_id,
-                            identity_sequence=ref.identity_sequence,
+                            identity_revision=ref.identity_revision,
                         )
                         for ref in basis.participants
                     )
@@ -283,7 +283,7 @@ class MemoryContextState:
                     if (
                         participant is None
                         or actor.user_id != participant.user_id
-                        or actor.identity_sequence != participant.identity_sequence
+                        or actor.identity_revision != participant.identity_revision
                     ):
                         unattributed = True
                     else:

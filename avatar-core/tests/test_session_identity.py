@@ -37,7 +37,7 @@ def request(
         participant_id=participant_id,
         user_id=user_id,
         source=source,
-        basis_sequence=basis,
+        expected_revision=basis,
         **fields,
     )
 
@@ -57,7 +57,7 @@ def test_corrections_keep_the_participant_and_retain_every_accepted_version() ->
         assert outcome is IdentityOutcome.APPLIED
 
     current = session.get_identity("participant-1")
-    assert (current.participant_id, current.user_id, current.identity_sequence) == (
+    assert (current.participant_id, current.user_id, current.identity_revision) == (
         "participant-1",
         None,
         4,

@@ -69,7 +69,7 @@ def correct(
             participant_id=participant.participant_id,
             user_id=user_id,
             source=source,
-            basis_sequence=participant.identity_sequence,
+            expected_revision=participant.identity_revision,
             reason=f"{source.value} evidence for {user_id}",
         )
     )
@@ -84,7 +84,7 @@ def commit(runtime: ParticipantRuntime, input_id: str, *people: Participant) -> 
             TurnEntityRef(
                 kind="person",
                 participant_id=person.participant_id,
-                identity_sequence=person.identity_sequence,
+                identity_revision=person.identity_revision,
                 user_id=person.user_id,
             )
             for person in people
@@ -115,7 +115,7 @@ def test_device_participant_and_user_identifiers_stay_separate(tmp_path: Path) -
 
     assert correct(runtime, owner, "user-a") is IdentityOutcome.APPLIED
     resolved = runtime.resolve("phone-1", by_device=True)
-    assert (resolved.participant_id, resolved.user_id, resolved.identity_sequence) == (
+    assert (resolved.participant_id, resolved.user_id, resolved.identity_revision) == (
         owner.participant_id,
         "user-a",
         1,
@@ -137,9 +137,9 @@ def test_turn_history_keeps_its_accepted_identity_across_corrections(tmp_path: P
     )
 
     assert runtime.turn.get("input-1") is turn
-    assert (turn.actors[0].user_id, turn.actors[0].identity_sequence) == ("user-b", 0)
+    assert (turn.actors[0].user_id, turn.actors[0].identity_revision) == ("user-b", 0)
     projected = runtime.project_turn(turn).actors[0]
-    assert (projected.participant_id, projected.user_id, projected.identity_sequence) == (
+    assert (projected.participant_id, projected.user_id, projected.identity_revision) == (
         person.participant_id,
         "user-c",
         2,
@@ -173,22 +173,22 @@ async def test_agent_identity_decisions_use_their_own_turn_and_version(tmp_path:
         "outcome": "applied",
         "participant_id": person.participant_id,
         "user_id": "user-c",
-        "identity_sequence": 1,
+        "identity_revision": 1,
     }
     event = runtime.session.identity_history(person.participant_id)[-1]
     assert (event.source, event.previous_user_id) == (IdentitySource.AGENT, "user-a")
 
     stale = await runtime.invoke(
-        ParticipantInput(user_id="user-d", reason="Retrying an old decision", basis_sequence=0),
+        ParticipantInput(user_id="user-d", reason="Retrying an old decision", expected_revision=0),
         input_id="input-1",
     )
-    assert (stale["outcome"], stale["user_id"], stale["identity_sequence"]) == (
+    assert (stale["outcome"], stale["user_id"], stale["identity_revision"]) == (
         "stale",
         "user-c",
         1,
     )
     reassessed = await runtime.invoke(
-        ParticipantInput(user_id="user-d", reason="New evidence names D", basis_sequence=1),
+        ParticipantInput(user_id="user-d", reason="New evidence names D", expected_revision=1),
         input_id="input-1",
     )
     assert (reassessed["outcome"], reassessed["user_id"]) == ("applied", "user-d")
@@ -223,7 +223,7 @@ def test_late_recognition_cannot_reopen_retired_or_evicted_associations(tmp_path
         participant_id=person.participant_id,
         user_id="user-x",
         source=IdentitySource.PERCEPTION,
-        basis_sequence=person.identity_sequence,
+        expected_revision=person.identity_revision,
         reason="Slow voiceprint match",
     )
 

@@ -36,7 +36,7 @@ class MemoryIdentitySnapshot:
                 {
                     "participant_id": participant.participant_id,
                     "user_id": participant.user_id,
-                    "identity_sequence": participant.identity_sequence,
+                    "identity_revision": participant.identity_revision,
                 }
                 for participant in self.participants
             ],
@@ -44,7 +44,7 @@ class MemoryIdentitySnapshot:
                 {
                     "participant_id": actor.participant_id,
                     "user_id": actor.user_id,
-                    "identity_sequence": actor.identity_sequence,
+                    "identity_revision": actor.identity_revision,
                 }
                 for actor in self.actors
             ],

@@ -204,7 +204,7 @@ def speaker(runtime: AvatarRuntime) -> TurnEntityRef:
     return TurnEntityRef(
         participant_id=participant.participant_id,
         user_id=participant.user_id,
-        identity_sequence=participant.identity_sequence,
+        identity_revision=participant.identity_revision,
     )
 
 
@@ -506,7 +506,7 @@ def correct(runtime: AvatarRuntime, participant_id: str, user_id: str) -> None:
         participant_id=participant_id,
         user_id=user_id,
         source=IdentitySource.AGENT,
-        basis_sequence=current.identity_sequence,
+        expected_revision=current.identity_revision,
         reason="The user corrected their name",
     )
     assert runtime.participants.bind_user(request) is IdentityOutcome.APPLIED
@@ -541,7 +541,7 @@ async def test_model_records_are_attributed_by_their_own_identity_basis(
         {
             "participant_id": ref.participant_id,
             "user_id": ref.user_id,
-            "identity_sequence": ref.identity_sequence,
+            "identity_revision": ref.identity_revision,
         }
     ]
     owners = {(owner.kind, owner.id) for owner in item.owner_refs}

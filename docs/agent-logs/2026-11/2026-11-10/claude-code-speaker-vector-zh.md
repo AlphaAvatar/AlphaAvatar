@@ -1249,5 +1249,5 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 
 ## 留给下一步
 
-- 身份版本改名：`identity_sequence` → `identity_revision`、`basis_sequence` → `basis_revision`（Core、Agents、Persona、Memory 及测试、`identifiers-zh.md`，约 26 个文件）。项目里 `sequence` 指事件流的发布顺序，身份版本是单个参与者的版本号，与 `revision` 的用法一致；Memory `state.py` 的 `_identity_sequence` 实际存的是会话事件序号。用户决定在本批改动、测试和评估完成后再改。
+- 身份版本改名（已完成）：`identity_sequence` → `identity_revision`，`basis_sequence` → `expected_revision`（用户在 `basis_revision`、`expected_revision` 中选定后者）。26 个文件、127 处，按词边界替换，Memory 的 `_identity_sequence` 不受影响；不保留旧名。参与者身份能力给模型的说明和 `ParticipantInput` 的字段说明改用新名字。Memory 写进记忆条目 `extra_data.session_identity` 的键随之改名，旧条目保留旧键，没有读回的代码。评估材料的记录器同时认得两个名字，用一个会话实跑确认。全量测试 720 个通过。
 - Memory `state.py` 的 `_identity_sequence` 改为 `_session_sequence`：用户确认需要，留到人脸改动时一起做。
