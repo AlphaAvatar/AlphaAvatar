@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Context prefixes are pinned to an accepted identity; canonical history is never rewritten."""
+"""Context prefixes are pinned to an accepted identity; canonical history is never rewritten;
+a Turn whose waits are not ready is still prepared."""
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -142,6 +144,33 @@ async def test_identity_correction_rebuilds_the_prefix_but_keeps_accepted_histor
         assert context.build(current).items == current.items
         assert runtime.turn.get("input-1").actors == first.actors
         assert first.actors[0].user_id == "user-b"
+    finally:
+        await context.aclose()
+        await runtime.aclose()
+
+
+async def test_a_turn_whose_context_is_not_ready_is_still_prepared_and_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # KD-46: what a Turn's Context waits for is evidence it can answer without. Not ready,
+    # the Context is prepared from what there is and warns; it never raises a time-out, which
+    # the Loop would take for its own budget and so skip its tools.
+    runtime, context = runtime_with_context(tmp_path)
+
+    async def failing(snapshot: TurnSnapshot) -> None:
+        raise RuntimeError("recall failed")
+
+    runtime.turn.register_context_consumer("test.recall", waiter=failing)
+    try:
+        runtime.participants.join(user_id="user-a", primary=True)
+        turn = commit(runtime, "input-1", "Hello.")
+        with caplog.at_level(logging.WARNING, logger="alphaavatar.plugins.context.manager"):
+            prepared = await prepare(context, turn, runtime.state.context_id)
+
+        system, turn_input = texts(prepared)
+        assert "profile-of-user-a" in system and 'input_id="input-1"' in turn_input
+        (warning,) = [r for r in caplog.records if r.name == "alphaavatar.plugins.context.manager"]
+        assert "not ready" in warning.getMessage() and turn.turn_id in warning.getMessage()
     finally:
         await context.aclose()
         await runtime.aclose()

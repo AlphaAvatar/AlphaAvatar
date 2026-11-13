@@ -13,7 +13,6 @@
 | KD-40 | persona（人脸）：会话结束保存时，人脸向量仍是本次会话的向量整份替换用户存储的人脸向量，与 KD-38 修复前的说话人相同；同一用户的几个参与者各自写人脸向量，留下哪一个也不固定（说话人的同一问题见 KD-39）。 | 第五、六批只改了说话人，人脸待决定（Speaker Vector 日志第五、六批）。 |
 | KD-41 | persona（说话人）：参与者改绑到另一个用户时，只清空载入的资料和运行状态，本次会话已攒的声纹向量不清空，人脸向量和对话里提取的资料也一样，改绑前的这些会一并保存到新用户。认错后纠正时这样是对的（例：alice 第一段被误认成 bob，之后认出 alice，会话声纹全是 alice 的）；跟踪先混进了另一个人的声音再改绑时，别人的声音会写进新用户（例：bob 说 6 秒后 alice 被并进同一条跟踪、说 9 秒并认出，会话声纹约 40% 是 bob 的，每次保存带入约 2%）。 | 根本原因是匹配问题（跟踪误加入、检索误认），不是改绑或保存的逻辑；延期，随跟踪与检索的匹配优化处理（Speaker Vector 日志第五批、第十批之后的决定）。 |
 | KD-44 | persona（说话人）与参与者绑定：实体按"（来源, 实体）"绑定参与者，说话人跟踪也按来源保存、换代即退役。麦克风重新发布（换代）或换一台设备后，同一个人的声音会开新跟踪、成为新参与者；库里还没有声纹的新用户连不回去，保存后成为碎片。 | 契约和文档已改为：实体在会话内唯一，可以跨来源和代，只对应一个参与者；每个参与者每种类型最多一个实体（`AGENTS.md` 第 8 节、`identifiers-zh.md` 第 2 节）。绑定层与说话人已实现（第十批）：绑定以实体为键，换代和来源取消只作废语音段；说话人跟踪按实体保存、在所有来源上匹配，`sources` 按顺序记录来源和代，不限数量。回归 `test_one_voice_is_one_participant_across_devices_and_a_cancelled_source`、`test_an_entity_keeps_its_participant_on_every_source_and_generation` 等，10 处变异全部被发现。人脸跟踪仍按来源、60 秒超时，待改（Speaker Vector 日志第九、十批）。 |
-| KD-46 | loop：Context 没就绪时抛出的 `TimeoutError("Required Turn context is not ready")`，被 Loop 当成自己的预算超时。探索阶段（`execution.py` 的 `_drive`）记为 `time_budget`，不再调用工具，直接进入只回答的收尾；收尾时再准备一次 Context，就绪则以 `partial / time_budget` 结束，仍不就绪则以 `failed / timeout` 结束，不请求模型。用 Loop 测试的替身注册一个抛错的 waiter，两种结果都复现。删除 Memory runtime 的 Turn 游标登记后，仍会走到这里的情况是：登记的 waiter 抛出异常，或这个 Turn 已不是它输入当前的快照。 | 待用户决定修法：waiter 失败时照常准备，Turn 被替换时抛 Context 自己的异常并取消 Run；或只把异常改成独立类型，Run 以 `context_not_ready` 失败（Speaker Vector 日志第十一批之后）。 |
 
 ## 已修复
 
@@ -23,6 +22,7 @@
 
 | 编号 | 问题 | 修复 |
 | --- | --- | --- |
+| KD-46 | context、loop：Context 没就绪时抛出 `TimeoutError("Required Turn context is not ready")`，被 Loop 当成自己的预算超时：探索阶段记为 `time_budget`，不再调用工具，直接进入只回答的收尾；收尾时仍不就绪则以 `failed / timeout` 结束，不请求模型。 | 按用户的决定，Context 不再抛出，记一条 warning（带 `turn_id` 和仍在等的消费者）后照常准备：它等的都是可以没有的证据。Turn 已不是它输入当前的快照时，Memory、Persona 的 `content_for` 仍以 `ValueError` 拒绝，Run 以 `execution_failed` 结束。回归 `test_a_turn_whose_context_is_not_ready_is_still_prepared_and_says_so`，改回抛出、去掉 warning 时都失败；Loop 探测中只有第一次失败、每次都失败两种情况，Run 都以 `completed` 结束，带工具请求一次模型（Speaker Vector 日志第十一批之后）。 |
 | KD-18 | context：每轮请求都重发 History 中的全部图片，累计内联字节超过 Responses `max_inline_bytes` 后，此后每一轮都被拒，纯文字轮也一样。 | History 仍完整保存。请求把历史图片（用户消息和工具输出）在原位置换成 `<image_not_replayed />`，只有本轮图片内联发送。 |
 | KD-22 | provider：OpenAI Responses 的 `model.request_sent` 在 `create()` 返回或抛错后才记，晚于请求真正交给传输层，Doctor 据此算的发送时刻偏晚。 | 发送时刻改由 httpx 请求钩子在交给传输层时逐次记录，每次尝试一条。 |
 | KD-27 | voice：分段 STT 请求计时（`stt.request`）的首事件和终稿两项，起点取成请求头写完，而不是收到应答头，多算了上传和服务等待。 | 两项改从 `receive_response_headers.complete` 起算，真实基线里首事件为 0.4～3.0 ms。 |

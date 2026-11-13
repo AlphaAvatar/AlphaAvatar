@@ -298,6 +298,7 @@ class AvatarContextManager(ContextManager):
             snapshot = request.turn
             if self._runtime.turn.get(snapshot.input_id) is not snapshot:
                 raise ValueError("Context can only prepare a Turn owned by this runtime")
+
             if (
                 request.context_id not in snapshot.context_ids
                 or request.context_id != self._runtime.state.context_id
@@ -317,7 +318,13 @@ class AvatarContextManager(ContextManager):
                 raise ValueError("State no longer belongs to the requested context")
 
             if not ready:
-                raise TimeoutError("Required Turn context is not ready")
+                # What a Turn waits for is evidence it can answer without: prepare from what
+                # there is, never a time-out the Loop would take for its own budget (KD-46).
+                logger.warning(
+                    "Turn context not ready, prepared without it turn_id=%s pending=%s",
+                    snapshot.turn_id,
+                    self._runtime.turn.pending_context_consumers(snapshot),
+                )
 
             basis = self._runtime.participants.identity_basis(snapshot)
             state = self._state_snapshot(snapshot)

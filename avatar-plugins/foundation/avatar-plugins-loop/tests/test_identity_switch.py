@@ -444,3 +444,27 @@ async def test_a_run_cancelled_while_it_reaps_its_identity_watch_still_reports_i
         assert (result.state, result.reason) == (LoopState.CANCELLED, "engine_closed")
     finally:
         await runtime.aclose()
+
+
+async def test_a_cancel_after_a_run_has_settled_never_revokes_its_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Engine can cancel a run whose answer is still playing. A run that has settled has its
+    # task done: the late cancel changes nothing, and its result stays as it was.
+    runtime, _ = await start(tmp_path, ScriptedProvider(answer("Hello.")))
+    revoked: list[str] = []
+    revoke = runtime.output.revoke_run
+    monkeypatch.setattr(
+        runtime.output, "revoke_run", lambda run_id: (revoked.append(run_id), revoke(run_id))
+    )
+    try:
+        _, _, handle = await submit(runtime, "user-a")
+        result = await finish(handle)
+        assert result.state is LoopState.COMPLETED
+        accepted = runtime.output.accepts_run(handle.identity.run_id)
+
+        handle.cancel(reason="engine_closed")
+        assert revoked == [] and runtime.output.accepts_run(handle.identity.run_id) is accepted
+        assert await finish(handle) is result
+    finally:
+        await runtime.aclose()

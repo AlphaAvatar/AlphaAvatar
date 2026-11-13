@@ -84,6 +84,14 @@ class LoopExecution(LoopHandle):
         unsafe_lock: asyncio.Lock,
         authorize: ToolAuthorizer | None = None,
     ) -> None:
+        # The run (its run, Turn and context IDs), its request and settings, and what it borrows.
+        self._identity = LoopIdentity(uuid4().hex, request.turn_id, request.context_id)
+        self._request = request
+        self._config = config
+        self._runtime = runtime
+        self._gateway = gateway
+
+        # The accepted identity its context and output are for, and whether it is still current.
         participants = runtime.participants
         self._identity_basis = participants.identity_basis(request.turn)
 
@@ -91,24 +99,28 @@ class LoopExecution(LoopHandle):
             return participants.identity_basis_is_current(self._identity_basis)
 
         self._delivery_guard = delivery_guard
-        self._identity = LoopIdentity(uuid4().hex, request.turn_id, request.context_id)
-        self._request = request
-        self._config = config
-        self._runtime = runtime
-        self._gateway = gateway
-        self._context_manager = runtime.foundation.context
+
+        # Its limits, and the options its model requests start from.
         self._budget = ExecutionBudget(request, asyncio.get_running_loop().time())
+        self._generation_options = self._budget.options(config.reasoning, finalizing=False)
+
+        # The query: its prepared context, the items it has committed and how many record
+        # batches they took, and the calls still to settle.
+        self._context: ModelInput | None = None
         self._items: list[ModelInputItem] = []
         self._commits = 0
         self._pending_calls: tuple[ModelFunctionCall, ...] = ()
-        self._context: ModelInput | None = None
-        self._operation: asyncio.Task[Any] | None = None
+
+        # Identity changes: the step the watch can cancel, and the interruption of its outputs.
+        self._watched_step: asyncio.Task[Any] | None = None
         self._identity_cleanup: asyncio.Task[None] | None = None
-        self._generation_options = self._budget.options(config.reasoning, finalizing=False)
+
+        # Lifecycle: why it is cancelled, whether its task has begun, and its one shared close.
         self._cancel_reason: str | None = None
         self._started = False
-        self._settled = False
         self._close_task: asyncio.Task[None] | None = None
+
+        # Its feedback and tools, whose definitions stay fixed for the run; then its task.
         self._feedback = LoopFeedback(
             self.identity,
             runtime,
@@ -230,7 +242,7 @@ class LoopExecution(LoopHandle):
         )
 
     def cancel(self, *, reason: str = "interrupted") -> None:
-        if self.task.done() or self._settled or self._cancel_reason is not None:
+        if self.task.done() or self._cancel_reason is not None:
             return
         self._cancel_reason = reason
         self._runtime.output.revoke_run(self.identity.run_id)
@@ -330,8 +342,8 @@ class LoopExecution(LoopHandle):
                 sequence = stream.latest_sequence
                 if not self._delivery_guard():
                     # Tool effects must settle; only preparation/generation can be restarted.
-                    if self._operation is not None and not self._operation.done():
-                        self._operation.cancel()
+                    if self._watched_step is not None and not self._watched_step.done():
+                        self._watched_step.cancel()
 
                     await self._interrupt_identity()
 
@@ -349,8 +361,10 @@ class LoopExecution(LoopHandle):
             )
         await wait_for_cleanup(self._identity_cleanup)
 
-    async def _with_identity[T](self, operation: Coroutine[Any, Any, T]) -> T:
-        task = self._operation = asyncio.create_task(operation)
+    async def _watched[T](self, step: Coroutine[Any, Any, T]) -> T:
+        """A step the identity watch can cancel: an identity change ends it as
+        ContextIdentityChanged, for its caller to redo under the new identity."""
+        task = self._watched_step = asyncio.create_task(step)
         try:
             return await task
         except asyncio.CancelledError:
@@ -364,7 +378,7 @@ class LoopExecution(LoopHandle):
                 raise ContextIdentityChanged("Execution identity changed") from None
             raise
         finally:
-            self._operation = None
+            self._watched_step = None
 
     async def _prepare_context(self) -> None:
         if self._context is not None and self._delivery_guard():
@@ -383,7 +397,7 @@ class LoopExecution(LoopHandle):
             context_id=self.identity.context_id,
             contributions=(self._budget.contribution(),),
         )
-        self._context = await self._with_identity(self._context_manager.prepare(preparation))
+        self._context = await self._watched(self._runtime.foundation.context.prepare(preparation))
         if not isinstance(self._context, ModelInput):
             raise TypeError("ContextManager.prepare must return ModelInput")
 
@@ -409,7 +423,8 @@ class LoopExecution(LoopHandle):
             )
 
         request_id = uuid4().hex
-        built = self._context_manager.build(self._context, continuation=tuple(self._items))
+        context = self._runtime.foundation.context
+        built = context.build(self._context, continuation=tuple(self._items))
         # Where the build returns, by the request it starts: what follows is assembly.
         self._log("context.built", request_id=request_id)
         request = ModelRequest(
@@ -582,7 +597,7 @@ class LoopExecution(LoopHandle):
             try:
                 async with asyncio.timeout_at(budget.exploration_deadline):
                     await self._prepare_context()
-                    response = await self._with_identity(self._model(finalizing=False, reason=None))
+                    response = await self._watched(self._model(finalizing=False, reason=None))
                     self._check_identity()
                     calls = tuple(
                         item for item in response.items if isinstance(item, ModelFunctionCall)
@@ -623,9 +638,7 @@ class LoopExecution(LoopHandle):
             while True:
                 try:
                     await self._prepare_context()
-                    response = await self._with_identity(
-                        self._model(finalizing=True, reason=reason)
-                    )
+                    response = await self._watched(self._model(finalizing=True, reason=reason))
                     self._check_identity()
                     break
                 except ContextIdentityChanged:
@@ -712,7 +725,8 @@ class LoopExecution(LoopHandle):
         if self._cancel_reason is not None:
             state, reason, answers = LoopState.CANCELLED, self._cancel_reason, ()
 
-        self._settled = True
+        # Nothing awaits from here to its return: a cancel finds the run either still running
+        # or its task done, never a settled result it could revoke.
         result = LoopResult(
             identity=self.identity,
             state=state,

@@ -1234,9 +1234,18 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 | Persona 说话人的 `register_context_consumer(..., waiter=_await_identities)` | 只等这个 Turn 自己还没做完身份那一步的段，最多 `identity_wait_sec`（0.1 秒），超时放行。Context 按当前身份决定私有资料和记忆，去掉它，身份晚到时 Loop 会中断输出、重新准备、再请求一次模型。屏蔽后只有直接测这个等待的 3 个测试失败 | 用户决定保留；不想等时把 `identity_wait_sec` 设为 0 |
 | `ParticipantRuntime.set_segment_resolver` | 原本让 `wait_for_segments` 不至于永远等：没有解析者时段立即结算为 `unresolved`，解析者停止时结算为 `released / resolver_stopped`。等待删除后只剩 trace：前者走不到（调用 `observe_segment` 的只有说话人处理器自己，登记在先、注销在后），后者与 `close()` 的 `released / closed` 重复（组件不能热切换） | 用户决定删除：去掉方法、字段、两条结算和 Persona 的调用，删除不再使用的 `ConsumerId` 别名；测试去掉 `resolver-stopped` 参数和 `no_resolver` 部分，保留淘汰 |
 
-- 回答"Context 抛出 TimeoutError 后 Loop 是否正常"时发现 KD-46：Loop 把它当成自己的预算超时。用 Loop 测试的替身注册一个抛错的 waiter，只在第一次准备失败时 Run 以 `partial / time_budget` 结束、不调用工具，每次都失败时以 `failed / timeout` 结束、不请求模型。修法待用户决定。
+- 回答"Context 抛出 TimeoutError 后 Loop 是否正常"时发现 KD-46：Loop 把它当成自己的预算超时。用 Loop 测试的替身注册一个抛错的 waiter，只在第一次准备失败时 Run 以 `partial / time_budget` 结束、不调用工具，每次都失败时以 `failed / timeout` 结束、不请求模型。
+  - 用户决定 Context 不再抛出，只记 warning：`context/manager.py` 改为记录 `turn_id` 和 `pending_context_consumers()` 后照常准备。Turn 已不是它输入当前的快照时，Memory、Persona 的 `content_for` 仍会拒绝。
+  - 新增 `test_a_turn_whose_context_is_not_ready_is_still_prepared_and_says_so`（Context 的 `test_identity_switch.py`），改回抛出、warning 降为 debug 时都失败。同一个 Loop 探测重跑，两种情况都以 `completed` 结束，带工具请求一次模型。
 - 第一次实验时临时删掉了 Memory 的那行登记，没有先告诉用户，用户发现后停下并恢复；之后的实验改用 scratchpad 里的 pytest 插件，只在内存里屏蔽。
 - 验证：ruff、format、`git diff --check` 通过；删除 Memory 登记后全量测试 719 个通过，删除 `set_segment_resolver` 后 718 个通过（少了 `resolver-stopped` 参数）。工作区里 `context/manager.py` 的一个空行是用户自己的改动。
+
+**Loop 的 `LoopExecution`**（用户问到 `_drive` 的两次模型请求：一次是可以调用工具、会重复的探索，一次是探索没有回答时只回答的收尾）：
+
+- `_with_identity` 改名为 `_watched`，字段 `_operation` 改为 `_watched_step`，加上说明：这一步由身份监视取消，身份变了就以 `ContextIdentityChanged` 结束，由调用方按新身份重做。名字由用户从候选中选定。
+- 去掉 `_context_manager`（`runtime.foundation.context` 的别名，2 处）和 `_settled`：`_settled = True` 到 `return` 之间没有 await，其他任务看到的它与 `task.done()` 同时成立，`cancel()` 只看 `task.done()`，原处留注释说明这个前提。
+- 构造函数按用途分组，每组前空一行加注释：Run 与它借用的服务、身份依据、预算、本次查询的状态、身份变化、生命周期、反馈与工具。闭包 `delivery_guard` 改为方法的提议，用户暂未要求。
+- 新增 `test_a_cancel_after_a_run_has_settled_never_revokes_its_answer`（Loop 的 `test_identity_switch.py`），去掉 `task.done()` 检查时失败。全量测试 720 个通过。
 
 ## 留给下一步
 
