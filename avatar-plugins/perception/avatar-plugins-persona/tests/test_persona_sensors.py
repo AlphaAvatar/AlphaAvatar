@@ -36,11 +36,7 @@ from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
-from alphaavatar.core.env.schemas import (
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import (
     AudioFrame,
     AudioFramePayload,
@@ -53,7 +49,7 @@ from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
-from alphaavatar.core.session.schemas import IdentityRequest
+from alphaavatar.core.session.schemas import IdentityRequest, Participant
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
@@ -97,7 +93,6 @@ class SensorInference:
         self.replies: deque[str] = deque()
         self.hold_search = False
         self.search_held, self.search_release = asyncio.Event(), asyncio.Event()
-        self.anonymous_faces = False  # Faces without an entity of their own: tracked ones
         self.attribute_delay = 0.0  # A speaker attribute inference that takes its time
         self.hold_attribute = False
         self.attribute_held, self.attribute_release = asyncio.Event(), asyncio.Event()
@@ -144,7 +139,6 @@ class SensorInference:
                     "bbox": [100.0 * index, 0.0, 100.0 * index + 90, 90.0],
                     "det_score": 0.9,
                     "embedding": embedding(user, 512).tolist(),
-                    **({} if self.anonymous_faces else {"entity": {"entity_id": f"face-{user}"}}),
                     "age": 30 + 20 * index,
                     "gender": "F" if user == "alice" else "M",
                 }
@@ -219,17 +213,15 @@ def speak(
     user: str,
     *,
     end: bool = True,
-    explicit: bool = True,
 ) -> None:
-    """Publish one entity's 3 s utterance: exactly one model window, then the segment end;
-    ``explicit``: its subject named on each frame, or known by its voice alone."""
+    """Publish one 3 s utterance, known by its voice: exactly one model window, then the
+    segment end."""
     level = next(level for level, name in LEVELS.items() if name == user)
     pcm = np.full(16000, level, dtype="<i2").tobytes()
     common = {
         "source": source,
         "segment": PerceptionSegmentRef(source, segment),
         "device_id": source.source_id,
-        **({"entity": PerceptionEntityRef(f"voice-{user}")} if explicit else {}),
     }
     for index in range(3):
         frame = AudioFrame(sample_rate=16000, num_channels=1, samples_per_channel=16000, data=pcm)
@@ -304,19 +296,19 @@ def utter(
 
 def show(
     runtime: AvatarRuntime, source: PerceptionSourceRef, *users: str, later: float = 0.0
-) -> None:
+) -> EnvObservation:
     payload = VideoFramePayload(frame_id=None, width=640, height=480)
     payload.put(PayloadFormat.IMAGE_JPEG_BYTES, "+".join(users).encode(), view=PayloadView.RAW)
-    runtime.perception.publish_observation(
-        EnvObservation(
-            kind=ObservationKind.VIDEO_FRAME,
-            # A later capture time passes the per-source face sampling interval.
-            time_range=RuntimeTimeRange.point(runtime.clock.now().shifted(later)),
-            source=source,
-            device_id=source.source_id,
-            payload=payload,
-        )
+    observation = EnvObservation(
+        kind=ObservationKind.VIDEO_FRAME,
+        # A later capture time passes the per-source face sampling interval.
+        time_range=RuntimeTimeRange.point(runtime.clock.now().shifted(later)),
+        source=source,
+        device_id=source.source_id,
+        payload=payload,
     )
+    runtime.perception.publish_observation(observation)
+    return observation
 
 
 def observe(runtime: AvatarRuntime, sensor: str, source: PerceptionSourceRef, *users: str) -> None:
@@ -370,14 +362,13 @@ async def test_sensor_evidence_and_attributes_stay_with_each_participant(
     await runtime.aclose()
 
 
-@pytest.mark.parametrize("explicit", [True, False], ids=["named-subject", "by-voice"])
 async def test_the_association_is_ready_when_it_is_known_and_each_step_keeps_its_span(
-    explicit: bool, tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     runtime = avatar_runtime(tmp_path, SensorInference())
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
-    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice", explicit=explicit)
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice")
 
     def records(stage: str) -> list[dict]:
         found = runtime.perception.input_trace.snapshot().to_dict()["records"]
@@ -388,12 +379,8 @@ async def test_the_association_is_ready_when_it_is_known_and_each_step_keeps_its
     (settled,) = records("participant.segment_ready")  # Once: no later unbound
     assert (window["sequence"], window["outcome"], settled["outcome"]) == (1, "done", "bound")
     assert window["event_time_ns"] <= window["start_time_ns"] <= window["end_time_ns"]
-    if explicit:
-        # Its subject came with its first frame: bound then, before any window ran.
-        assert settled["end_time_ns"] <= window["start_time_ns"]
-    else:
-        # Known by its voice alone: ready once the window that gave it was done.
-        assert settled["end_time_ns"] >= window["end_time_ns"]
+    # Known by its voice: ready once the window that gave it was done.
+    assert settled["end_time_ns"] >= window["end_time_ns"]
     # The identity match and the attributes follow the association, on a lane of their own.
     (identity,) = records("speaker.identity")
     (attribute,) = records("speaker.attribute")
@@ -423,7 +410,7 @@ async def test_a_window_that_times_out_or_fails_releases_its_association_and_say
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
-    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice", explicit=False)
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice")
 
     def records(stage: str) -> list[dict]:
         found = runtime.perception.input_trace.snapshot().to_dict()["records"]
@@ -646,7 +633,7 @@ async def test_one_voice_is_one_participant_across_devices_and_a_cancelled_sourc
         lambda: len(inference.searches) == 2, "the laptop's utterance was never searched"
     )
     # The phone's source is cancelled while it speaks; it comes back as a new generation.
-    speak(runtime, phone, "open", "alice", end=False, explicit=False)
+    speak(runtime, phone, "open", "alice", end=False)
     runtime.perception.publish_observation(
         EnvObservation(
             kind=ObservationKind.SPEECH_CANCELLED,
@@ -681,7 +668,7 @@ async def test_a_segment_in_flight_when_its_voice_is_identified_still_takes_its_
     utter(runtime, source, "first", "alice", heard=3.0, spoken=2.6)
     async with asyncio.timeout(HANG_GUARD):
         await inference.search_held.wait()
-    speak(runtime, source, "next", "alice", end=False, explicit=False)
+    speak(runtime, source, "next", "alice", end=False)
     await wait_until(
         lambda: PerceptionSegmentRef(source, "next") in speaker._segments, "it never began"
     )
@@ -719,10 +706,10 @@ async def test_a_segment_queued_behind_its_voices_identification_still_takes_its
     await persona.on_start()
     speaker = next(processor for processor in persona._processors if processor.name == "speaker")
     source = PerceptionSourceRef("device", 1)
-    speak(runtime, source, "a", "alice", explicit=False)
+    speak(runtime, source, "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.search_held.wait()
-    speak(runtime, source, "b", "alice", explicit=False)
+    speak(runtime, source, "b", "alice")
     await wait_until(lambda: speaker._identity_queue.qsize() == 1, "the second never queued")
 
     inference.search_release.set()
@@ -741,7 +728,7 @@ async def test_a_segment_begun_before_its_voice_had_a_participant_is_still_ident
     phone, laptop = PerceptionSourceRef("phone", 1), PerceptionSourceRef("laptop", 1)
     # The laptop begins to hear a new voice; the phone's segment of it ends first and makes
     # its participant, after the laptop's segment began.
-    speak(runtime, laptop, "b", "alice", end=False, explicit=False)
+    speak(runtime, laptop, "b", "alice", end=False)
     utter(runtime, phone, "a", "alice", heard=3.0, spoken=2.6)
     await wait_until(lambda: len(inference.searches) == 1, "the phone's segment was never searched")
     runtime.perception.publish_observation(
@@ -855,69 +842,6 @@ async def test_short_segments_lead_the_next_longer_one_into_its_vector(tmp_path:
         runtime.participants.resolve(segment=PerceptionSegmentRef(source, name)) for name in spoken
     ]
     assert alice is not None and heard == [alice] * 3
-    await persona.on_stop()
-    await runtime.aclose()
-
-
-async def test_a_segment_whose_subject_arrives_on_a_later_frame_takes_it(tmp_path: Path) -> None:
-    # A segment that began without a named subject takes the one a later frame names: its
-    # speech is that subject's participant's, never a voice track of its own.
-    inference = SensorInference()
-    runtime = avatar_runtime(tmp_path, inference)
-    persona = persona_for(runtime, "speaker")
-    await persona.on_start()
-    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
-    source = PerceptionSourceRef("device", 1)
-    segment, voice = PerceptionSegmentRef(source, "a"), PerceptionEntityRef("voice-alice")
-    common = {"source": source, "segment": segment, "device_id": source.source_id}
-    pcm = np.full(16000, 8192, dtype="<i2").tobytes()  # 1 s of alice
-    for index, named in enumerate((None, voice, None)):
-        frame = AudioFrame(sample_rate=16000, num_channels=1, samples_per_channel=16000, data=pcm)
-        runtime.perception.publish_observation(
-            EnvObservation(
-                kind=ObservationKind.SPEECH_FRAME,
-                time_range=RuntimeTimeRange.point(runtime.clock.now()),
-                payload=AudioFramePayload.create(frame=frame, frame_id=f"a-{index}"),
-                **({"entity": named} if named is not None else {}),
-                **common,
-            )
-        )
-    runtime.perception.publish_observation(
-        EnvObservation(
-            kind=ObservationKind.SPEECH_SEGMENT,
-            time_range=RuntimeTimeRange.point(runtime.clock.now()),
-            **common,
-        )
-    )
-    await wait_until(
-        lambda: inference.searches and segment not in speaker._segments,
-        "the segment was never identified",
-    )
-
-    named = runtime.participants.resolve(source=source, entity=voice)
-    assert named is not None and runtime.participants.resolve(segment=segment) == named
-    assert not speaker._tracks._tracks
-    await persona.on_stop()
-    await runtime.aclose()
-
-
-async def test_a_segment_with_its_own_subject_drops_the_short_speech_before_it(
-    tmp_path: Path,
-) -> None:
-    inference = SensorInference()
-    runtime = avatar_runtime(tmp_path, inference)
-    persona = persona_for(runtime, "speaker")
-    await persona.on_start()
-    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
-    source = PerceptionSourceRef("device", 1)
-    utter(runtime, source, "short", "alice", heard=1.0, spoken=0.8)
-    await wait_until(lambda: speaker._shorts, "the short segment was never kept")
-    speak(runtime, source, "named", "alice")  # Its subject named on its frames
-    await wait_until(lambda: inference.searches, "the named segment was never searched")
-
-    # The short speech cannot cross it to lead a later segment: it goes, unattributed.
-    assert inference.vector_samples == [48000] and not speaker._shorts
-    assert runtime.participants.resolve(segment=PerceptionSegmentRef(source, "short")) is None
     await persona.on_stop()
     await runtime.aclose()
 
@@ -1050,10 +974,10 @@ async def test_a_segments_association_never_waits_on_the_identity_before_it(tmp_
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    speak(runtime, source, "a", "alice", explicit=False)
+    speak(runtime, source, "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.search_held.wait()
-    speak(runtime, source, "b", "bob", explicit=False)
+    speak(runtime, source, "b", "bob")
     async with asyncio.timeout(2):  # Unbounded before: it waited for the search's release.
         while len(traced(runtime, "participant.segment_ready")) < 2:
             await asyncio.sleep(0.001)
@@ -1097,7 +1021,7 @@ async def test_a_turns_context_waits_for_its_speakers_identity_within_its_bound(
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "speaker", identity_wait_sec=0.3)
     await persona.on_start()
-    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice", explicit=False)
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.search_held.wait()
     snapshot = spoken_turn(runtime, "a")
@@ -1131,7 +1055,7 @@ async def test_a_full_identity_lane_retires_the_segment_waiting_longest_unsearch
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
     for segment, user in (("a", "alice"), ("b", "bob"), ("c", "alice")):
-        speak(runtime, source, segment, user, explicit=False)
+        speak(runtime, source, segment, user)
         count = "abc".index(segment) + 1
         await wait_until(
             lambda count=count: len(traced(runtime, "participant.segment_ready")) == count,
@@ -1157,14 +1081,14 @@ async def test_a_cancelled_source_cancels_the_identity_its_segment_waits_on(tmp_
     persona = persona_for(runtime, "speaker", identity_wait_sec=HANG_GUARD)
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    speak(runtime, source, "a", "alice", explicit=False)
+    speak(runtime, source, "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.search_held.wait()
     waiting = asyncio.create_task(runtime.turn.wait_context_ready(spoken_turn(runtime, "a")))
     await asyncio.sleep(0.05)
     assert not waiting.done()  # It waits on the identity in flight.
     # The source is cancelled while it speaks again: its segment being identified goes too.
-    speak(runtime, source, "b", "alice", end=False, explicit=False)
+    speak(runtime, source, "b", "alice", end=False)
     runtime.perception.publish_observation(
         EnvObservation(
             kind=ObservationKind.SPEECH_CANCELLED,
@@ -1317,7 +1241,6 @@ async def test_a_face_unseen_for_an_hour_is_still_one_participant(tmp_path: Path
     # A face track is never retired for time: the same first-time face an hour later is the
     # same entity and participant, never a second one to be saved as a fragment (KD-43).
     inference = SensorInference()
-    inference.anonymous_faces = True
     inference.replies.extend(["none", "none"])  # Not in the library
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "face")
@@ -1361,12 +1284,9 @@ async def test_a_frame_behind_its_sources_latest_is_never_analyzed(
         later=later,
     )
     show(runtime, newer, "carol", later=4.0)  # Analyzed after the late frame would have been
-    await wait_until(lambda: len(face_annotations(runtime)) == 2, "the last frame was never seen")
-    entities = [
-        FaceDetectionResult.from_annotation(annotation).faces[0].entity.entity_id
-        for annotation in face_annotations(runtime)
-    ]
-    assert entities == ["face-alice", "face-carol"]
+    await wait_until(lambda: participant_of(runtime, "carol"), "the last frame was never seen")
+    assert len(face_annotations(runtime)) == 2
+    assert participant_of(runtime, "alice") is not None and participant_of(runtime, "bob") is None
     await persona.on_stop()
     await runtime.aclose()
 
@@ -1377,7 +1297,6 @@ async def test_face_tracks_are_unbounded_and_only_attribute_caches_are_bounded(
     # Every face the session sees keeps its track; max_face_caches bounds only the participants
     # whose face attributes are kept, the earliest kept giving way.
     inference = SensorInference()
-    inference.anonymous_faces = True
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "face", max_face_caches=1)
     await persona.on_start()
@@ -1400,7 +1319,6 @@ async def test_one_face_is_one_participant_across_cameras_and_generations(tmp_pa
     # face on a camera, on that camera's next generation and on another camera is one entity
     # and one participant, and its track keeps each source it was seen on, in order.
     inference = SensorInference()
-    inference.anonymous_faces = True
     inference.replies.extend(["none"] * 3)  # Not in the library
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "face")
@@ -1463,10 +1381,10 @@ async def test_a_slow_attribute_never_holds_the_next_segments_association_or_ide
     persona = persona_for(runtime, "speaker", identity_wait_sec=HANG_GUARD)
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    speak(runtime, source, "a", "alice", explicit=False)
+    speak(runtime, source, "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.attribute_held.wait()
-    speak(runtime, source, "b", "bob", explicit=False)
+    speak(runtime, source, "b", "bob")
     await wait_until(lambda: len(traced(runtime, "participant.segment_ready")) == 2, "unbound")
     ready = await asyncio.wait_for(runtime.turn.wait_context_ready(spoken_turn(runtime, "b")), 2)
 
@@ -1487,7 +1405,7 @@ async def test_a_full_attribute_lane_gives_way_without_holding_any_identity(tmp_
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
     for segment, user in (("a", "alice"), ("b", "bob"), ("c", "carol")):
-        speak(runtime, source, segment, user, explicit=False)
+        speak(runtime, source, segment, user)
         await wait_until(lambda user=user: participant_of(runtime, user), f"{user} unknown")
         if segment == "a":
             async with asyncio.timeout(HANG_GUARD):
@@ -1511,13 +1429,13 @@ async def test_an_attribute_of_a_retired_segment_is_reaped_and_writes_nothing(
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    speak(runtime, source, "a", "alice", explicit=False)
+    speak(runtime, source, "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.attribute_held.wait()
     alice = participant_of(runtime, "alice")
     cache = persona.cache_for(alice.participant_id)
     if how == "cancelled-source":
-        speak(runtime, source, "b", "bob", end=False, explicit=False)
+        speak(runtime, source, "b", "bob", end=False)
         runtime.perception.publish_observation(
             EnvObservation(
                 kind=ObservationKind.SPEECH_CANCELLED,
@@ -1530,7 +1448,7 @@ async def test_an_attribute_of_a_retired_segment_is_reaped_and_writes_nothing(
         await wait_until(lambda: traced(runtime, "speaker.attribute"), "it was never reaped")
     elif how == "new-generation":
         # The device reopened: its old generation's segments are retired as the new speaks.
-        speak(runtime, PerceptionSourceRef("device", 2), "c", "bob", end=False, explicit=False)
+        speak(runtime, PerceptionSourceRef("device", 2), "c", "bob", end=False)
         await wait_until(
             lambda: any(
                 r["outcome"] == "released" for r in traced(runtime, "participant.segment_ready")
@@ -1559,7 +1477,7 @@ async def test_a_late_attribute_never_describes_the_identity_that_replaced_its_o
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
-    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice", explicit=False)
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.attribute_held.wait()
     alice = participant_of(runtime, "alice")
@@ -1634,13 +1552,23 @@ async def test_late_sensor_result_from_a_retired_source_never_binds_identity(
 
 def sense(
     runtime: AvatarRuntime, sensor: str, source: PerceptionSourceRef, user: str, *, take: int = 0
-) -> PerceptionEntityRef:
-    """One observation of a user on a source that stays current; returns its physical entity."""
+) -> Callable[[], Participant | None]:
+    """One observation of a user on a source that stays current; returns how to find the
+    participant its voice or face was associated with, once it is."""
     if sensor == "speaker":
-        speak(runtime, source, f"utterance-{take}", user)
-        return PerceptionEntityRef(f"voice-{user}")
-    show(runtime, source, user, later=take)
-    return PerceptionEntityRef(f"face-{user}")
+        segment = PerceptionSegmentRef(source, f"utterance-{take}")
+        speak(runtime, source, segment.segment_id, user)
+        return lambda: runtime.participants.resolve(segment=segment)
+    observation = show(runtime, source, user, later=take)
+
+    def seen() -> Participant | None:
+        for annotation in face_annotations(runtime):
+            if annotation.observation_id == observation.observation_id:
+                (face,) = FaceDetectionResult.from_annotation(annotation).faces
+                return runtime.participants.resolve(source=source, entity=face.entity)
+        return None
+
+    return seen
 
 
 def observed(persona, participant_id: str, sensor: str) -> tuple[np.ndarray | None, object]:
@@ -1673,12 +1601,9 @@ async def test_vector_search_miss_keeps_evidence_with_the_participant_without_bi
     persona = persona_for(runtime, sensor)
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    entity = sense(runtime, sensor, source, "alice")
-    await wait_until(
-        lambda: runtime.participants.resolve(source=source, entity=entity) is not None,
-        f"{sensor} entity was never associated",
-    )
-    participant = runtime.participants.resolve(source=source, entity=entity)
+    heard = sense(runtime, sensor, source, "alice")
+    await wait_until(lambda: heard() is not None, f"{sensor} entity was never associated")
+    participant = heard()
     await wait_until(
         lambda: observed(persona, participant.participant_id, sensor)[1] is not None,
         f"{sensor} evidence was not applied",
@@ -1718,12 +1643,12 @@ async def test_identity_switch_during_vector_search_discards_the_late_result(
     persona = persona_for(runtime, sensor)
     await persona.on_start()
     source = PerceptionSourceRef("device", 1)
-    entity = sense(runtime, sensor, source, "alice")
+    heard = sense(runtime, sensor, source, "alice")
     async with asyncio.timeout(HANG_GUARD):
         await inference.search_held.wait()
 
     # The Agent corrects the speaker to someone never perceived while the lookup is in flight.
-    before = runtime.participants.resolve(source=source, entity=entity)
+    before = heard()
     outcome = runtime.participants.bind_user(
         IdentityRequest(
             participant_id=before.participant_id,
@@ -1745,7 +1670,7 @@ async def test_identity_switch_during_vector_search_discards_the_late_result(
     # Evidence judged against the previous identity never lands in Carol's observations.
     assert observed(persona, carol.participant_id, sensor) == (None, None)
     assert runtime.participants.source_is_current(source)
-    assert runtime.participants.resolve(source=source, entity=entity) == carol
+    assert heard() == carol
 
     # The same, still-current source keeps working for the corrected identity.
     sense(runtime, sensor, source, "alice", take=1)

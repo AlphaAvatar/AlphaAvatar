@@ -198,25 +198,15 @@ class FaceProcessor(PersonaProcessorBase):
     """Annotation operations"""
 
     def _safe_face_annotations(
-        self,
-        faces: list[dict[str, Any]],
-        *,
-        entities: list[PerceptionEntityRef | None],
-        selected_entity: PerceptionEntityRef | None,
-    ) -> tuple[tuple[FaceDetection, ...], int | None]:
+        self, faces: list[dict[str, Any]], *, entities: list[PerceptionEntityRef | None]
+    ) -> tuple[FaceDetection, ...]:
         safe_faces: list[FaceDetection] = []
-        selected_index: int | None = None
-
         for face, entity in zip(faces, entities, strict=True):
             bbox = face.get("bbox")
             if bbox is None or len(bbox) != 4:
                 continue
 
             keypoints = face.get("kps")
-
-            if entity is not None and entity == selected_entity:
-                selected_index = len(safe_faces)
-
             safe_faces.append(
                 FaceDetection(
                     bbox=tuple(float(value) for value in bbox),
@@ -228,7 +218,7 @@ class FaceProcessor(PersonaProcessorBase):
                 )
             )
 
-        return tuple(safe_faces), selected_index
+        return tuple(safe_faces)
 
     def _publish_face_annotation(
         self,
@@ -239,18 +229,13 @@ class FaceProcessor(PersonaProcessorBase):
         image_width: int,
         image_height: int,
     ) -> None:
-        safe_faces, selected_index = self._safe_face_annotations(
-            faces, entities=entities, selected_entity=job.observation.entity
-        )
+        safe_faces = self._safe_face_annotations(faces, entities=entities)
 
         if not safe_faces:
             return
 
         result = FaceDetectionResult(
-            image_width=image_width,
-            image_height=image_height,
-            faces=safe_faces,
-            selected_face_index=selected_index,
+            image_width=image_width, image_height=image_height, faces=safe_faces
         )
 
         self.perception_runtime.publish_annotation(
@@ -505,15 +490,7 @@ class FaceProcessor(PersonaProcessorBase):
         # One frame inference supplies all faces; their identities go to their own lane.
         candidates = faces[: self._config.max_faces]
         vectors = [self._face_vector(face) for face in candidates]
-        explicit = [
-            PerceptionEntityRef.from_dict(face["entity"])
-            if isinstance(face.get("entity"), dict)
-            else job.observation.entity
-            if len(faces) == 1
-            else None
-            for face in candidates
-        ]
-        associated = self._tracks.resolve(job.observation.source, vectors, explicit)
+        associated = self._tracks.resolve(job.observation.source, vectors)
         entities = list(associated) + [None] * (len(faces) - len(candidates))
         identities = []
         for index, (face, vector, entity) in enumerate(

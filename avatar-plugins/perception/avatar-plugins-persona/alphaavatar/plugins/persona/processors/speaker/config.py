@@ -33,7 +33,7 @@ class SpeakerConfig(BaseModel):
 
     # Speech shorter than short_segment_sec (by its VAD range) is not matched alone: it leads the
     # next segment of its source into that one's vector, a longer one at once and short ones once
-    # together they reach short_merge_sec. A segment with its own subject drops it.
+    # together they reach short_merge_sec.
     short_segment_sec: float = Field(default=1.0, ge=0, allow_inf_nan=False)
     short_merge_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
 

@@ -239,16 +239,6 @@ class SpeakerProcessor(PersonaProcessorBase):
         queued = self.runtime.clock.now().monotonic_ns
         self._enqueue(SpeakerWindow(state, audio.tobytes(), state.window_index, queued, whole))
 
-    def _take_entity(self, state: SpeakerSegmentState, entity: PerceptionEntityRef) -> None:
-        """An explicit subject, usable before identity inference has completed: its participant
-        and this segment's association with it, once."""
-        self.runtime.participants.ensure_entity(
-            state.segment.source, entity, kind="speaker", device_id=state.device_id
-        )
-        state.entity = entity
-        if not self.runtime.participants.bind_segment(state.segment, entity, token=state.token):
-            state.invalid = True
-
     def _state(self, observation: EnvObservation) -> SpeakerSegmentState | None:
         segment = observation.segment
         if segment is None or segment in self._retired_segments:
@@ -301,28 +291,12 @@ class SpeakerProcessor(PersonaProcessorBase):
                 token=token,
                 device_id=observation.device_id,
             )
-            if observation.entity is not None:
-                try:
-                    self._take_entity(state, observation.entity)
-                except Exception:
-                    self.runtime.participants.finish_segment_resolution(segment, token=token)
-                    raise
             self._segments[segment] = state
-            # Its source's short speech leads it; a segment with its own subject drops it.
-            if (led := self._shorts.pop(segment.source, None)) is not None and state.entity is None:
+            # Its source's short speech leads it.
+            if (led := self._shorts.pop(segment.source, None)) is not None:
                 state.led = led
                 state.pcm.extend(led.pcm)
                 state.recent.extend(led.pcm[-self._window_bytes :])
-        elif observation.entity is not None and observation.entity != state.entity:
-            if state.entity is not None:
-                # Conflicting explicit subjects invalidate the physical association.
-                self._invalidate(state)
-            else:
-                try:
-                    self._take_entity(state, observation.entity)
-                except Exception:
-                    self._retire(state)
-                    raise
 
         return state
 
@@ -367,7 +341,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._enqueue_pcm(state, bytes(state.recent))
             elif state.window_index == 0 and (pcm := self._segment_pcm(observation)) is not None:
                 seconds = observation.time_range.duration_sec
-                if state.entity is None and seconds < self._config.short_segment_sec:
+                if seconds < self._config.short_segment_sec:
                     self._add_short(state, state.led.pcm + pcm, state.led.seconds + seconds)
                 else:
                     self._enqueue_pcm(state, state.led.pcm + pcm, whole=True)
@@ -386,8 +360,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         """A short segment is not matched alone, and its Turn never waits on it. With the short
         speech it carries, it is inferred once together they reach short_merge_sec, each of them
         taking the association its vector finds; until then, it is carried on to lead the next
-        segment of its source. A short speech is never above that bound here, so a segment with
-        its own subject, which cannot carry it, drops it."""
+        segment of its source."""
         state.identified.set()
         if seconds >= self._config.short_merge_sec:
             self._enqueue_pcm(state, pcm, whole=True)
@@ -569,32 +542,24 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         identifying = False
         try:
-            if state.invalid:
+            if state.invalid or state.vector is None or state.inference_failed:
                 return
 
+            state.entity = self._tracks.resolve(
+                state.segment.source, state.vector, state.vector_sec
+            )
             if state.entity is None:
-                if state.vector is None or state.inference_failed:
-                    return
+                return
 
-                state.entity = self._tracks.resolve(
-                    state.segment.source, state.vector, state.vector_sec
-                )
-                if state.entity is None:
-                    return
-
-                self.runtime.participants.ensure_entity(
-                    state.segment.source, state.entity, kind="speaker", device_id=state.device_id
-                )
-
+            self.runtime.participants.ensure_entity(
+                state.segment.source, state.entity, kind="speaker", device_id=state.device_id
+            )
             if not self.runtime.participants.bind_segment(
                 state.segment, state.entity, token=state.token
             ):
                 return
             for segment, token in state.led.segments:
                 self.runtime.participants.bind_segment(segment, state.entity, token=token)
-
-            if state.vector is None or state.inference_failed:
-                return
 
             # Off this lane: the next segment's windows and association never wait on it.
             self._enqueue_identity(state)
@@ -647,7 +612,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         except BaseException:
             if self._is_current(state):
-                # Missing model evidence must not revoke an explicit physical association.
+                # Missing model evidence leaves the segment unattributed, not invalidated.
                 state.inference_failed = True
                 self.runtime.participants.finish_segment_resolution(
                     state.segment, token=state.token

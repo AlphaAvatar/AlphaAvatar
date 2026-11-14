@@ -26,9 +26,8 @@ from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRe
 @dataclass(slots=True)
 class FaceTrack:
     entity: PerceptionEntityRef
-    vector: np.ndarray | None
+    vector: np.ndarray
     sources: list[PerceptionSourceRef]  # Every source and generation it was seen on, in order
-    generated: bool
 
 
 class FaceTracks:
@@ -53,54 +52,24 @@ class FaceTracks:
         return track.entity
 
     def resolve(
-        self,
-        source: PerceptionSourceRef,
-        vectors: list[np.ndarray | None],
-        explicit: list[PerceptionEntityRef | None],
+        self, source: PerceptionSourceRef, vectors: list[np.ndarray | None]
     ) -> tuple[PerceptionEntityRef | None, ...]:
-        if len(vectors) != len(explicit):
-            raise ValueError("Face vectors and entity references must have the same length")
-
+        """One frame's faces, in order: each the entity of the session face it matches, a new
+        one, or none for a face without a vector or between two."""
         result: list[PerceptionEntityRef | None] = [None] * len(vectors)
-        counts = Counter(entity.entity_id for entity in explicit if entity is not None)
-        for index, entity in enumerate(explicit):
-            if entity is None or counts[entity.entity_id] != 1:
-                continue
-
-            track, vector = self._tracks.get(entity.entity_id), vectors[index]
-            if track is not None:
-                if (
-                    vector is not None
-                    and track.vector is not None
-                    and (
-                        vector.shape != track.vector.shape
-                        or float(vector @ track.vector) < self.threshold
-                    )
-                ):
-                    continue
-
-                if track.vector is None and vector is not None:
-                    track.vector = vector.copy()
-            else:
-                track = self._tracks[entity.entity_id] = FaceTrack(
-                    entity, vector.copy() if vector is not None else None, [], False
-                )
-
-            result[index] = self._seen(track, source)
-
         # Every face of the session is a candidate, whatever source or generation it was seen on.
         tracks = tuple(self._tracks.values())
         proposals: dict[int, FaceTrack] = {}
         novel: list[int] = []
         for index, vector in enumerate(vectors):
-            if explicit[index] is not None or vector is None:
+            if vector is None:
                 continue
 
             scores = sorted(
                 (
                     (float(vector @ track.vector), offset)
                     for offset, track in enumerate(tracks)
-                    if track.vector is not None and track.vector.shape == vector.shape
+                    if track.vector.shape == vector.shape
                 ),
                 reverse=True,
             )
@@ -111,8 +80,7 @@ class FaceTracks:
                 novel.append(index)
 
         # One frame shows each face once: a track two of its faces claim is neither's.
-        claimed = Counter(entity.entity_id for entity in result if entity is not None)
-        claimed.update(track.entity.entity_id for track in proposals.values())
+        claimed = Counter(track.entity.entity_id for track in proposals.values())
         for index, track in proposals.items():
             if claimed[track.entity.entity_id] == 1:
                 result[index] = self._seen(track, source)
@@ -129,7 +97,7 @@ class FaceTracks:
                 continue
 
             entity = PerceptionEntityRef(entity_id=f"face-{uuid4().hex}")
-            self._tracks[entity.entity_id] = FaceTrack(entity, vector.copy(), [source], True)
+            self._tracks[entity.entity_id] = FaceTrack(entity, vector.copy(), [source])
             result[index] = entity
 
         return tuple(result)
@@ -139,5 +107,5 @@ class FaceTracks:
         return retired
 
     def clear(self) -> None:
-        self._retired.extend(track.entity for track in self._tracks.values() if track.generated)
+        self._retired.extend(track.entity for track in self._tracks.values())
         self._tracks.clear()

@@ -89,3 +89,16 @@
   - 变异：进队列和任务前后的代检查各去掉一道时测试照常通过，两道互为后备（身份那一步之前 `ensure_entity` 也拒绝已退役的代）；两道一起去掉时失败；取样允许更早的帧时失败。
 - **取消跟踪数量上限**（与说话人相同）：跟踪不再受 `max_tracks` 限制，受 ParticipantRuntime 的实体与参与者容量（默认 1024）约束。`max_tracks` 只剩限制属性缓存的用途，改名为 `max_face_caches`（默认仍为 128）。`FaceTracks` 只需两个阈值，构造函数与说话人一样改为 `threshold`、`margin`。`identifiers-zh.md` 第 2 节同步。
   - 新增 `test_face_tracks_are_unbounded_and_only_attribute_caches_are_bounded`：`max_face_caches=1` 时一帧三张脸各有跟踪，属性缓存只留最后一个。重新限制跟踪数量、属性缓存不设上限这两处变异都失败。
+
+# 第五批：说话人与人脸都不再接受上游给的实体
+
+- 基线 `76712657`（第四批已提交）。
+- 起因：讨论人脸 `resolve` 的 `explicit` 参数时确认，生产中没有任何上游给语音或视频观测带实体（真实的人脸分析不输出 `entity`，RTC 不设置），这条路径只有测试走到；而测试替身默认带实体，大部分测试走的是生产不走的路径。用户的决定与开发规范："不能为了测试而修改生产代码逻辑"，两边同时去掉。
+- **说话人**：删除 `_take_entity` 与 `_state` 里建 state 时、段中途拿到实体时的两处处理（含两个实体冲突时作废）；短段不再看下一段是否带身份，`_close_segment` 只按 VAD 秒数判断短段；`_finish_segment` 每段都由跟踪匹配实体。KD-47 里建 state 时 `ensure_entity` 失败那条路径随之消失。
+- **人脸**：`FaceTracks.resolve(source, vectors)` 不再有 `explicit`，所有跟踪都由跟踪器生成，`FaceTrack.generated` 删除、向量不再可能为空；处理器不再按观测自带的实体选出 `selected_face_index`。
+- **测试**：替身的人脸不再带 `entity`（`anonymous_faces` 删除），`speak()` 不再有 `explicit`；`sense()` 改为返回"这次观测关联到的参与者"的查询（说话人按语音段，人脸按这一帧的标注），`show()` 返回它发布的观测。删除只测已删行为的 `test_a_segment_whose_subject_arrives_on_a_later_frame_takes_it`、`test_a_segment_with_its_own_subject_drops_the_short_speech_before_it` 和 `named-subject` 一例；`test_a_frame_behind_its_sources_latest_is_never_analyzed` 改按用户判断。
+- **文档**：Persona README、说话人 `config.py` 注释、`docs/bugs-zh.md` 的 O-25 与 KD-47、`identifiers-zh.md` 的 `entity_id` 一行。
+- **留给用户决定**（本批未动）：
+  - agents 契约 `FaceDetectionResult.selected_face_index` 已无生产者，也没有读者：用户决定删除，字段、范围校验和序列化一并删去。
+  - Router 的音频活动转发 `observation.entity`，轮次判断与语义寻址也读取它；Core 的 `EnvObservation.entity` 在生产中都为空。
+  - 说话人的 `invalid` 与 `inference_failed` 现在除 trace 的结果（invalid 与 unbound）外行为相同，可以再看是否合并。

@@ -120,28 +120,17 @@ class FaceDetectionResult:
     image_width: int
     image_height: int
     faces: tuple[FaceDetection, ...]
-    selected_face_index: int | None = None
 
     def __post_init__(self) -> None:
         if self.image_width <= 0 or self.image_height <= 0:
             raise ValueError("Face detection image dimensions must be positive")
 
-        if self.selected_face_index is not None and not 0 <= self.selected_face_index < len(
-            self.faces
-        ):
-            raise ValueError("selected_face_index is outside faces")
-
     def to_dict(self) -> dict[str, Any]:
-        data: dict[str, Any] = {
+        return {
             "image_width": self.image_width,
             "image_height": self.image_height,
             "faces": [face.to_dict() for face in self.faces],
         }
-
-        if self.selected_face_index is not None:
-            data["selected_face_index"] = self.selected_face_index
-
-        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> FaceDetectionResult:
@@ -149,7 +138,6 @@ class FaceDetectionResult:
             image_width=int(data["image_width"]),
             image_height=int(data["image_height"]),
             faces=tuple(FaceDetection.from_dict(face) for face in data.get("faces", ())),
-            selected_face_index=data.get("selected_face_index"),
         )
 
     @classmethod
