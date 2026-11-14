@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 
 import alphaavatar.plugins.persona  # noqa: F401  Registers the default Persona plugin.
+from alphaavatar.agents.avatar.vision import FaceDetectionResult
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
@@ -96,6 +97,7 @@ class SensorInference:
         self.replies: deque[str] = deque()
         self.hold_search = False
         self.search_held, self.search_release = asyncio.Event(), asyncio.Event()
+        self.anonymous_faces = False  # Faces without an entity of their own: tracked ones
         self.attribute_delay = 0.0  # A speaker attribute inference that takes its time
         self.hold_attribute = False
         self.attribute_held, self.attribute_release = asyncio.Event(), asyncio.Event()
@@ -142,7 +144,7 @@ class SensorInference:
                     "bbox": [100.0 * index, 0.0, 100.0 * index + 90, 90.0],
                     "det_score": 0.9,
                     "embedding": embedding(user, 512).tolist(),
-                    "entity": {"entity_id": f"face-{user}"},
+                    **({} if self.anonymous_faces else {"entity": {"entity_id": f"face-{user}"}}),
                     "age": 30 + 20 * index,
                     "gender": "F" if user == "alice" else "M",
                 }
@@ -1307,6 +1309,32 @@ async def test_a_frame_queued_before_its_face_changed_still_takes_its_identity_s
     inference.release.set()
 
     await wait_until(lambda: len(inference.searches) == 2, "the second frame was never searched")
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_face_unseen_for_an_hour_is_still_one_participant(tmp_path: Path) -> None:
+    # A face track is never retired for time: the same first-time face an hour later is the
+    # same entity and participant, never a second one to be saved as a fragment (KD-43).
+    inference = SensorInference()
+    inference.anonymous_faces = True
+    inference.replies.extend(["none", "none"])  # Not in the library
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face")
+    await persona.on_start()
+    source = PerceptionSourceRef("camera", 1)
+    for count, later in enumerate((0.0, 3600.0), 1):
+        show(runtime, source, "carol", later=later)
+        await wait_until(
+            lambda count=count: len(inference.searches) == count, "a frame was never searched"
+        )
+
+    first, second = (
+        FaceDetectionResult.from_annotation(annotation).faces[0].entity
+        for annotation in face_annotations(runtime)
+    )
+    assert first is not None and first == second
+    assert len(runtime.session.participants) == 1
     await persona.on_stop()
     await runtime.aclose()
 

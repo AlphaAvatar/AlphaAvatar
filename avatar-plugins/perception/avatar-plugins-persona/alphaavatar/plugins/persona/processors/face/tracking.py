@@ -28,12 +28,13 @@ from .config import FaceConfig
 class _Track:
     entity: PerceptionEntityRef
     vector: np.ndarray | None
-    seen_at: float
     generated: bool
 
 
 class FaceTracks:
-    """Bounded, source-local entity association; user identity remains a Session decision."""
+    """Bounded, source-local entity association; user identity remains a Session decision. A
+    track is never retired for time: it lasts until its source's generation changes or the
+    processor stops, so the same face after a long absence stays its entity."""
 
     def __init__(self, config: FaceConfig) -> None:
         self._config = config
@@ -79,9 +80,6 @@ class FaceTracks:
             return tuple(result)
 
         self._sources[source.source_id] = (source.source_generation, at)
-        for key, track in tuple(self._tracks.items()):
-            if at - track.seen_at > self._config.track_ttl_sec:
-                self._remove(key)
 
         counts = Counter(entity.entity_id for entity in explicit if entity is not None)
         for index, entity in enumerate(explicit):
@@ -101,12 +99,11 @@ class FaceTracks:
                 ):
                     continue
 
-                track.seen_at = at
                 if track.vector is None and vector is not None:
                     track.vector = vector.copy()
             elif len(self._tracks) < self._config.max_tracks:
                 self._tracks[key] = _Track(
-                    entity, vector.copy() if vector is not None else None, at, False
+                    entity, vector.copy() if vector is not None else None, False
                 )
             else:
                 continue
@@ -141,7 +138,6 @@ class FaceTracks:
         claimed.update(track.entity.entity_id for track in proposals.values())
         for index, track in proposals.items():
             if claimed[track.entity.entity_id] == 1:
-                track.seen_at = at
                 result[index] = track.entity
 
         for index in novel:
@@ -158,7 +154,7 @@ class FaceTracks:
                 break
 
             entity = PerceptionEntityRef(entity_id=f"face-{uuid4().hex}")
-            self._tracks[source, entity.entity_id] = _Track(entity, vector.copy(), at, True)
+            self._tracks[source, entity.entity_id] = _Track(entity, vector.copy(), True)
             result[index] = entity
 
         return tuple(result)

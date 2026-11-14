@@ -78,3 +78,6 @@
 # 第四批：人脸跟踪改为像说话人那样的 resolve（进行中）
 
 - 用户要求先只改名：`FaceTracks.associate` 改为 `resolve`（`face/tracking.py`，调用处在 `face/processor.py` 的 `_process`），行为不变，Persona 测试通过。
+- 基线 `a4762032`（第三批与改名已提交）。
+- **取消 `track_ttl_sec`**（对照说话人 KD-43）：人脸跟踪原来 60 秒没见到就退役，第一次出现的人离开画面一分钟再回来，会开新跟踪、得到新的实体和参与者，保存后成为碎片。删除配置项与跟踪器里的超时清理，以及只为它保存的 `seen_at`；跟踪只在来源换代或处理器停止时退役。
+  - 测试替身新增 `anonymous_faces`（输出不带实体的脸，走生成跟踪）。新增 `test_a_face_unseen_for_an_hour_is_still_one_participant`：库里没有的人一小时后再出现，仍是同一个实体、同一个参与者。换回带超时的旧跟踪器时失败（一小时后得到另一个实体）。
