@@ -704,6 +704,31 @@ async def test_a_segment_in_flight_when_its_voice_is_identified_still_takes_its_
     await runtime.aclose()
 
 
+async def test_a_segment_queued_behind_its_voices_identification_still_takes_its_identity_step(
+    tmp_path: Path,
+) -> None:
+    # KD-45: a new voice's second segment finishes while its first is searched, and waits in
+    # the identity lane. The first identifies the voice; the second judges against that
+    # identity, not the one it finished with, and still searches and adds its vector.
+    inference = SensorInference()
+    inference.hold_search = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
+    source = PerceptionSourceRef("device", 1)
+    speak(runtime, source, "a", "alice", explicit=False)
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.search_held.wait()
+    speak(runtime, source, "b", "alice", explicit=False)
+    await wait_until(lambda: speaker._identity_queue.qsize() == 1, "the second never queued")
+
+    inference.search_release.set()
+    await wait_until(lambda: len(inference.searches) == 2, "the second segment was never searched")
+    await persona.on_stop()
+    await runtime.aclose()
+
+
 async def test_a_segment_begun_before_its_voice_had_a_participant_is_still_identified(
     tmp_path: Path,
 ) -> None:
@@ -1240,6 +1265,48 @@ async def test_the_frame_queue_holds_its_seconds_of_sampled_frames(
     await wait_until(lambda: len(face_annotations(runtime)) == 1 + kept, "a kept frame was lost")
     await asyncio.sleep(0.05)
     assert len(face_annotations(runtime)) == 1 + kept
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("change", ["created", "identified"])
+async def test_a_frame_queued_before_its_face_changed_still_takes_its_identity_step(
+    change: str, tmp_path: Path
+) -> None:
+    # A frame is queued before an earlier one's face makes its participant ("created") or
+    # identifies it ("identified"), and analyzed after: its face is resolved as it is then,
+    # so its identity step still searches and its vector still counts.
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face")
+    await persona.on_start()
+    source = PerceptionSourceRef("camera", 1)
+    if change == "created":
+        inference.hold = "alice"  # The first frame's analysis
+    else:
+        inference.hold_search = True  # The first frame's identity
+    show(runtime, source, "alice")
+    async with asyncio.timeout(HANG_GUARD):
+        await (inference.held if change == "created" else inference.search_held).wait()
+    if change == "identified":
+        inference.held.clear()
+        inference.hold = "alice"  # The second frame's analysis, until alice is identified
+
+    show(runtime, source, "alice", later=1.0)
+    await wait_until(
+        lambda: not runtime.perception.video.read_pending(
+            consumer_id=FaceProcessor.CONSUMER_ID
+        ).items,
+        "the second frame was never queued",
+    )
+    if change == "identified":
+        async with asyncio.timeout(HANG_GUARD):
+            await inference.held.wait()
+        inference.search_release.set()
+        await wait_until(lambda: participant_of(runtime, "alice"), "alice was never identified")
+    inference.release.set()
+
+    await wait_until(lambda: len(inference.searches) == 2, "the second frame was never searched")
     await persona.on_stop()
     await runtime.aclose()
 

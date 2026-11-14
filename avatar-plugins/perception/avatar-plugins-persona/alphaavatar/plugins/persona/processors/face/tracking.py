@@ -63,7 +63,7 @@ class FaceTracks:
         current = self._sources.get(source.source_id)
         return current is not None and current[0] == source.source_generation
 
-    def associate(
+    def resolve(
         self,
         source: PerceptionSourceRef,
         vectors: list[np.ndarray | None],

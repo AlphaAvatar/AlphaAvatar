@@ -66,7 +66,7 @@ class _ShortSpeech:
 class SpeakerSegmentState:
     segment: PerceptionSegmentRef
     entity: PerceptionEntityRef | None
-    participant: Participant | None  # Its association's; once identified, its attributes' too
+    participant: Participant | None  # Once identified, the participant its attributes are for
     token: int
     device_id: str | None = None
     pcm: bytearray = field(default_factory=bytearray)
@@ -242,7 +242,7 @@ class SpeakerProcessor(PersonaProcessorBase):
     def _take_entity(self, state: SpeakerSegmentState, entity: PerceptionEntityRef) -> None:
         """An explicit subject, usable before identity inference has completed: its participant
         and this segment's association with it, once."""
-        state.participant = self.runtime.participants.ensure_entity(
+        self.runtime.participants.ensure_entity(
             state.segment.source, entity, kind="speaker", device_id=state.device_id
         )
         state.entity = entity
@@ -582,11 +582,9 @@ class SpeakerProcessor(PersonaProcessorBase):
                 if state.entity is None:
                     return
 
-                associated = self.runtime.participants.ensure_entity(
+                self.runtime.participants.ensure_entity(
                     state.segment.source, state.entity, kind="speaker", device_id=state.device_id
                 )
-                # Its identity step judges against this version: a change while it searches stays.
-                state.participant = associated
 
             if not self.runtime.participants.bind_segment(
                 state.segment, state.entity, token=state.token
@@ -613,8 +611,14 @@ class SpeakerProcessor(PersonaProcessorBase):
             if not self._is_current(state):
                 return
 
+            # Its participant as it is now, not when it finished: an identity an earlier segment
+            # settled meanwhile is the one it judges against, and a change while it searches stays.
+            participant = self.runtime.participants.resolve(segment=state.segment)
+            if participant is None:
+                return
+
             async with self._timed("speaker.identity", state):
-                participant = await self._resolve_identity(state, state.participant)
+                participant = await self._resolve_identity(state, participant)
 
             if participant is not None and self._attribute_due(state, participant):
                 state.participant = participant

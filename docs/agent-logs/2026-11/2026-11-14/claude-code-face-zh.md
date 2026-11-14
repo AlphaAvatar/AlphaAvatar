@@ -51,3 +51,30 @@
 
 - 新增 `test_a_slow_face_identity_never_holds_the_next_frames_analysis`：第一帧的检索挂起时，第二帧照样分析、关联并发布标注；放开后身份确定。把帧那条改回逐个等待身份时失败（第二帧要等到挂起的检索 2 秒超时才被分析）。
 - Persona 测试通过；ruff、format 通过。
+
+# 第二批：帧队列按秒数配置
+
+- 基线 `a2ba8389`（第一批已提交）。用户的要求：为帧队列引入配置，按"多少秒的输入"表示。
+- `face.frame_queue_sec`（默认 0.4 秒）：帧队列容纳一个来源这么多秒的取样帧（每 `VIDEO_PERSONA_INTERVAL_SEC`，即 0.2 秒一帧），帧数为秒数除以取样间隔、先四舍五入到 6 位小数再向上取整，至少 1 帧；分析跟不上时最旧的让位给新帧。Persona README 写明了这个设置。
+- 默认值：用户曾考虑调长，以便将来基于历史帧计算人脸动态轨迹。讨论后保持 0.4 秒（与改动前的 2 帧相同）：帧队列是待分析的积压，分析跟得上时基本为空，跟不上时越长分析越落后于实时；历史帧由 PerceptionRuntime 保留（`retention_sec` 默认 60 秒），轨迹更适合以后在跟踪里按秒数保存分析结果。
+- 测试：0.4 秒、0.6 秒分别保留 2、3 帧；0、负数、无穷大被拒绝，很短的时间至少 1 帧。三处变异都被发现：写死 2 帧、不四舍五入直接向下取整（0.6 / 0.2 得 2.9999999999999996）、短时间取整为 0（asyncio 的容量 0 表示不设上限）。全量测试 726 个通过。
+
+# 第三批：去掉帧快照，身份那一步读取当前版本（KD-45）
+
+- 基线 `f7454d36`（第二批的代码已提交）。
+- **去掉快照**：`FaceFrameJob` 只剩观测；`_participant_for` 返回 `ensure_entity` 给出的参与者，不再从快照里取当时的版本。快照造成两种丢失（与说话人 KD-45 相同）：这一帧排队时这张脸的参与者还没建出来（快照里没有它，身份那一步被跳过）；或者排队时还没认出来、分析时已经认出来（快照里的旧版本不再被接受）。
+- **只去掉快照还不够**：两帧在帧那条循环里紧挨着分析，第二帧分析时第一帧的身份还在排队，第二帧的身份任务带走的仍是版本 0；第一帧绑定后，第二帧因版本已变被跳过。说话人也剩同样的问题：段结束后排在身份队列里的段，被前面一段的绑定作废。这是 KD-45 的第二种丢失。
+- **用户的决定**：身份那一步在开始检索前读取参与者当前的版本，人脸和说话人一起改。
+  - 人脸 `_identify` 按来源和实体解析当前的参与者，`FaceIdentityJob` 不再带参与者。
+  - 说话人 `_identify` 按语音段解析当前的参与者；`_take_entity`、`_finish_segment` 不再保存参与者，`SpeakerSegmentState.participant` 只记身份那一步认出的参与者，供属性使用。
+  - 检索前后的检查和 `bind_user` 的版本比对不变，检索期间身份变了仍不覆盖。
+- **测试**：
+  - 新增 `test_a_frame_queued_before_its_face_changed_still_takes_its_identity_step[created, identified]`，在改之前的代码上两种情况都因"第二帧没有检索"失败；只去掉快照时 `created` 仍失败。
+  - 新增 `test_a_segment_queued_behind_its_voices_identification_still_takes_its_identity_step`（说话人）。
+  - 变异：身份那一步固定为参与者最初的版本时，说话人 13 个、人脸 4 个测试失败。
+  - Persona 与 host `test_turn_actors` 114 个通过；全量测试 729 个通过；ruff、format 通过。
+- `docs/bugs-zh.md` 的 KD-45 一并更新。
+
+# 第四批：人脸跟踪改为像说话人那样的 resolve（进行中）
+
+- 用户要求先只改名：`FaceTracks.associate` 改为 `resolve`（`face/tracking.py`，调用处在 `face/processor.py` 的 `_process`），行为不变，Persona 测试通过。

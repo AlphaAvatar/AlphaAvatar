@@ -16,7 +16,7 @@ import json
 import logging
 import math
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -58,19 +58,17 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class FaceFrameJob:
     observation: EnvObservation
-    participants: Mapping[str, Participant]
 
 
 @dataclass(frozen=True, slots=True)
 class FaceIdentityJob:
-    """One associated face of an analyzed frame, for its identity: its detection and vector, its
-    entity, and the participant that entity resolved to for the frame."""
+    """One associated face of an analyzed frame, for its identity: its detection, its vector and
+    its entity."""
 
     frame: FaceFrameJob
     face: dict[str, Any]
     vector: np.ndarray
     entity: PerceptionEntityRef
-    participant: Participant
 
 
 @avatar_capability(
@@ -166,7 +164,7 @@ class FaceProcessor(PersonaProcessorBase):
         if VIDEO_PERSONA_INTERVAL_SEC > 0 and timestamp - last_ts < VIDEO_PERSONA_INTERVAL_SEC:
             return
 
-        job = FaceFrameJob(observation, self.session_runtime.snapshot().participants)
+        job = FaceFrameJob(observation)
         if not self._enqueue_latest(job):
             logger.debug(
                 "Face frame queue full; drop frame source_id=%s generation=%s frame_id=%s",
@@ -413,9 +411,9 @@ class FaceProcessor(PersonaProcessorBase):
     def _participant_for(
         self, job: FaceFrameJob, entity: PerceptionEntityRef, *, candidate_count: int
     ) -> Participant | None:
-        current = self.runtime.participants.resolve(source=job.observation.source, entity=entity)
+        """The entity's participant, with this frame's device as evidence."""
         try:
-            participant = self.runtime.participants.ensure_entity(
+            return self.runtime.participants.ensure_entity(
                 job.observation.source,
                 entity,
                 kind="face",
@@ -426,17 +424,22 @@ class FaceProcessor(PersonaProcessorBase):
             logger.debug("Face entity admission unavailable source=%s", job.observation.source)
             return None
 
-        # Register late device evidence without refreshing a queued identity decision.
-        return job.participants.get(current.participant_id) if current is not None else participant
-
     async def _identify(self, job: FaceIdentityJob) -> None:
         """An associated face's identity, then the attributes its frame's analysis gave, for
         that identity only; the frame lane goes on to the next frame meanwhile."""
+        # Its participant as it is now, not when its frame was analyzed: an identity an earlier
+        # face settled meanwhile is the one it judges against, and a change while it searches stays.
+        participant = self.runtime.participants.resolve(
+            source=job.frame.observation.source, entity=job.entity
+        )
+        if participant is None:
+            return
+
         current = await self._resolve_face_vector(
             job.vector,
             job=job.frame,
             entity=job.entity,
-            participant=job.participant,
+            participant=participant,
             timeout=self._face_config.inference_timeout_sec,
         )
         if current is None or not self._identity_is_current(job.frame, job.entity, current):
@@ -518,7 +521,7 @@ class FaceProcessor(PersonaProcessorBase):
             else None
             for face in candidates
         ]
-        associated = self._tracks.associate(
+        associated = self._tracks.resolve(
             job.observation.source,
             vectors,
             explicit,
@@ -535,14 +538,14 @@ class FaceProcessor(PersonaProcessorBase):
 
             participant = self._participant_for(job, entity, candidate_count=len(faces))
             if participant is None:
-                # A queued frame can predate the identity while its physical entity is valid.
+                # Admission refused: an entity associated already stays in the evidence.
                 if (
                     self.runtime.participants.resolve(source=job.observation.source, entity=entity)
                     is None
                 ):
                     entities[index] = None
             elif vector is not None:
-                identities.append(FaceIdentityJob(job, face, vector, entity, participant))
+                identities.append(FaceIdentityJob(job, face, vector, entity))
 
         # Publish per-face evidence before identity lookups, which never delay visual routing.
         self._publish_face_annotation(
