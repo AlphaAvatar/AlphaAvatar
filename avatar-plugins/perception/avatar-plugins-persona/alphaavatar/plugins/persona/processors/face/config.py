@@ -19,6 +19,9 @@ class FaceConfig(BaseModel):
 
     enabled: bool = True
 
+    # Seconds of one source's sampled frames (one every VIDEO_PERSONA_INTERVAL_SEC) the frame
+    # queue holds while analysis is behind; the oldest give way to newer ones.
+    frame_queue_sec: float = Field(default=0.4, gt=0, allow_inf_nan=False)
     max_faces: int = Field(default=16, ge=1, le=128)
     max_tracks: int = Field(default=128, ge=1, le=1024)
     track_ttl_sec: float = Field(default=60.0, gt=0, allow_inf_nan=False)

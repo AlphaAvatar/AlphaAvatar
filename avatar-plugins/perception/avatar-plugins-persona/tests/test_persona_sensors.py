@@ -57,6 +57,7 @@ from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
+from alphaavatar.plugins.persona.processors.face.processor import FaceProcessor
 from alphaavatar.plugins.persona.processors.speaker.attribute_runner import SpeakerAttributeRunner
 from alphaavatar.plugins.persona.processors.speaker.processor import SpeakerProcessor
 from alphaavatar.plugins.persona.processors.speaker.tracking import SpeakerTracks
@@ -196,18 +197,16 @@ def avatar_runtime(root: Path, inference: SensorInference) -> AvatarRuntime:
     )
 
 
-def persona_for(runtime: AvatarRuntime, sensor: str, **speaker: object):
+def persona_for(runtime: AvatarRuntime, sensor: str, **settings: object):
+    """Persona with one sensor enabled, its settings over the test defaults."""
     other = "face" if sensor == "speaker" else "speaker"
+    own = {"inference_queue_size": 8} | settings if sensor == "speaker" else settings
     return AvatarModulePlugin.create(
         AvatarModule.PERSONA,
         "default",
         runtime=runtime,
         vdb_config={},
-        init_config={
-            "profiler": {"enabled": False},
-            other: {"enabled": False},
-            **({"speaker": {"inference_queue_size": 8} | speaker} if sensor == "speaker" else {}),
-        },
+        init_config={"profiler": {"enabled": False}, other: {"enabled": False}, sensor: own},
     )
 
 
@@ -1200,6 +1199,49 @@ async def test_a_speakers_attributes_are_inferred_at_most_once_an_interval(
 def face_annotations(runtime: AvatarRuntime) -> list:
     events = runtime.perception.annotation_events.read_range(after_seq=0).items
     return [e.payload for e in events if e.payload.kind == AnnotationKind.FACE_DETECTION]
+
+
+def test_the_frame_queue_takes_a_positive_time_and_holds_at_least_one_frame(tmp_path: Path) -> None:
+    from alphaavatar.plugins.persona.processors.face.config import FaceConfig
+
+    for seconds in (0.0, -0.2, float("inf")):
+        with pytest.raises(ValueError, match="frame_queue_sec"):
+            FaceConfig(frame_queue_sec=seconds)
+    runtime = avatar_runtime(tmp_path, SensorInference())
+    face = persona_for(runtime, "face", frame_queue_sec=0.05)._processors[0]
+    assert face._frame_queue.maxsize == 1
+
+
+@pytest.mark.parametrize(("seconds", "kept"), [(0.4, 2), (0.6, 3)])
+async def test_the_frame_queue_holds_its_seconds_of_sampled_frames(
+    seconds: float, kept: int, tmp_path: Path
+) -> None:
+    # Frames are sampled every 0.2 s. While one is analyzed, the queue keeps frame_queue_sec of
+    # the newer ones and drops the oldest, so only those are analyzed after it.
+    inference = SensorInference()
+    inference.hold = "alice"
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face", frame_queue_sec=seconds)
+    await persona.on_start()
+    source = PerceptionSourceRef("camera", 1)
+    show(runtime, source, "alice")
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.held.wait()
+
+    for index in range(1, 6):
+        show(runtime, source, "alice", later=0.3 * index)
+    await wait_until(
+        lambda: not runtime.perception.video.read_pending(
+            consumer_id=FaceProcessor.CONSUMER_ID
+        ).items,
+        "the frames were never queued",
+    )
+    inference.release.set()
+    await wait_until(lambda: len(face_annotations(runtime)) == 1 + kept, "a kept frame was lost")
+    await asyncio.sleep(0.05)
+    assert len(face_annotations(runtime)) == 1 + kept
+    await persona.on_stop()
+    await runtime.aclose()
 
 
 async def test_a_slow_face_identity_never_holds_the_next_frames_analysis(tmp_path: Path) -> None:

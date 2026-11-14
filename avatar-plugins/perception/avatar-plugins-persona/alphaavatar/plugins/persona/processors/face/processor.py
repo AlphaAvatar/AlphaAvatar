@@ -14,6 +14,7 @@
 import asyncio
 import json
 import logging
+import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -100,7 +101,8 @@ class FaceProcessor(PersonaProcessorBase):
 
         # Two lanes: frames, whose analysis, association and annotation visual routing reads;
         # and each associated face's identity, which the next frame never waits on.
-        self._frame_queue: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=2)
+        frames = math.ceil(round(config.frame_queue_sec / VIDEO_PERSONA_INTERVAL_SEC, 6))
+        self._frame_queue: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=frames)
         self._identity_queue: asyncio.Queue[FaceIdentityJob] = asyncio.Queue(
             maxsize=config.max_faces
         )

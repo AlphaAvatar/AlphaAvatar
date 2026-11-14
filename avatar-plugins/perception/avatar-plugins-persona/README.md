@@ -23,7 +23,7 @@ Each processor owns its configuration and lifecycle. Provider configuration and 
 | Speaker | Routed speech observations | Compute speaker embeddings (CAM++; 3 s windows, and speech shorter than a window once at its own length), resolve identity and update voice attributes, each on its own bounded lane: a Turn's Context waits only for its segments' identities, up to `speaker.identity_wait_sec`; attributes reach later Turns. Vectors are stored per voice model, in `speaker_collection_name` suffixed with it (`_campplus`); another model's vectors are never searched or merged. |
 | Face | Video/screen observations | Sample frames, recognize identities and publish face/attribute annotations. |
 
-Speaker and Face use bounded inference queues and preserve source identity. Raw audio or video is not persisted as a Persona profile. Face annotations enrich perception evidence without overwriting its raw observation.
+Speaker and Face use bounded inference queues and preserve source identity; Face's frame queue holds `face.frame_queue_sec` (0.4 s) of one source's sampled frames, the oldest giving way while analysis is behind. Raw audio or video is not persisted as a Persona profile. Face annotations enrich perception evidence without overwriting its raw observation.
 
 Profile loading, identity merging and runtime user metadata remain separate from model-based extraction. Timezone, login time, session ID and login count are system-observed values, not generated profile facts.
 
