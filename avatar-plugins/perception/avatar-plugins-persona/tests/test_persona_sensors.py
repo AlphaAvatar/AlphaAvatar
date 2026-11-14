@@ -34,7 +34,7 @@ from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
 from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
@@ -1193,6 +1193,36 @@ async def test_a_speakers_attributes_are_inferred_at_most_once_an_interval(
     speak(runtime, source, "c", "alice")
     await wait_until(spoken("c", 3), "the third segment was never described")
     assert inference.attributes == ["alice", "alice"]
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+def face_annotations(runtime: AvatarRuntime) -> list:
+    events = runtime.perception.annotation_events.read_range(after_seq=0).items
+    return [e.payload for e in events if e.payload.kind == AnnotationKind.FACE_DETECTION]
+
+
+async def test_a_slow_face_identity_never_holds_the_next_frames_analysis(tmp_path: Path) -> None:
+    # Identities have their own lane: while the first frame's face is searched, the next frame
+    # is analyzed, associated and annotated for visual routing, and its face waits its turn.
+    inference = SensorInference()
+    inference.hold_search = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face")
+    await persona.on_start()
+    source = PerceptionSourceRef("camera", 1)
+    show(runtime, source, "alice")
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.search_held.wait()
+
+    show(runtime, source, "alice", later=1.0)
+    await wait_until(
+        lambda: len(face_annotations(runtime)) == 2, "the next frame waited on an identity"
+    )
+    assert participant_of(runtime, "alice") is None and inference.searches == ["face:alice"]
+
+    inference.search_release.set()
+    await wait_until(lambda: participant_of(runtime, "alice"), "the identity never settled")
     await persona.on_stop()
     await runtime.aclose()
 

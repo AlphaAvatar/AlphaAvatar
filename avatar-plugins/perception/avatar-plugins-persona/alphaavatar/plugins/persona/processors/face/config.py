@@ -24,4 +24,3 @@ class FaceConfig(BaseModel):
     track_ttl_sec: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     track_match_threshold: float = Field(default=0.65, gt=0, le=1)
     track_match_margin: float = Field(default=0.08, ge=0, le=1)
-    identity_concurrency: int = Field(default=4, ge=1, le=16)

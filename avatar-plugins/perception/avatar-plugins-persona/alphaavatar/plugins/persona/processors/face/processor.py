@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -60,6 +60,18 @@ class FaceFrameJob:
     participants: Mapping[str, Participant]
 
 
+@dataclass(frozen=True, slots=True)
+class FaceIdentityJob:
+    """One associated face of an analyzed frame, for its identity: its detection and vector, its
+    entity, and the participant that entity resolved to for the frame."""
+
+    frame: FaceFrameJob
+    face: dict[str, Any]
+    vector: np.ndarray
+    entity: PerceptionEntityRef
+    participant: Participant
+
+
 @avatar_capability(
     name=AvatarCapabilityName.PERSONA_FACE_RECOGNITION,
     description=(
@@ -81,15 +93,20 @@ class FaceProcessor(PersonaProcessorBase):
         self._last_sample_ts: dict[PerceptionSourceRef, float] = {}
         self._tracks = FaceTracks(config)
         self._profile_caches: dict[str, FaceCache] = {}
-        self._identity_slots = asyncio.Semaphore(config.identity_concurrency)
 
         self._det_score_threshold = self._face_config.det_thresh
         self._min_face_size = self._face_config.min_face_size
         self._jpeg_quality = self._face_config.jpeg_quality
 
-        self._frame_q: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=2)
-        self._worker_task: asyncio.Task[None] | None = None
-        self._poll_task: asyncio.Task[None] | None = None
+        # Two lanes: frames, whose analysis, association and annotation visual routing reads;
+        # and each associated face's identity, which the next frame never waits on.
+        self._frame_queue: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=2)
+        self._identity_queue: asyncio.Queue[FaceIdentityJob] = asyncio.Queue(
+            maxsize=config.max_faces
+        )
+
+        self._consume_task: asyncio.Task[None] | None = None
+        self._lanes: tuple[asyncio.Task[None], ...] = ()
         self._renderer_registered = False
 
     @property
@@ -100,20 +117,25 @@ class FaceProcessor(PersonaProcessorBase):
 
     def _enqueue_latest(self, job: FaceFrameJob) -> bool:
         try:
-            self._frame_q.put_nowait(job)
+            self._frame_queue.put_nowait(job)
             return True
 
         except asyncio.QueueFull:
             try:
-                self._frame_q.get_nowait()
+                self._frame_queue.get_nowait()
             except asyncio.QueueEmpty:
                 pass
 
             try:
-                self._frame_q.put_nowait(job)
+                self._frame_queue.put_nowait(job)
                 return True
             except asyncio.QueueFull:
                 return False
+
+    def _enqueue_identity(self, job: FaceIdentityJob) -> None:
+        if self._identity_queue.full():
+            self._identity_queue.get_nowait()  # Its face is seen again in a later frame
+        self._identity_queue.put_nowait(job)
 
     def _maybe_enqueue_observation(self, observation: EnvObservation) -> None:
         if observation.kind != ObservationKind.VIDEO_FRAME:
@@ -405,42 +427,36 @@ class FaceProcessor(PersonaProcessorBase):
         # Register late device evidence without refreshing a queued identity decision.
         return job.participants.get(current.participant_id) if current is not None else participant
 
-    async def _update_face(
-        self,
-        job: FaceFrameJob,
-        face: dict[str, Any],
-        vector: np.ndarray,
-        entity: PerceptionEntityRef,
-        participant: Participant,
-    ) -> None:
-        async with self._identity_slots:
-            current = await self._resolve_face_vector(
-                vector,
-                job=job,
-                entity=entity,
-                participant=participant,
-                timeout=self._face_config.inference_timeout_sec,
-            )
-            if current is None or not self._identity_is_current(job, entity, current):
-                return
+    async def _identify(self, job: FaceIdentityJob) -> None:
+        """An associated face's identity, then the attributes its frame's analysis gave, for
+        that identity only; the frame lane goes on to the next frame meanwhile."""
+        current = await self._resolve_face_vector(
+            job.vector,
+            job=job.frame,
+            entity=job.entity,
+            participant=job.participant,
+            timeout=self._face_config.inference_timeout_sec,
+        )
+        if current is None or not self._identity_is_current(job.frame, job.entity, current):
+            return
 
-            cache = self.persona.cache_for(current.participant_id)
-            if cache is None:
-                return
+        cache = self.persona.cache_for(current.participant_id)
+        if cache is None:
+            return
 
-            if current.participant_id not in self._profile_caches:
-                if len(self._profile_caches) >= self._config.max_tracks:
-                    self._profile_caches.pop(next(iter(self._profile_caches)))
-                self._profile_caches[current.participant_id] = FaceCache()
+        if current.participant_id not in self._profile_caches:
+            if len(self._profile_caches) >= self._config.max_tracks:
+                self._profile_caches.pop(next(iter(self._profile_caches)))
+            self._profile_caches[current.participant_id] = FaceCache()
 
-            profile_cache = self._profile_caches[current.participant_id]
-            cache.profile_details = profile_cache.update_profile_detail(
-                cache.profile_details,
-                face,
-                updated_at=datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC),
-            )
+        profile_cache = self._profile_caches[current.participant_id]
+        cache.profile_details = profile_cache.update_profile_detail(
+            cache.profile_details,
+            job.face,
+            updated_at=datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC),
+        )
 
-    async def _inference_face_job(self, job: FaceFrameJob) -> None:
+    async def _process(self, job: FaceFrameJob) -> None:
         start_time = time.perf_counter()
         if not self._job_is_current(job):
             return
@@ -489,7 +505,7 @@ class FaceProcessor(PersonaProcessorBase):
                 FACE_INFERENCE_THRESHOLD,
             )
 
-        # One frame inference supplies all faces. Identity work has its own bounded budget.
+        # One frame inference supplies all faces; their identities go to their own lane.
         candidates = faces[: self._config.max_faces]
         vectors = [self._face_vector(face) for face in candidates]
         explicit = [
@@ -508,7 +524,7 @@ class FaceProcessor(PersonaProcessorBase):
         )
         self._release_retired_tracks()
         entities = list(associated) + [None] * (len(faces) - len(candidates))
-        updates = []
+        identities = []
         for index, (face, vector, entity) in enumerate(
             zip(candidates, vectors, associated, strict=True)
         ):
@@ -524,9 +540,9 @@ class FaceProcessor(PersonaProcessorBase):
                 ):
                     entities[index] = None
             elif vector is not None:
-                updates.append((face, vector, entity, participant))
+                identities.append(FaceIdentityJob(job, face, vector, entity, participant))
 
-        # Publish per-face evidence before remote identity lookups can delay visual routing.
+        # Publish per-face evidence before identity lookups, which never delay visual routing.
         self._publish_face_annotation(
             job=job,
             faces=faces,
@@ -534,37 +550,28 @@ class FaceProcessor(PersonaProcessorBase):
             image_width=int(data["image_width"]),
             image_height=int(data["image_height"]),
         )
-        outcomes = await asyncio.gather(
-            *(self._update_face(job, *update) for update in updates), return_exceptions=True
-        )
-        for outcome in outcomes:
-            if isinstance(outcome, Exception):
-                logger.warning(
-                    "Face identity lookup failed source=%s error=%s",
-                    job.observation.source,
-                    outcome,
-                )
+        for identity in identities:
+            self._enqueue_identity(identity)
 
     """Processor Loop"""
 
-    async def _inference_loop(self) -> None:
+    async def _serve(
+        self, lane: str, queue: asyncio.Queue, process: Callable[..., Awaitable[None]]
+    ) -> None:
+        """One lane's jobs, one at a time."""
         while True:
-            job = await self._frame_q.get()
-
+            job = await queue.get()
+            frame = job.frame if isinstance(job, FaceIdentityJob) else job
             try:
-                await self._inference_face_job(job)
-
+                await process(job)
             except asyncio.CancelledError:
                 raise
-
-            except Exception as error:
-                observation = job.observation
-                logger.warning(
-                    "Face worker failed device_id=%s source=%s error=%s",
-                    observation.device_id,
-                    observation.source,
-                    error,
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    "Face %s failed device_id=%s source=%s",
+                    lane,
+                    frame.observation.device_id,
+                    frame.observation.source,
                 )
 
     async def _consume_loop(self) -> None:
@@ -613,33 +620,35 @@ class FaceProcessor(PersonaProcessorBase):
             self.perception_runtime.add_annotation_renderer(self._render_face_annotation)
             self._renderer_registered = True
 
-        self._worker_task = asyncio.create_task(
-            self._inference_loop(), name="persona_face_inference"
+        self._lanes = (
+            asyncio.create_task(
+                self._serve("frame", self._frame_queue, self._process),
+                name="persona_face_inference",
+            ),
+            asyncio.create_task(
+                self._serve("identity", self._identity_queue, self._identify),
+                name="persona_face_identity",
+            ),
         )
-        self._poll_task = asyncio.create_task(self._consume_loop(), name="persona_face_consumer")
+        self._consume_task = asyncio.create_task(self._consume_loop(), name="persona_face_consumer")
 
         logger.info("Persona Face started consumer_id=%s", self.CONSUMER_ID)
 
     async def _stop(self, *, finalize: bool) -> None:
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            await asyncio.gather(self._poll_task, return_exceptions=True)
-            self._poll_task = None
+        tasks = tuple(task for task in (self._consume_task, *self._lanes) if task is not None)
+        for task in tasks:
+            task.cancel()
 
-        if self._worker_task is not None:
-            self._worker_task.cancel()
-            await asyncio.gather(self._worker_task, return_exceptions=True)
-            self._worker_task = None
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._consume_task, self._lanes = None, ()
 
         if self._renderer_registered:
             self.perception_runtime.remove_annotation_renderer(self._render_face_annotation)
             self._renderer_registered = False
 
-        while not self._frame_q.empty():
-            try:
-                self._frame_q.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        for queue in (self._frame_queue, self._identity_queue):
+            while not queue.empty():
+                queue.get_nowait()
 
         self.perception_runtime.clear_observation_consumer(
             self.CONSUMER_ID, streams={PerceptionStreamKind.VIDEO, PerceptionStreamKind.SCREEN}
