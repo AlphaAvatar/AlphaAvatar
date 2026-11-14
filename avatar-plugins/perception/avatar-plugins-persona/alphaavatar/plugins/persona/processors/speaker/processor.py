@@ -90,13 +90,9 @@ class SpeakerSegmentState:
 class SpeakerWindow:
     state: SpeakerSegmentState
     audio_f32: bytes
-    index: int = 0
-    queued_ns: int = 0  # When it joined the inference queue, on the runtime clock
+    index: int
+    queued_ns: int  # When it joined the inference queue, on the runtime clock
     whole: bool = False  # A segment shorter than a window, at its own length
-
-    @property
-    def source(self) -> PerceptionSourceRef:
-        return self.state.segment.source
 
 
 @avatar_capability(
@@ -127,7 +123,6 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._segments: dict[PerceptionSegmentRef, SpeakerSegmentState] = {}
         self._retired_segments: dict[PerceptionSegmentRef, None] = {}
         self._profile_caches: dict[str, SpeakerCache] = {}
-        self._attribute_times: dict[str, float] = {}
         self._shorts: dict[PerceptionSourceRef, _ShortSpeech] = {}
         self._tracks = SpeakerTracks(
             threshold=config.track_match_threshold, margin=config.track_match_margin
@@ -244,6 +239,16 @@ class SpeakerProcessor(PersonaProcessorBase):
         queued = self.runtime.clock.now().monotonic_ns
         self._enqueue(SpeakerWindow(state, audio.tobytes(), state.window_index, queued, whole))
 
+    def _take_entity(self, state: SpeakerSegmentState, entity: PerceptionEntityRef) -> None:
+        """An explicit subject, usable before identity inference has completed: its participant
+        and this segment's association with it, once."""
+        state.participant = self.runtime.participants.ensure_entity(
+            state.segment.source, entity, kind="speaker", device_id=state.device_id
+        )
+        state.entity = entity
+        if not self.runtime.participants.bind_segment(state.segment, entity, token=state.token):
+            state.invalid = True
+
     def _state(self, observation: EnvObservation) -> SpeakerSegmentState | None:
         segment = observation.segment
         if segment is None or segment in self._retired_segments:
@@ -289,29 +294,22 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._retire(removed)
 
             token = self.runtime.participants.observe_segment(segment)
-            entity = observation.entity
-            try:
-                participant = (
-                    self.runtime.participants.ensure_entity(
-                        segment.source, entity, kind="speaker", device_id=observation.device_id
-                    )
-                    if entity is not None
-                    else None
-                )
-            except Exception:
-                self.runtime.participants.finish_segment_resolution(segment, token=token)
-                raise
-
             state = SpeakerSegmentState(
                 segment=segment,
-                entity=entity,
-                participant=participant,
+                entity=None,
+                participant=None,
                 token=token,
                 device_id=observation.device_id,
             )
+            if observation.entity is not None:
+                try:
+                    self._take_entity(state, observation.entity)
+                except Exception:
+                    self.runtime.participants.finish_segment_resolution(segment, token=token)
+                    raise
             self._segments[segment] = state
             # Its source's short speech leads it; a segment with its own subject drops it.
-            if (led := self._shorts.pop(segment.source, None)) is not None and entity is None:
+            if (led := self._shorts.pop(segment.source, None)) is not None and state.entity is None:
                 state.led = led
                 state.pcm.extend(led.pcm)
                 state.recent.extend(led.pcm[-self._window_bytes :])
@@ -320,24 +318,11 @@ class SpeakerProcessor(PersonaProcessorBase):
                 # Conflicting explicit subjects invalidate the physical association.
                 self._invalidate(state)
             else:
-                entity = observation.entity
                 try:
-                    associated = self.runtime.participants.ensure_entity(
-                        segment.source, entity, kind="speaker", device_id=state.device_id
-                    )
+                    self._take_entity(state, observation.entity)
                 except Exception:
                     self._retire(state)
                     raise
-                state.entity = entity
-                state.participant = associated
-
-        # An explicit subject is usable before optional identity inference has completed.
-        if state.entity is not None and not state.invalid:
-            self.runtime.participants.ensure_entity(
-                segment.source, state.entity, kind="speaker", device_id=state.device_id
-            )
-            if not self.runtime.participants.bind_segment(segment, state.entity, token=state.token):
-                state.invalid = True
 
         return state
 
@@ -460,7 +445,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         # Each window's wait in the queue and its inference, for the association (O-16).
         timed = self._timed(
-            "speaker.window", state, sequence=job.index, event_time_ns=job.queued_ns or None
+            "speaker.window", state, sequence=job.index, event_time_ns=job.queued_ns
         )
         async with timed:
             result = await asyncio.wait_for(
@@ -485,14 +470,19 @@ class SpeakerProcessor(PersonaProcessorBase):
             if float(np.dot(state.vector, vector)) < self._config.segment_consistency_threshold:
                 self._invalidate(state)
                 return
-
-        if state.vector is None:
-            state.vector = vector.copy()
+        else:
+            state.vector = vector
             state.vector_sec = len(job.audio_f32) // 4 / self._sample_rate
 
         # Attributes keep their own input: full windows only.
         if not job.whole:
             state.last_audio = job.audio_f32
+
+    def _speaks_as(self, state: SpeakerSegmentState, participant: Participant) -> bool:
+        """After an await: its segment is still current, and its participant still has the
+        identity it was accepted with. A bound entity never changes participant, so a current
+        segment is still heard as this one."""
+        return self._is_current(state) and self.runtime.participants.accepts_identity(participant)
 
     async def _resolve_identity(
         self, state: SpeakerSegmentState, participant: Participant
@@ -505,17 +495,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             threshold=SPEAKER_MATCH_THRESHOLD,
             timeout=self._vector_config.inference_timeout_sec,
         )
-        if (
-            not self._is_current(state)
-            or state.invalid
-            or not self.runtime.participants.accepts_identity(participant)
-        ):
-            return None
-
-        current = self.runtime.participants.resolve(
-            source=state.segment.source, entity=state.entity, segment=state.segment
-        )
-        if current is None or current.participant_id != participant.participant_id:
+        if not self._speaks_as(state, participant):
             return None
 
         if user_id is not None:
@@ -539,7 +519,8 @@ class SpeakerProcessor(PersonaProcessorBase):
         return cache.participant
 
     def _attribute_due(self, state: SpeakerSegmentState, participant: Participant) -> bool:
-        last = self._attribute_times.get(participant.participant_id, -float("inf"))
+        profile = self._profile_caches.get(participant.participant_id)
+        last = profile.inferred_at if profile is not None else -float("inf")
         return (
             state.last_audio is not None and time.monotonic() - last >= self.ATTRIBUTE_INTERVAL_SEC
         )
@@ -556,15 +537,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             ),
             timeout=self._attribute_config.inference_timeout_sec,
         )
-        if not self._is_current(state) or not self.runtime.participants.accepts_identity(
-            participant
-        ):
-            return
-
-        current = self.runtime.participants.resolve(
-            source=state.segment.source, entity=state.entity, segment=state.segment
-        )
-        if current is None or current.participant_id != participant.participant_id:
+        if not self._speaks_as(state, participant):
             return
 
         if result is None:
@@ -578,9 +551,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             participant.participant_id not in self._profile_caches
             and len(self._profile_caches) >= self._config.max_speaker_caches
         ):
-            removed = next(iter(self._profile_caches))
-            self._profile_caches.pop(removed)
-            self._attribute_times.pop(removed, None)
+            self._profile_caches.pop(next(iter(self._profile_caches)))
 
         profile = self._profile_caches.setdefault(participant.participant_id, SpeakerCache())
         cache.profile_details = profile.update_profile_detail(
@@ -588,7 +559,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             SpeakerAttributeRunner.decode(result),
             updated_at=datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC),
         )
-        self._attribute_times[participant.participant_id] = now
+        profile.inferred_at = now
 
     """Processor Loop"""
 
@@ -624,10 +595,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             for segment, token in state.led.segments:
                 self.runtime.participants.bind_segment(segment, state.entity, token=token)
 
-            if self.runtime.participants.resolve(segment=state.segment) is None:
-                return
-
-            if state.participant is None or state.vector is None or state.inference_failed:
+            if state.vector is None or state.inference_failed:
                 return
 
             # Off this lane: the next segment's windows and association never wait on it.
@@ -642,7 +610,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         bound; its speaker's attributes, when due, go to their own lane."""
         describing = False
         try:
-            if not self._is_current(state) or state.participant is None:
+            if not self._is_current(state):
                 return
 
             async with self._timed("speaker.identity", state):
@@ -661,7 +629,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         """An identified segment's speaker attributes: they reach later Turns, never a Turn's
         wait, and only the identity they were inferred for."""
         try:
-            if self._is_current(state) and state.participant is not None:
+            if self._is_current(state):
                 async with self._timed("speaker.attribute", state):
                     await self._infer_attribute(state, state.participant)
         finally:
@@ -815,7 +783,6 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._tracks.clear()
         self._release_tracks()
         self._profile_caches.clear()
-        self._attribute_times.clear()
         self.perception_runtime.clear_observation_consumer(
             self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
         )

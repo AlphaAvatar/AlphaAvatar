@@ -29,6 +29,7 @@ class SpeakerCache:
         self._alpha_age = float(alpha_age)
         self._alpha_gender = float(alpha_gender)
         self._gender_labels = ["child", "female", "male"]
+        self.inferred_at = -float("inf")  # When its attributes were last inferred, monotonic
 
     @staticmethod
     def _ema(prev: np.ndarray | None, new: np.ndarray, alpha: float) -> np.ndarray:

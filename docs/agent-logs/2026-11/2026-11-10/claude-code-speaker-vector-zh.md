@@ -3,6 +3,7 @@
 - 分支 `dev/v0.6.9`，基线 HEAD `d1dd1c3c`；日期 2026-11-10（CST）。
 - 接续 Doctor 日志第六批第 5 节「说话人短段（不足 3 s）没有声纹结果，另行跟踪」（[claude-code-doctor-zh.md](../2026-11-03/claude-code-doctor-zh.md)）。
 - 本轮只评估 Speaker Vector，不涉及 Speaker Attribute、LID 和 turn-taking。仓库代码未改动；实验脚本、数据和原始结果都在会话临时目录（见第 8 节）。
+- 人脸的后续工作（KD-40、人脸部分的 KD-43/KD-44/KD-45、Memory `_session_sequence`）另记在 [claude-code-face-zh.md](../2026-11-14/claude-code-face-zh.md)。
 
 ## 结论
 
@@ -1246,6 +1247,24 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 - 去掉 `_context_manager`（`runtime.foundation.context` 的别名，2 处）和 `_settled`：`_settled = True` 到 `return` 之间没有 await，其他任务看到的它与 `task.done()` 同时成立，`cancel()` 只看 `task.done()`，原处留注释说明这个前提。
 - 构造函数按用途分组，每组前空一行加注释：Run 与它借用的服务、身份依据、预算、本次查询的状态、身份变化、生命周期、反馈与工具。闭包 `delivery_guard` 改为方法的提议，用户暂未要求。
 - 新增 `test_a_cancel_after_a_run_has_settled_never_revokes_its_answer`（Loop 的 `test_identity_switch.py`），去掉 `task.done()` 检查时失败。全量测试 720 个通过。
+
+## 精简说话人处理器
+
+基线 `fa58238e`。用户请求 review `speaker/processor.py`（822 行）并按建议的 5 项精简：
+
+| 项 | 修改 |
+|---|---|
+| 显式实体只关联一次 | 新增 `_take_entity()`：取参与者（`ensure_entity`）并绑定这一段，建 state 时和段中途拿到实体时各调用一次；删去每一帧都重做一遍的 `ensure_entity` + `bind_segment`。两处原有的失败处理不变 |
+| await 之后的检查合一 | 新增 `_speaks_as()`：段仍是当前的，身份仍被接受；`_resolve_identity`、`_infer_attribute` 改用它 |
+| 删去不会失败的检查 | `_finish_segment` 中成功 `bind_segment` 之后的 `resolve(...) is None` 和 `participant is None`；`_identify`、`_describe` 的 `participant` 判断；`_resolve_identity` 的 `state.invalid`（作废时 ParticipantRuntime 已标记，`_is_current` 为假）；`_infer_window` 改用 `else`，`VectorOps.norm` 已返回新数组，不再复制 |
+| 删去不用的代码 | `SpeakerWindow.source`；`index`、`queued_ns` 的默认值，`job.queued_ns or None` 改为 `job.queued_ns` |
+| 属性的节流时间放进 `SpeakerCache` | `SpeakerCache.inferred_at` 取代 `_attribute_times`，与 `_profile_caches` 一起淘汰 |
+
+- 结果：`processor.py` 822 → 789 行，`cache.py` 多 1 行。
+- 变异：`_take_entity` 不绑定、不保存参与者，`_speaks_as` 不看身份，都被已有测试发现。另有 3 处原本就没有测试：段中途拿到的实体不取、属性从不节流、节流时间不读。新增 `test_a_segment_whose_subject_arrives_on_a_later_frame_takes_it` 和 `test_a_speakers_attributes_are_inferred_at_most_once_an_interval`，这 3 处变异都失败。
+- `_speaks_as` 原本还比对这一段解析到的参与者。实体绑定后不会换参与者，这一项不可能失败，去掉它时测试照常通过；用户决定删去。之后去掉"段仍是当前的"或"身份仍被接受"任一项，测试都失败。
+- 仍未覆盖：建 state 时 `ensure_entity` 失败的处理，与下一条问题有关。
+- review 中发现、用户决定登记为 KD-47、留待后续 review，未修改：`_consume_loop` 在整批处理完之后才确认，一条观测持续抛出时，这一批每 50 毫秒重读一次，说话人消费者停住，直到这条记录被挤出流，再按缺口作废其间所有的段。会持续抛出的路径：建 state 时 `ensure_entity` 失败（实体已作为人脸绑定、参与者达到上限 1024），以及来源达到上限 256。目前没有上游给语音观测带显式实体，实际影响很小。
 
 ## 留给下一步
 

@@ -833,6 +833,48 @@ async def test_short_segments_lead_the_next_longer_one_into_its_vector(tmp_path:
     await runtime.aclose()
 
 
+async def test_a_segment_whose_subject_arrives_on_a_later_frame_takes_it(tmp_path: Path) -> None:
+    # A segment that began without a named subject takes the one a later frame names: its
+    # speech is that subject's participant's, never a voice track of its own.
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
+    source = PerceptionSourceRef("device", 1)
+    segment, voice = PerceptionSegmentRef(source, "a"), PerceptionEntityRef("voice-alice")
+    common = {"source": source, "segment": segment, "device_id": source.source_id}
+    pcm = np.full(16000, 8192, dtype="<i2").tobytes()  # 1 s of alice
+    for index, named in enumerate((None, voice, None)):
+        frame = AudioFrame(sample_rate=16000, num_channels=1, samples_per_channel=16000, data=pcm)
+        runtime.perception.publish_observation(
+            EnvObservation(
+                kind=ObservationKind.SPEECH_FRAME,
+                time_range=RuntimeTimeRange.point(runtime.clock.now()),
+                payload=AudioFramePayload.create(frame=frame, frame_id=f"a-{index}"),
+                **({"entity": named} if named is not None else {}),
+                **common,
+            )
+        )
+    runtime.perception.publish_observation(
+        EnvObservation(
+            kind=ObservationKind.SPEECH_SEGMENT,
+            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            **common,
+        )
+    )
+    await wait_until(
+        lambda: inference.searches and segment not in speaker._segments,
+        "the segment was never identified",
+    )
+
+    named = runtime.participants.resolve(source=source, entity=voice)
+    assert named is not None and runtime.participants.resolve(segment=segment) == named
+    assert not speaker._tracks._tracks
+    await persona.on_stop()
+    await runtime.aclose()
+
+
 async def test_a_segment_with_its_own_subject_drops_the_short_speech_before_it(
     tmp_path: Path,
 ) -> None:
@@ -1123,6 +1165,36 @@ def described(runtime: AvatarRuntime, persona, user: str):
     participant = participant_of(runtime, user)
     cache = persona.persona_cache.get(participant.participant_id) if participant else None
     return cache.profile_details if cache is not None else None
+
+
+async def test_a_speakers_attributes_are_inferred_at_most_once_an_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each full window could describe its speaker again; the attribute model runs for one
+    # participant once an ATTRIBUTE_INTERVAL_SEC, and again only after it.
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speaker = next(processor for processor in persona._processors if processor.name == "speaker")
+    source = PerceptionSourceRef("device", 1)
+
+    def spoken(segment: str, searches: int) -> Callable[[], bool]:
+        ref = PerceptionSegmentRef(source, segment)
+        return lambda: len(inference.searches) == searches and ref not in speaker._segments
+
+    speak(runtime, source, "a", "alice")
+    await wait_until(spoken("a", 1), "the first segment was never described")
+    speak(runtime, source, "b", "alice")
+    await wait_until(spoken("b", 2), "the second segment was never identified")
+    assert inference.attributes == ["alice"] and speaker._attribute_queue.empty()
+
+    monkeypatch.setattr(SpeakerProcessor, "ATTRIBUTE_INTERVAL_SEC", 0.0)
+    speak(runtime, source, "c", "alice")
+    await wait_until(spoken("c", 3), "the third segment was never described")
+    assert inference.attributes == ["alice", "alice"]
+    await persona.on_stop()
+    await runtime.aclose()
 
 
 async def test_a_slow_attribute_never_holds_the_next_segments_association_or_identity(
