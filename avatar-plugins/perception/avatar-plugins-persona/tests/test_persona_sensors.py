@@ -1339,6 +1339,94 @@ async def test_a_face_unseen_for_an_hour_is_still_one_participant(tmp_path: Path
     await runtime.aclose()
 
 
+@pytest.mark.parametrize(("late", "later"), [("older-generation", 3.0), ("earlier-frame", 0.0)])
+async def test_a_frame_behind_its_sources_latest_is_never_analyzed(
+    late: str, later: float, tmp_path: Path
+) -> None:
+    # Which generation is current is ParticipantRuntime's and the frames' order the sampling's:
+    # a frame of an older generation, even captured later, or one captured before its
+    # source's latest sampled frame is dropped, never associated.
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face")
+    await persona.on_start()
+    newer = PerceptionSourceRef("camera", 2)
+    show(runtime, newer, "alice", later=1.0)
+    await wait_until(lambda: len(face_annotations(runtime)) == 1, "the newer frame was never seen")
+
+    show(
+        runtime,
+        PerceptionSourceRef("camera", 1) if late == "older-generation" else newer,
+        "bob",
+        later=later,
+    )
+    show(runtime, newer, "carol", later=4.0)  # Analyzed after the late frame would have been
+    await wait_until(lambda: len(face_annotations(runtime)) == 2, "the last frame was never seen")
+    entities = [
+        FaceDetectionResult.from_annotation(annotation).faces[0].entity.entity_id
+        for annotation in face_annotations(runtime)
+    ]
+    assert entities == ["face-alice", "face-carol"]
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_face_tracks_are_unbounded_and_only_attribute_caches_are_bounded(
+    tmp_path: Path,
+) -> None:
+    # Every face the session sees keeps its track; max_face_caches bounds only the participants
+    # whose face attributes are kept, the earliest kept giving way.
+    inference = SensorInference()
+    inference.anonymous_faces = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face", max_face_caches=1)
+    await persona.on_start()
+    face = next(processor for processor in persona._processors if processor.name == "face")
+    show(runtime, PerceptionSourceRef("camera", 1), "alice", "bob", "carol")
+
+    def described(user: str) -> bool:
+        participant = participant_of(runtime, user)
+        return participant is not None and participant.participant_id in face._profile_caches
+
+    await wait_until(lambda: described("carol"), "the last face was never described")
+    assert len(face._tracks._tracks) == 3
+    assert list(face._profile_caches) == [participant_of(runtime, "carol").participant_id]
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_one_face_is_one_participant_across_cameras_and_generations(tmp_path: Path) -> None:
+    # KD-44: a face is the session's, matched on any source and generation. The same first-time
+    # face on a camera, on that camera's next generation and on another camera is one entity
+    # and one participant, and its track keeps each source it was seen on, in order.
+    inference = SensorInference()
+    inference.anonymous_faces = True
+    inference.replies.extend(["none"] * 3)  # Not in the library
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face")
+    await persona.on_start()
+    face = next(processor for processor in persona._processors if processor.name == "face")
+    sources = [
+        PerceptionSourceRef("camera-1", 1),
+        PerceptionSourceRef("camera-1", 2),
+        PerceptionSourceRef("camera-2", 1),
+    ]
+    for count, source in enumerate(sources, 1):
+        show(runtime, source, "carol")
+        await wait_until(
+            lambda count=count: len(inference.searches) == count, "a frame was never searched"
+        )
+
+    (entity,) = {
+        FaceDetectionResult.from_annotation(annotation).faces[0].entity
+        for annotation in face_annotations(runtime)
+    }
+    assert len(runtime.session.participants) == 1
+    assert face._tracks._tracks[entity.entity_id].sources == sources
+    await persona.on_stop()
+    await runtime.aclose()
+
+
 async def test_a_slow_face_identity_never_holds_the_next_frames_analysis(tmp_path: Path) -> None:
     # Identities have their own lane: while the first frame's face is searched, the next frame
     # is analyzed, associated and annotated for visual routing, and its face waits its turn.

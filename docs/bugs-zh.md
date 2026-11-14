@@ -12,7 +12,6 @@
 | KD-19 | 固定的两句样本经分段 STT（`gpt-4o-transcribe`）转写时，经常只剩第一句。 | 遗漏发生在 STT 服务返回的文字里，插件如实传递；改停顿、换声线无效，指令式第二句最容易整句丢失（第五批）。第六批用当前可用、插件支持的模型对照（同一批样本、自动语言、不加提示）：`gpt-4o-transcribe` 两句都在 7/20，`gpt-4o-mini-transcribe`、`gpt-transcribe`、`whisper-1` 都是 20/20；但在独立多句、中英混合和同会话切换语言的 27 段里，默认 27/27，`gpt-transcribe` 24/27（英文句中的中文词改写成拼音），mini 21/27（中文词译成英文或拼音、一次地名错、切换后输出繁体）；`whisper-1` 慢约一倍。没有候选全部通过，默认仍为 `gpt-4o-transcribe`、自动语言、不加提示（Doctor 日志第六批）。 |
 | KD-40 | persona（人脸）：会话结束保存时，人脸向量仍是本次会话的向量整份替换用户存储的人脸向量，与 KD-38 修复前的说话人相同；同一用户的几个参与者各自写人脸向量，留下哪一个也不固定（说话人的同一问题见 KD-39）。 | 第五、六批只改了说话人，人脸待决定（Speaker Vector 日志第五、六批）。 |
 | KD-41 | persona（说话人）：参与者改绑到另一个用户时，只清空载入的资料和运行状态，本次会话已攒的声纹向量不清空，人脸向量和对话里提取的资料也一样，改绑前的这些会一并保存到新用户。认错后纠正时这样是对的（例：alice 第一段被误认成 bob，之后认出 alice，会话声纹全是 alice 的）；跟踪先混进了另一个人的声音再改绑时，别人的声音会写进新用户（例：bob 说 6 秒后 alice 被并进同一条跟踪、说 9 秒并认出，会话声纹约 40% 是 bob 的，每次保存带入约 2%）。 | 根本原因是匹配问题（跟踪误加入、检索误认），不是改绑或保存的逻辑；延期，随跟踪与检索的匹配优化处理（Speaker Vector 日志第五批、第十批之后的决定）。 |
-| KD-44 | persona（说话人）与参与者绑定：实体按"（来源, 实体）"绑定参与者，说话人跟踪也按来源保存、换代即退役。麦克风重新发布（换代）或换一台设备后，同一个人的声音会开新跟踪、成为新参与者；库里还没有声纹的新用户连不回去，保存后成为碎片。 | 契约和文档已改为：实体在会话内唯一，可以跨来源和代，只对应一个参与者；每个参与者每种类型最多一个实体（`AGENTS.md` 第 8 节、`identifiers-zh.md` 第 2 节）。绑定层与说话人已实现（第十批）：绑定以实体为键，换代和来源取消只作废语音段；说话人跟踪按实体保存、在所有来源上匹配，`sources` 按顺序记录来源和代，不限数量。回归 `test_one_voice_is_one_participant_across_devices_and_a_cancelled_source`、`test_an_entity_keeps_its_participant_on_every_source_and_generation` 等，10 处变异全部被发现。人脸跟踪的 60 秒超时已取消（人脸日志第四批），仍按来源保存、换代即退役，待改（Speaker Vector 日志第九、十批）。 |
 | KD-47 | persona（说话人）：`_consume_loop` 在整批观测处理完之后才确认。一条观测处理时持续抛出，这一批每 50 毫秒从上次确认的位置重读一次，说话人消费者停住，所有来源的说话人处理都停下，直到这条记录被挤出流的保留范围，再以缺口作废其间所有的段。会持续抛出的路径：建 state 时 `ensure_entity` 失败（实体已作为人脸绑定、参与者达到上限 1024；段中途拿到实体时失败会先让段退役，重读时跳过），以及 `observe_source` 的来源达到上限 256。目前没有上游给语音观测带显式实体，来源上限在正常使用中碰不到。 | 用户决定登记，留待后续 review（Speaker Vector 日志「精简说话人处理器」）。 |
 
 ## 已修复
@@ -39,6 +38,7 @@
 
 | 编号 | 问题 | 修复 |
 | --- | --- | --- |
+| KD-44 | persona（说话人）与参与者绑定：实体按"（来源, 实体）"绑定参与者，说话人跟踪也按来源保存、换代即退役。麦克风重新发布（换代）或换一台设备后，同一个人的声音会开新跟踪、成为新参与者；库里还没有声纹的新用户连不回去，保存后成为碎片。 | 契约和文档改为：实体在会话内唯一，可以跨来源和代，只对应一个参与者；每个参与者每种类型最多一个实体（`AGENTS.md` 第 8 节、`identifiers-zh.md` 第 2 节）。绑定层与说话人（Speaker Vector 日志第十批）：绑定以实体为键，换代和来源取消只作废语音段；说话人跟踪按实体保存、在所有来源上匹配。回归 `test_one_voice_is_one_participant_across_devices_and_a_cancelled_source`、`test_an_entity_keeps_its_participant_on_every_source_and_generation` 等，10 处变异全部被发现。人脸（人脸日志第四批）：跟踪按实体保存（`FaceTrack.sources` 按顺序记录来源和代），在所有来源和代上匹配，换代不再退役，60 秒超时取消。回归 `test_one_face_is_one_participant_across_cameras_and_generations`、`test_a_face_unseen_for_an_hour_is_still_one_participant`，4 处变异和换回旧代码时都失败。 |
 | KD-2 | memory、persona 的向量库配置（`avatar-agents/alphaavatar/agents/utils/vdb/config.py`）：校验时写入 `*_VDB_*` 环境变量（配置被拒绝时也写），并构造 QdrantClient，构造时还会发出一次 HTTP 版本请求，客户端从不关闭。 | `snapshot_vdb_config` 只读取 `QDRANT_URL`、`QDRANT_API_KEY` 作快照，不写环境变量、不构造客户端；Runner 只从启动快照取配置。 |
 | KD-4、KD-5 | persona：LanceDB 用户筛选未转义，保存错误未完整传播。 | 校验并转义筛选值，显式处理保存失败。 |
 | KD-6 | memory：被动 Memory 检索的完成状态不完整。 | 在完成边界记录诊断状态。 |

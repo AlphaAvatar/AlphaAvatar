@@ -81,3 +81,11 @@
 - 基线 `a4762032`（第三批与改名已提交）。
 - **取消 `track_ttl_sec`**（对照说话人 KD-43）：人脸跟踪原来 60 秒没见到就退役，第一次出现的人离开画面一分钟再回来，会开新跟踪、得到新的实体和参与者，保存后成为碎片。删除配置项与跟踪器里的超时清理，以及只为它保存的 `seen_at`；跟踪只在来源换代或处理器停止时退役。
   - 测试替身新增 `anonymous_faces`（输出不带实体的脸，走生成跟踪）。新增 `test_a_face_unseen_for_an_hour_is_still_one_participant`：库里没有的人一小时后再出现，仍是同一个实体、同一个参与者。换回带超时的旧跟踪器时失败（一小时后得到另一个实体）。
+- **按会话实体保存、跨来源和代匹配**（KD-44 的人脸部分）：`FaceTracks._tracks` 从"（来源, 实体）"改为以实体为键，`FaceTrack.sources` 按顺序记录出现过的来源和代；所有跟踪都是候选，不再只看本来源；来源换代不再让它的跟踪退役，只重新开始这一来源的帧顺序。跟踪只在处理器停止时退役，处理器里每帧的退役释放随之删去，`_release_retired_tracks` 改为与说话人相同的 `_release_tracks`。数量上限 `max_tracks` 和"只记第一帧的向量"未改，留待后面讨论。
+  - 新增 `test_one_face_is_one_participant_across_cameras_and_generations`：库里没有的人依次出现在摄像头 1、它的下一代、摄像头 2，始终是一个实体、一个参与者，`sources` 按顺序记下三处。4 处变异都失败：候选只取本来源本代、只取本摄像头、换代时丢掉本摄像头的脸、`sources` 只记第一处；换回完整的旧人脸代码时也失败（三帧得到不同的实体）。
+  - `docs/bugs-zh.md` 的 KD-44 移到已修复；`identifiers-zh.md` 第 2 节的实现说明同步更新。
+- **去掉跟踪器的来源状态**：`FaceTracks._sources`（每个来源最新的代和上一帧的时间）与别处重复。代由 ParticipantRuntime 管：帧进队列前 `observe_source` 拒绝旧的代，任务前后 `_job_is_current` 检查 `source_is_current`；帧的顺序由取样保证（`_last_sample_ts` 拒绝比上一帧早的帧），帧队列先进先出。删除 `_sources`、`activate`、`current` 和 `resolve` 的顺序检查与 `at` 参数；`max_tracks` 不再限制来源数量（来源上限是 ParticipantRuntime 的 256）。
+  - 新增 `test_a_frame_behind_its_sources_latest_is_never_analyzed[older-generation, earlier-frame]`：旧一代的帧（即使拍得更晚）和比本来源上一帧早的帧都不会被关联。
+  - 变异：进队列和任务前后的代检查各去掉一道时测试照常通过，两道互为后备（身份那一步之前 `ensure_entity` 也拒绝已退役的代）；两道一起去掉时失败；取样允许更早的帧时失败。
+- **取消跟踪数量上限**（与说话人相同）：跟踪不再受 `max_tracks` 限制，受 ParticipantRuntime 的实体与参与者容量（默认 1024）约束。`max_tracks` 只剩限制属性缓存的用途，改名为 `max_face_caches`（默认仍为 128）。`FaceTracks` 只需两个阈值，构造函数与说话人一样改为 `threshold`、`margin`。`identifiers-zh.md` 第 2 节同步。
+  - 新增 `test_face_tracks_are_unbounded_and_only_attribute_caches_are_bounded`：`max_face_caches=1` 时一帧三张脸各有跟踪，属性缓存只留最后一个。重新限制跟踪数量、属性缓存不设上限这两处变异都失败。

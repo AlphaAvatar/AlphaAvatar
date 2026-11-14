@@ -90,7 +90,9 @@ class FaceProcessor(PersonaProcessorBase):
         self._config = config
         self._face_config = FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE]
         self._last_sample_ts: dict[PerceptionSourceRef, float] = {}
-        self._tracks = FaceTracks(config)
+        self._tracks = FaceTracks(
+            threshold=config.track_match_threshold, margin=config.track_match_margin
+        )
         self._profile_caches: dict[str, FaceCache] = {}
 
         self._det_score_threshold = self._face_config.det_thresh
@@ -149,12 +151,9 @@ class FaceProcessor(PersonaProcessorBase):
 
         timestamp = observation.time_range.end.monotonic_ns / 1_000_000_000
         source = observation.source
-        if not self.runtime.participants.observe_source(source) or not self._tracks.activate(
-            source
-        ):
+        if not self.runtime.participants.observe_source(source):
             return
 
-        self._release_retired_tracks()
         for previous in tuple(self._last_sample_ts):
             if previous.source_id == source.source_id and previous != source:
                 self._last_sample_ts.pop(previous)
@@ -192,11 +191,8 @@ class FaceProcessor(PersonaProcessorBase):
             return None
         return VectorOps.norm(vector)
 
-    def _release_retired_tracks(self) -> None:
-        for source, entity in self._tracks.drain_retired():
-            participant = self.runtime.participants.resolve(source=source, entity=entity)
-            if participant is not None:
-                self._profile_caches.pop(participant.participant_id, None)
+    def _release_tracks(self) -> None:
+        for entity in self._tracks.drain_retired():
             self.runtime.participants.release_entity(entity)
 
     """Annotation operations"""
@@ -348,11 +344,7 @@ class FaceProcessor(PersonaProcessorBase):
 
     def _job_is_current(self, job: FaceFrameJob) -> bool:
         source = job.observation.source
-        if (
-            self.session_runtime.closed
-            or not self._tracks.current(source)
-            or not self.runtime.participants.source_is_current(source)
-        ):
+        if self.session_runtime.closed or not self.runtime.participants.source_is_current(source):
             return False
         return all(
             state.source_id != source.source_id or (state.source == source and state.available)
@@ -450,7 +442,7 @@ class FaceProcessor(PersonaProcessorBase):
             return
 
         if current.participant_id not in self._profile_caches:
-            if len(self._profile_caches) >= self._config.max_tracks:
+            if len(self._profile_caches) >= self._config.max_face_caches:
                 self._profile_caches.pop(next(iter(self._profile_caches)))
             self._profile_caches[current.participant_id] = FaceCache()
 
@@ -521,13 +513,7 @@ class FaceProcessor(PersonaProcessorBase):
             else None
             for face in candidates
         ]
-        associated = self._tracks.resolve(
-            job.observation.source,
-            vectors,
-            explicit,
-            at=job.observation.time_range.end.monotonic_ns / 1_000_000_000,
-        )
-        self._release_retired_tracks()
+        associated = self._tracks.resolve(job.observation.source, vectors, explicit)
         entities = list(associated) + [None] * (len(faces) - len(candidates))
         identities = []
         for index, (face, vector, entity) in enumerate(
@@ -661,7 +647,7 @@ class FaceProcessor(PersonaProcessorBase):
 
         self._last_sample_ts.clear()
         self._tracks.clear()
-        self._release_retired_tracks()
+        self._release_tracks()
         self._profile_caches.clear()
 
         logger.info("Persona Face stopped consumer_id=%s", self.CONSUMER_ID)

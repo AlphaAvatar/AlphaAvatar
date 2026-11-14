@@ -23,6 +23,7 @@ class FaceConfig(BaseModel):
     # queue holds while analysis is behind; the oldest give way to newer ones.
     frame_queue_sec: float = Field(default=0.4, gt=0, allow_inf_nan=False)
     max_faces: int = Field(default=16, ge=1, le=128)
-    max_tracks: int = Field(default=128, ge=1, le=1024)
+    # Participants whose face attributes are kept; the earliest kept goes first.
+    max_face_caches: int = Field(default=128, ge=1, le=1024)
     track_match_threshold: float = Field(default=0.65, gt=0, le=1)
     track_match_margin: float = Field(default=0.08, ge=0, le=1)
