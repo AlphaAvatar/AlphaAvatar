@@ -11,24 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .schemas import (
-    FaceDetection,
-    FaceDetectionResult,
-    FaceKeypoints5,
-    ImagePoint2D,
-    SelectedVisualFrame,
-    VisualSelection,
-    VisualSliceSelection,
-)
+from .schemas import SelectedVisualFrame, VisualSelection, VisualSliceSelection
 from .selector import VisualFrameSelector
 
-__all__ = [
-    "FaceDetection",
-    "FaceDetectionResult",
-    "FaceKeypoints5",
-    "ImagePoint2D",
-    "SelectedVisualFrame",
-    "VisualFrameSelector",
-    "VisualSelection",
-    "VisualSliceSelection",
-]
+__all__ = ["SelectedVisualFrame", "VisualFrameSelector", "VisualSelection", "VisualSliceSelection"]

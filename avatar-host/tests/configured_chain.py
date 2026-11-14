@@ -44,11 +44,7 @@ from alphaavatar.agents.router.schemas import TurnTakingAssessment, TurnTakingEv
 from alphaavatar.agents.runtime.inference.protocol import INFERENCE_SOCKET_ENV
 from alphaavatar.agents.runtime.plugin import AvatarModule, resolution
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.schemas import (
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, AudioFramePayload
 from alphaavatar.core.output.enums import OutputLane
 from alphaavatar.core.output.schemas import OutputTranscriptChunk
@@ -172,9 +168,8 @@ class Chain:
             if final and output.lane == OutputLane.ASSISTANT:
                 self.finals.add(output.output_id)
 
-    def say(self, segment_id: str, speaker: PerceptionEntityRef | None = None) -> None:
-        """Half a second of an utterance as Audio Activity publishes it, then its end; its
-        frames name its ``speaker``, if any."""
+    def say(self, segment_id: str) -> None:
+        """Half a second of an utterance as Audio Activity publishes it, then its end."""
         perception, clock = self.execution.runtime.perception, self.execution.runtime.clock
         segment = PerceptionSegmentRef(self.speech, segment_id)
         for index in range(1, 51):
@@ -190,7 +185,6 @@ class Chain:
                     source=self.speech,
                     segment=segment,
                     device_id=DEVICE,
-                    entity=speaker,
                     payload=frame,
                     metadata=metadata,
                 )
@@ -201,7 +195,6 @@ class Chain:
                 source=self.speech,
                 segment=segment,
                 device_id=DEVICE,
-                entity=speaker,
                 metadata={"speech_event": "end", "input_source": MICROPHONE},
             )
         )

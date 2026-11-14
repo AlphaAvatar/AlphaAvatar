@@ -24,13 +24,13 @@ from typing import Any
 import cv2
 import numpy as np
 
-from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult, FaceKeypoints5
 from alphaavatar.agents.constants import (
     FACE_INFERENCE_THRESHOLD,
     FACE_MATCH_THRESHOLD,
     VIDEO_PERSONA_INTERVAL_SEC,
 )
 from alphaavatar.agents.persona import PersonaProcessorBase
+from alphaavatar.agents.persona.schemas import FaceDetection, FaceDetectionResult, FaceKeypoints5
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import avatar_capability
 from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName

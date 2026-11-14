@@ -18,7 +18,7 @@ import logging
 import time
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult
+from alphaavatar.agents.persona.schemas import FaceDetection, FaceDetectionResult
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
@@ -81,10 +81,6 @@ class VisualAddressingProcessor(RouterProcessorBase):
         return "visual_addressing"
 
     @staticmethod
-    def _entity(observation: EnvObservation, face: FaceDetection) -> PerceptionEntityRef | None:
-        return face.entity or observation.entity
-
-    @staticmethod
     def _subject_key(
         observation: EnvObservation, entity: PerceptionEntityRef | None
     ) -> VisualSubjectKey:
@@ -95,9 +91,6 @@ class VisualAddressingProcessor(RouterProcessorBase):
     def _select_faces(
         self, *, observation: EnvObservation, result: FaceDetectionResult
     ) -> tuple[FaceDetection, ...]:
-        if len(result.faces) == 1 and observation.entity is not None:
-            return result.faces
-
         counts: dict[str, int] = {}
         for face in result.faces:
             if face.entity is not None:
@@ -126,11 +119,9 @@ class VisualAddressingProcessor(RouterProcessorBase):
         score: float,
         label: AssessmentLabel,
     ) -> None:
-        entity = self._entity(observation, face)
-
         speaker = InteractionEntityRef(
             kind=InteractionEntityKind.PERSON,
-            entity=entity,
+            entity=face.entity,
             device_id=observation.device_id,
             source=observation.source,
         )
@@ -173,8 +164,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
         if estimate is None:
             return
 
-        entity = self._entity(observation, face)
-        key = self._subject_key(observation, entity)
+        key = self._subject_key(observation, face.entity)
         for previous in tuple(self._states):
             if previous.source.source_id != key.source.source_id:
                 continue

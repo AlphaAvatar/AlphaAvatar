@@ -308,29 +308,18 @@ class AvatarEngine(LifecycleComponent):
                     continue
                 visited.add(segment)
                 owned = by_segment[segment]
-                labels = {item.entity for item in owned if item.entity is not None}
                 devices = {item.device_id for item in owned if item.device_id is not None}
                 device_id = next(iter(devices)) if len(devices) == 1 else None
-                entity = next(iter(labels)) if len(labels) == 1 else None
-                associated = self._runtime.participants.entity_for_segment(segment)
-                conflict = (
-                    len(labels) > 1
-                    or entity is not None
-                    and associated is not None
-                    and entity != associated
-                )
-                if conflict or not self._runtime.perception.speech_source_is_current(source):
+                if not self._runtime.perception.speech_source_is_current(source):
                     actor = TurnEntityRef(kind="person", device_id=device_id)
                 else:
-                    # A shared microphone or primary participant is never proof of a speaker.
-                    actor = self._participant_entity(
-                        device_id, source=source, entity=entity, segment=segment
-                    )
+                    # A shared microphone or primary participant is never proof of a speaker:
+                    # the segment's association, as Persona settled it, is.
+                    actor = self._participant_entity(device_id, source=source, segment=segment)
             else:
                 actor = self._participant_entity(
                     observation.device_id,
                     source=source,
-                    entity=observation.entity,
                     by_device=observation.kind
                     in (ObservationKind.TEXT_INPUT, ObservationKind.IMAGE_INPUT),
                 )
@@ -672,10 +661,7 @@ class AvatarEngine(LifecycleComponent):
                 final_observations=(observation,),
                 actors=(
                     self._participant_entity(
-                        observation.device_id,
-                        entity=observation.entity,
-                        source=observation.source,
-                        by_device=True,
+                        observation.device_id, source=observation.source, by_device=True
                     ),
                 ),
                 context_ids=(self._runtime.state.context_id,),

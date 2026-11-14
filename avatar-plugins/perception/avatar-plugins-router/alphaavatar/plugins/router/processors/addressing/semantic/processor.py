@@ -37,7 +37,7 @@ from alphaavatar.agents.router.schemas import (
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
-from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSegmentRef
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.time import RuntimeTimeRange
@@ -52,13 +52,12 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class _Transcript:
     """A segment's final transcript as perception gave it: what was said, when, through which
-    segment, and by whom if its speech named them. Structured here; the model reads the text."""
+    segment and device. Structured here; the model reads the text."""
 
     segment: PerceptionSegmentRef
     observation_id: str
     time_range: RuntimeTimeRange
     text: str
-    entity: PerceptionEntityRef | None = None
     device_id: str | None = None
 
     @property
@@ -172,11 +171,10 @@ class SemanticAddressingProcessor(RouterProcessorBase):
     """Assessment operations"""
 
     def _speaker(self, entry: _Transcript) -> InteractionEntityRef:
-        # Its own speech's subject, or the association settled for its segment since.
-        entity = entry.entity or self._runtime.participants.entity_for_segment(entry.segment)
+        # The association Persona settled for its segment, if any yet.
         return InteractionEntityRef(
             kind=InteractionEntityKind.PERSON,
-            entity=entity,
+            entity=self._runtime.participants.entity_for_segment(entry.segment),
             device_id=entry.device_id,
             source=entry.segment.source,
         )
@@ -415,7 +413,6 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             observation_id=observation.observation_id,
             time_range=observation.time_range,
             text=text,
-            entity=observation.entity,
             device_id=observation.device_id,
         )
         self._window[segment] = entry

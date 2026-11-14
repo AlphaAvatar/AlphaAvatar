@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 import alphaavatar.plugins.persona  # noqa: F401  Registers the default Persona plugin.
-from alphaavatar.agents.avatar.vision import FaceDetectionResult
+from alphaavatar.agents.persona.schemas import FaceDetectionResult
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin

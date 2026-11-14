@@ -102,3 +102,29 @@
   - agents 契约 `FaceDetectionResult.selected_face_index` 已无生产者，也没有读者：用户决定删除，字段、范围校验和序列化一并删去。
   - Router 的音频活动转发 `observation.entity`，轮次判断与语义寻址也读取它；Core 的 `EnvObservation.entity` 在生产中都为空。
   - 说话人的 `invalid` 与 `inference_failed` 现在除 trace 的结果（invalid 与 unbound）外行为相同，可以再看是否合并。
+
+# 第六批：Router 与 Engine 不再读取观测自带的实体
+
+- 起因：用户问 Router 为什么要用实体。核对后更正了一个说法：寻址的融合并不把"说话的人"和"在看谁的脸"对上，证据只按语音段、观测或时间归到输入，没有语义证据时任意一张朝向 Avatar 的脸都会被采用；说话人实体在 Router 里只是附带的描述（`actors`、证据的 `speaker`），生产代码只在 `fusion.py` 按来源保留最新的视觉证据时读到它的来源。多人时的这个缺口按用户决定与同段多人一起记在 O-25，随多人问题在后续版本处理。
+- 用户决定清理。Router 和 Engine 读取 `observation.entity` 的地方在生产中都只会读到空值：
+  - 音频活动不再把原始音频观测的实体转发到语音帧、语音段和取消通知。
+  - 轮次判断的输入窗口里，每段的主体只记来源和设备（`_subject`）。
+  - 语义寻址的说话人只取 Persona 对语音段的关联（`entity_for_segment`），`_Transcript` 不再带实体。
+  - 视觉寻址只用人脸标注里的实体，删除"只有一张脸且观测带实体"的分支。
+  - Engine 的 `_decision_actors` 不再收集观测上的实体、也不再做它与关联的冲突检查，每段的参与者只来自 Persona 的关联。
+- 测试改为通过 ParticipantRuntime 绑定语音段的关联（Persona 实际做的事）表示说话人：语义寻址的 `Speech.speak`、轮次判断与 host 链路的说话辅助函数不再给观测带实体；删除"观测实体与关联冲突"一例，"whoever they name"的几组参数随之合并。变异：Engine 对语音段改用设备解析、语义寻址的说话人不取关联，测试都失败。
+- 下一步待用户确认：删除 Core 的 `EnvObservation.entity`（及语音帧、语音段等构造函数的参数）。
+
+# 第七批：删除 Core 的 `EnvObservation.entity`
+
+- 用户确认后删除：`EnvObservation` 的 `entity` 字段、`_create` 的参数和 `to_dict` 的输出（各个按种类的构造函数都转交给 `_create`，随之不再接受它）。元数据里保留 `entity_id` 为保留字段，观测仍不能借元数据冒充实体。
+- 第六批之外还有两处在传递它，一并删除：Router 的语音转写把语音段的实体带进转写和"转写不可用"观测（`_SegmentState.entity`），Engine 为文字、图片直接输入解析参与者时传入观测的实体。
+- 一段语音的实体现在只来自 Persona 的关联，一张脸的实体只在人脸标注里；`identifiers-zh.md` 的 `entity_id` 一行写明了这一点。
+- 测试在第五、六批已不再给观测带实体，本批没有改测试；全量测试 725 个通过，ruff、format、`git diff --check` 通过。
+
+# 第八批：人脸检测结果的契约移到 Persona
+
+- 用户的要求：把 `agents/avatar/vision/schemas/face_detection.py` 移到 `agents/persona/schemas/`。它定义的是 Persona 人脸处理器发布的 FACE_DETECTION 标注（`FaceDetectionResult`、`FaceDetection`、`FaceKeypoints5`、`ImagePoint2D`），只依赖 Core；`avatar/vision` 留下的 `VisualSelection`、`VisualFrameSelector` 是 Context 为模型输入挑选画面用的，与它无关。
+- `agents.persona.schemas` 导出这四个类型，`agents.avatar.vision` 不再导出；Persona 人脸处理器、Router 视觉寻址的处理器与朝向估计、Persona 测试改从 `alphaavatar.agents.persona.schemas` 导入。
+- 移动时用了 `git mv`，它把重命名暂存了，违反"改动都留在未暂存的工作区"；随即用 `git reset -- <两个路径>` 撤回，工作区保持移动后的状态。
+- 工作区结构检查、ruff、format 通过；全量测试 725 个通过。

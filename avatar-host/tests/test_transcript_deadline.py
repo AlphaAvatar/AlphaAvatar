@@ -23,8 +23,6 @@ from pathlib import Path
 import pytest
 from configured_chain import Chain, configured_chain, wait_until
 
-from alphaavatar.core.env.schemas import PerceptionEntityRef
-
 WAIT, DEADLINE = 0.75, 3.0  # Turn taking's transcript wait and hard deadline, by default
 LATE = 4.5  # A final past the deadline
 NOTICE = '<system_notice code="voice.transcription_unavailable" current="true">'
@@ -81,22 +79,17 @@ async def test_a_transcript_past_its_deadline_commits_the_notice_and_its_late_fi
 
 
 TWO_SEGMENTS = (((0.3, SUM), (LATE, LOST), (0.3, CARD)), frozenset({"segment-a"}))
-VOICE, OTHER = PerceptionEntityRef("voice-1"), PerceptionEntityRef("voice-2")
 
 
 @pytest.mark.parametrize("session", [TWO_SEGMENTS], indirect=True)
-@pytest.mark.parametrize(
-    "speakers", [(VOICE, VOICE), (None, None), (VOICE, OTHER)], ids=["one", "unnamed", "two"]
-)
 async def test_a_held_turn_keeps_the_words_it_has_and_marks_the_segment_it_lost(
-    session: Chain, speakers: tuple[PerceptionEntityRef | None, ...]
+    session: Chain,
 ) -> None:
-    # The turn-taking model holds after the first segment; the second joins the same input, whoever
-    # its speech names, and keeps its own deadline: the commit is due 3 s after it closed.
-    first, second = speakers
-    session.say("segment-a", first)
+    # The turn-taking model holds after the first segment; the second joins the same input and
+    # keeps its own deadline: the commit is due 3 s after it closed.
+    session.say("segment-a")
     said = time.monotonic()
-    session.say("segment-b", second)
+    session.say("segment-b")
     await wait_until(lambda: session.completed() == 1, "the turn never completed")
     partial = '<unavailable_speech segment_id="segment-b" position="2" />'
     assert SUM in session.current(0) and partial in session.current(0)
@@ -105,7 +98,7 @@ async def test_a_held_turn_keeps_the_words_it_has_and_marks_the_segment_it_lost(
     (pending,) = session.records("input.transcript_wait")
     assert pending["outcome"] == "pending"
 
-    session.say("segment-c", first)
+    session.say("segment-c")
     await wait_until(lambda: session.completed() == 2, "the next turn never completed")
     assert CARD in session.current(1) and "system_notice" not in session.current(1)
     assert SUM in session.history(1) and partial in session.history(1)

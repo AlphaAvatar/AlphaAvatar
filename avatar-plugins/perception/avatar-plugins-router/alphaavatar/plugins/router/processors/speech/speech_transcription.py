@@ -30,11 +30,7 @@ from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind, SpeechCancellationReason
-from alphaavatar.core.env.schemas import (
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable, TextPayload
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.time import RuntimeTimeRange
@@ -61,7 +57,6 @@ _ERROR_CODES = frozenset(
 class _SegmentState:
     time_range: RuntimeTimeRange
     device_id: str | None
-    entity: PerceptionEntityRef | None
     closed: bool = False
     input_source: PerceptionSourceRef | None = None
     transcript_source: PerceptionSourceRef | None = None
@@ -252,7 +247,6 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                 source=state.transcript_source or segment.source,
                 segment=segment,
                 device_id=state.device_id,
-                entity=state.entity,
             )
             self._runtime.perception.publish_observation(observation)
 
@@ -326,7 +320,6 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             state = _SegmentState(
                 time_range=observation.time_range,
                 device_id=observation.device_id,
-                entity=observation.entity,
                 input_source=self._input_source(observation),
             )
             self._segments[segment] = state
@@ -338,8 +331,6 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
             if observation.device_id is not None:
                 state.device_id = observation.device_id
-            if observation.entity is not None:
-                state.entity = observation.entity
 
         return segment, state
 
@@ -461,7 +452,6 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             source=source.transcript_source,
             segment=segment,
             device_id=state.device_id,
-            entity=state.entity,
             payload=payload,
             metadata=metadata,
         )

@@ -49,11 +49,7 @@ from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, SpeechCancellationReason
-from alphaavatar.core.env.schemas import (
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, AudioFramePayload, AudioSegmentPayload, TextPayload
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
@@ -73,7 +69,6 @@ TRANSCRIPTS = PerceptionSourceRef("router:transcript:microphone", 1)
 MICROPHONE = {"source_id": "microphone", "source_generation": 1}
 NOTICE = "voice.transcription_unavailable"
 SEMANTIC = "router.addressing.semantic"
-ALICE, BOB = PerceptionEntityRef("voice-alice"), PerceptionEntityRef("voice-bob")
 HOLD, COMMIT, CANCEL = TurnTakingAction.HOLD, TurnTakingAction.COMMIT, TurnTakingAction.CANCEL
 CONSUMER, STREAMS = "test.turn_taking", {PerceptionStreamKind.SPEECH, PerceptionStreamKind.TEXT}
 
@@ -158,7 +153,7 @@ class Inputs:
             self.coordinator.handle_observation(item)
         perception.commit_observations(window)
 
-    def start(self, segment_id: str, speaker: PerceptionEntityRef | None = None) -> None:
+    def start(self, segment_id: str) -> None:
         frame = AudioFramePayload.create(
             frame=AudioFrame(16_000, 1, 160, bytes(320)), frame_id=None
         )
@@ -167,15 +162,12 @@ class Inputs:
                 time_range=self.runtime.clock.point(),
                 source=self.source,
                 segment=PerceptionSegmentRef(self.source, segment_id),
-                entity=speaker,
                 payload=frame,
                 metadata={"route_index": 1, "speech_event": "start", "input_source": MICROPHONE},
             )
         )
 
-    def close(
-        self, segment_id: str, speaker: PerceptionEntityRef | None = None, pcm: bytes = b""
-    ) -> None:
+    def close(self, segment_id: str, pcm: bytes = b"") -> None:
         """The segment's end; with ``pcm``, its sound, ending now."""
         now, payload = self.runtime.clock.now(), None
         if pcm:
@@ -192,17 +184,14 @@ class Inputs:
                 time_range=RuntimeTimeRange(now.shifted(-len(pcm) / 32_000), now),
                 source=self.source,
                 segment=PerceptionSegmentRef(self.source, segment_id),
-                entity=speaker,
                 payload=payload,
                 metadata={"speech_event": "end", "input_source": MICROPHONE},
             )
         )
 
-    def say(
-        self, segment_id: str, speaker: PerceptionEntityRef | None = None, pcm: bytes = b""
-    ) -> None:
-        self.start(segment_id, speaker)
-        self.close(segment_id, speaker, pcm)
+    def say(self, segment_id: str, pcm: bytes = b"") -> None:
+        self.start(segment_id)
+        self.close(segment_id, pcm)
 
     def final(self, segment_id: str, text: str, source: PerceptionSourceRef | None = None) -> None:
         self._handle(
@@ -313,27 +302,20 @@ async def inputs(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterato
 
 
 @pytest.mark.parametrize("inputs", [{"model": {"continues": ("segment-a",)}}], indirect=True)
-@pytest.mark.parametrize(
-    ("first", "second"),
-    [(None, None), (ALICE, ALICE), (ALICE, BOB), (ALICE, None)],
-    ids=["unnamed", "one-speaker", "two-speakers", "named-then-unnamed"],
-)
-async def test_a_held_input_goes_on_across_segments_whoever_they_name(
-    inputs: Inputs, first: PerceptionEntityRef | None, second: PerceptionEntityRef | None
-) -> None:
-    inputs.say("segment-a", first)
+async def test_a_held_input_goes_on_across_its_segments(inputs: Inputs) -> None:
+    inputs.say("segment-a")
     inputs.final("segment-a", "What is two plus")
     await wait_until(lambda: inputs.decisions(HOLD, "speech_incomplete"), "it never held")
-    inputs.say("segment-b", second)
+    inputs.say("segment-b")
     inputs.final("segment-b", "three?")
     await wait_until(lambda: inputs.decisions(COMMIT), "the input never committed")
 
-    # One input: speaker labels are its actors, never a boundary of it.
+    # One input of both segments, its actor their source.
     (hold,) = inputs.decisions(HOLD, "speech_incomplete")
     (commit,) = inputs.decisions(COMMIT)
     assert commit.input_id == hold.input_id and commit.revision > hold.revision
     assert inputs.texts(commit) == ["What is two plus", "three?"]
-    assert [actor.entity for actor in commit.actors] == list(dict.fromkeys((first, second)))
+    assert [actor.source for actor in commit.actors] == [inputs.source]
 
 
 @pytest.mark.parametrize("inputs", [{"model": {"transcript": False}}], indirect=True)

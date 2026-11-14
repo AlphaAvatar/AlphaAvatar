@@ -148,37 +148,33 @@ class Speech:
         text: str | None = None,
         speaker: PerceptionEntityRef | None = None,
     ) -> None:
-        """A segment of speech from ``start`` to ``end`` seconds of media time; its final
-        transcript at once when ``text`` is given."""
+        """A segment of speech from ``start`` to ``end`` seconds of media time, associated with
+        ``speaker`` as Persona would; its final transcript at once when ``text`` is given."""
         self.start(segment_id, start)
         self.spans[segment_id] = start, end
         close = EnvObservation.speech_segment(
             time_range=RuntimeTimeRange(self.at(start), self.at(end)),
             source=self.source,
             segment=PerceptionSegmentRef(self.source, segment_id),
-            entity=speaker,
             metadata={"speech_event": "end", "input_source": MICROPHONE},
         )
         self.runtime.perception.publish_observation(close)
         self.closes[segment_id] = close
+        if speaker is not None:
+            participants = self.runtime.participants
+            participants.ensure_entity(self.source, speaker, kind="speaker")
+            token = participants.observe_segment(close.segment)
+            participants.bind_segment(close.segment, speaker, token=token)
         if text is not None:
-            self.final(segment_id, text, speaker)
+            self.final(segment_id, text)
 
-    def final(
-        self,
-        segment_id: str,
-        text: str,
-        speaker: PerceptionEntityRef | None = None,
-        *,
-        again: bool = False,
-    ) -> None:
+    def final(self, segment_id: str, text: str, *, again: bool = False) -> None:
         """The segment's final transcript; ``again``, a repeat of the one it had."""
         start, end = self.spans[segment_id]
         observation = EnvObservation.transcript_segment(
             time_range=RuntimeTimeRange(self.at(start), self.at(end)),
             source=TRANSCRIPTS,
             segment=self.closes[segment_id].segment,
-            entity=speaker,
             payload=TextPayload.create(text=text),
         )
         self.runtime.perception.publish_observation(observation)

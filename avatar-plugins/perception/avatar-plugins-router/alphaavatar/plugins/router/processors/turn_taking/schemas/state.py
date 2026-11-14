@@ -118,12 +118,10 @@ class InputWindow:
         self.revision += 1
 
     def _subject(self, segment: PerceptionSegmentRef, observation: EnvObservation) -> None:
-        previous = self.subjects.get(segment)
-        if previous is None or previous.entity is None and observation.entity is not None:
+        if segment not in self.subjects:
             self.subjects[segment] = InteractionEntityRef(
                 kind=InteractionEntityKind.PERSON,
                 source=segment.source,
-                entity=observation.entity,
                 device_id=observation.device_id,
             )
 

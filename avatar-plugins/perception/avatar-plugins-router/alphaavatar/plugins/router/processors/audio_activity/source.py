@@ -182,7 +182,6 @@ class AudioActivitySource:
             source=self.speech_source,
             segment=segment,
             device_id=frame_ref.observation.device_id,
-            entity=frame_ref.observation.entity,
             payload=frame_ref.observation.payload,
             metadata=metadata,
         )
@@ -304,7 +303,6 @@ class AudioActivitySource:
             source=self.speech_source,
             segment=segment,
             device_id=first_observation.device_id,
-            entity=first_observation.entity,
             payload=payload,
             metadata=metadata,
         )
@@ -349,7 +347,6 @@ class AudioActivitySource:
                     segment=segment,
                     time_range=RuntimeTimeRange.point(self.perception_runtime.clock.now()),
                     device_id=first.device_id if first else None,
-                    entity=first.entity if first else None,
                     metadata={
                         "input_source": self.input_source.to_dict(),
                         "frame_count": self._route_index,
