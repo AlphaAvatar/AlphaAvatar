@@ -20,13 +20,14 @@ from uuid import uuid4
 import numpy as np
 
 from alphaavatar.agents.runtime.modules.participants.schemas import EntityId
+from alphaavatar.agents.utils.vector import WeightedMean
 from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 
 
 @dataclass(slots=True)
 class FaceTrack:
     entity: PerceptionEntityRef
-    vector: np.ndarray
+    face: WeightedMean  # Every frame it took, each counted once
     sources: list[PerceptionSourceRef]  # Every source and generation it was seen on, in order
 
 
@@ -34,7 +35,8 @@ class FaceTracks:
     """The session's faces; matching a user never selects a track. A face is matched on any
     source and generation, keeps each it was seen on, and lasts until the processor stops: the
     same face after a long absence, a new generation or on another camera stays its entity.
-    Tracks are not bounded here; participant capacity bounds their entities. Which generation
+    A track's face is the mean of every frame it took, so a face that turns or changes light
+    gradually stays its track. Tracks are not bounded here; participant capacity bounds their entities. Which generation
     of a source is current is ParticipantRuntime's, and the processor's sampling keeps its
     frames in order."""
 
@@ -46,7 +48,10 @@ class FaceTracks:
         self._retired: list[PerceptionEntityRef] = []
 
     @staticmethod
-    def _seen(track: FaceTrack, source: PerceptionSourceRef) -> PerceptionEntityRef:
+    def _seen(
+        track: FaceTrack, source: PerceptionSourceRef, vector: np.ndarray
+    ) -> PerceptionEntityRef:
+        track.face.add(vector, 1.0)
         if source not in track.sources:
             track.sources.append(source)
         return track.entity
@@ -67,9 +72,9 @@ class FaceTracks:
 
             scores = sorted(
                 (
-                    (float(vector @ track.vector), offset)
+                    (float(vector @ track.face.vector), offset)
                     for offset, track in enumerate(tracks)
-                    if track.vector.shape == vector.shape
+                    if track.face.total.shape == vector.shape
                 ),
                 reverse=True,
             )
@@ -79,11 +84,12 @@ class FaceTracks:
             else:
                 novel.append(index)
 
-        # One frame shows each face once: a track two of its faces claim is neither's.
+        # One frame shows each face once: a track two of its faces claim is neither's. Every
+        # face was scored against the tracks as they were before this frame.
         claimed = Counter(track.entity.entity_id for track in proposals.values())
         for index, track in proposals.items():
             if claimed[track.entity.entity_id] == 1:
-                result[index] = self._seen(track, source)
+                result[index] = self._seen(track, source, vectors[index])
 
         for index in novel:
             vector = vectors[index]
@@ -97,7 +103,9 @@ class FaceTracks:
                 continue
 
             entity = PerceptionEntityRef(entity_id=f"face-{uuid4().hex}")
-            self._tracks[entity.entity_id] = FaceTrack(entity, vector.copy(), [source])
+            self._tracks[entity.entity_id] = FaceTrack(
+                entity, WeightedMean.of(vector, 1.0), [source]
+            )
             result[index] = entity
 
         return tuple(result)

@@ -128,3 +128,19 @@
 - `agents.persona.schemas` 导出这四个类型，`agents.avatar.vision` 不再导出；Persona 人脸处理器、Router 视觉寻址的处理器与朝向估计、Persona 测试改从 `alphaavatar.agents.persona.schemas` 导入。
 - 移动时用了 `git mv`，它把重命名暂存了，违反"改动都留在未暂存的工作区"；随即用 `git reset -- <两个路径>` 撤回，工作区保持移动后的状态。
 - 工作区结构检查、ruff、format 通过；全量测试 725 个通过。
+
+# 第九批：人脸跟踪的向量取各帧的平均
+
+- 原来每条跟踪只记第一帧的向量，之后不再更新；说话人在 KD-42 已改为按时长加权平均。用户决定人脸也取平均，每帧权重相同（人脸没有可作权重的时长）。
+- `FaceTrack.face` 改为 `WeightedMean`：新跟踪以第一帧开始，之后每帧以权重 1 加入；同一帧里所有脸都对着这一帧之前的跟踪打分，打分之后才加入。Persona README 补上人脸跟踪的说明（跨来源和代、不限数量、`face.max_face_caches` 只限属性缓存、向量取各帧平均）。
+- 新增 `test_a_face_track_is_the_mean_of_the_frames_it_took`：脸依次转到 0°、45°、60°、-10°，始终是同一条跟踪。只记第一帧（60° 那帧余弦 0.5）、只记最新一帧（-10° 对 60° 余弦 0.34）两处变异都失败。
+
+# 第十批：保存人脸向量（KD-40）
+
+- 改之前：会话中每次身份那一步都按 0.95 旧 / 0.05 新合并人脸向量（前几帧占大头）；保存时整份替换用户存储的人脸向量；同一用户的几个参与者各自写入，留下哪一个不固定。
+- 与说话人的 KD-42、KD-38、KD-39 相同：
+  - 会话中的人脸向量改为身份那一步所取各帧的平均（`DefaultPersonaCache._face`，`WeightedMean`，每帧权重 1）。agents 契约 `PersonaCache` 的 `face_vector` setter 改为 `add_face_vector(vector)`，人脸处理器随之改用它。
+  - 保存规则抽成 `_saved(observed, loaded, beta)`，说话人与人脸共用：载入的是同一身份时按 `beta`（`FACE_BETA` 0.95，注释写明含义）合并，没有存储的向量时用会话向量，载入没有完成时不写。`saved_face_vector` 由存储写入；写入副本 `_BaseProfile.vectors_only()` 同时保留存储的说话人和人脸向量。
+  - `PersonaRuntime.save()` 对 `voice` 和 `face` 都按用户合成一份。
+- 测试：说话人的三个保存测试扩为说话人、人脸各一组并改为不指明传感器的名字（`docs/bugs-zh.md` 的 KD-38、KD-39 随之更新），测试替身可以给出存储的人脸向量。6 处变异全部被发现：保存时直接用会话向量、存储写会话向量、参与者不合并人脸、会话人脸改回逐帧滑动合并、写入副本丢掉会话人脸、写入副本丢掉存储的人脸向量。其中两处起初存活：人脸每帧等权时，测试数据里第一个参与者两帧的平均恰好与第二个参与者那一帧同方向，换成不同方向后都失败。
+- `docs/bugs-zh.md` 的 KD-40 移到已修复；Persona README 补上人脸向量的会话平均与保存规则。

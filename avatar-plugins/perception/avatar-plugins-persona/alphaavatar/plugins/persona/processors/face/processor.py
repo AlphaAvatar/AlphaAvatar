@@ -382,7 +382,7 @@ class FaceProcessor(PersonaProcessorBase):
         if cache is None:
             return None
 
-        cache.face_vector = vector
+        cache.add_face_vector(vector)
         return cache.participant
 
     def _participant_for(

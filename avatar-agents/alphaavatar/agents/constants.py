@@ -23,7 +23,7 @@ VIDEO_MEMORY_INTERVAL_SEC = 0.5
 SPEAKER_BETA = 0.95  # A save keeps this much of the user's stored speaker vector
 SPEAKER_MATCH_THRESHOLD = 0.6  # Cosine of the campplus speaker vectors
 
-FACE_BETA = 0.95
+FACE_BETA = 0.95  # A save keeps this much of the user's stored face vector
 FACE_MATCH_THRESHOLD = 0.45
 FACE_INFERENCE_THRESHOLD = 1.0
 

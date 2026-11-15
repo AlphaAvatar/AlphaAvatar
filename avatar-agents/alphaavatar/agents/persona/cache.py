@@ -78,13 +78,13 @@ class PersonaCache(ABC):
     @abstractmethod
     def face_vector(self) -> np.ndarray | None: ...
 
-    @face_vector.setter
-    @abstractmethod
-    def face_vector(self, vector: np.ndarray) -> None: ...
-
     @abstractmethod
     def add_speaker_vector(self, vector: np.ndarray, seconds: float) -> None:
         """Add a segment's speaker vector, weighted by the seconds of audio it is from."""
+
+    @abstractmethod
+    def add_face_vector(self, vector: np.ndarray) -> None:
+        """Add a frame's face vector; every frame counts once."""
 
     @abstractmethod
     def record_profile_operations(self, operations: dict[str, list[dict[str, Any]]]) -> None: ...

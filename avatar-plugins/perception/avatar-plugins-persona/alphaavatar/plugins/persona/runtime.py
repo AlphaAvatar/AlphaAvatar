@@ -241,18 +241,20 @@ class PersonaRuntime(PersonaBase):
             if user_id is not None and not targets:
                 raise PermissionError(f"No writable Persona participant for user_id={user_id!r}")
 
-            # Participants of one user write one voice, all of their speech: their writes are
-            # concurrent, and whichever lands last stores the same vector.
-            voices: dict[str, WeightedMean] = {}
-            for cache in targets:
-                if (voice := cache.voice) is not None:
-                    if (current := voices.get(cache.participant.user_id)) is None:
-                        voices[cache.participant.user_id] = voice
-                    else:
-                        current.extend(voice)
-            for cache in targets:
-                if (voice := voices.get(cache.participant.user_id)) is not None:
-                    cache.voice = voice
+            # Participants of one user write one voice and one face, all of their speech and
+            # frames: their writes are concurrent, and whichever lands last stores the same.
+            for kind in ("voice", "face"):
+                means: dict[str, WeightedMean] = {}
+                for cache in targets:
+                    if (mean := getattr(cache, kind)) is not None:
+                        if (current := means.get(cache.participant.user_id)) is None:
+                            means[cache.participant.user_id] = mean
+                        else:
+                            current.extend(mean)
+
+                for cache in targets:
+                    if (mean := means.get(cache.participant.user_id)) is not None:
+                        setattr(cache, kind, mean)
 
             # Each write owns a pinned identity and observation copy, independent of later rebinding.
             results = await asyncio.gather(
@@ -370,6 +372,7 @@ class PersonaRuntime(PersonaBase):
         for processor in reversed(self._processors or ()):
             if processor.started:
                 await close_step(processor.stop(finalize=finalize))
+
         if self._session_task is not None:
             self._session_task.cancel()
             await asyncio.gather(self._session_task, return_exceptions=True)

@@ -34,15 +34,19 @@ from .profile.serialization import field_metadata, merge_profile_field
 class _BaseProfile:
     """The current identity's profile as the store returned it, read-only for the session, with
     what the cache knows about that load. An empty profile is also what no load leaves, so
-    ``loaded`` tells a user without a stored speaker vector from one never read."""
+    ``loaded`` tells a user without a stored speaker or face vector from one never read."""
 
     profile: UserProfile = field(default_factory=UserProfile)
     loaded: bool = False
 
-    def speaker_vector_only(self) -> _BaseProfile:
-        """A write's copy: the stored speaker vector alone; no profile details merge into a save."""
-        vector = self.profile.speaker_vector
-        stored = UserProfile(speaker_vector=None if vector is None else vector.copy())
+    def vectors_only(self) -> _BaseProfile:
+        """A write's copy: the stored speaker and face vectors alone; no profile details merge
+        into a save."""
+        speaker, face = self.profile.speaker_vector, self.profile.face_vector
+        stored = UserProfile(
+            speaker_vector=None if speaker is None else speaker.copy(),
+            face_vector=None if face is None else face.copy(),
+        )
         return _BaseProfile(stored, self.loaded)
 
 
@@ -56,6 +60,7 @@ class DefaultPersonaCache(PersonaCache):
         self._observations = UserProfile()
 
         self._voice: WeightedMean | None = None
+        self._face: WeightedMean | None = None
 
         self._detail_fields: set[str] = set()
         self._detail_timestamps: dict[str, datetime] = {}
@@ -180,6 +185,21 @@ class DefaultPersonaCache(PersonaCache):
     def runtime_state(self, state: UserRuntimeState) -> None:
         self._observations.runtime_state = state.model_copy(deep=True)
 
+    def _saved(
+        self, observed: np.ndarray | None, loaded: np.ndarray | None, beta: float
+    ) -> np.ndarray | None:
+        """A vector a save writes, or None to leave the stored one as it is.
+
+        While the session runs, its vector stays apart from the user's stored one; only the
+        save merges it into the one loaded for this same identity, ``beta`` of the stored. A
+        user with none stored takes the session's vector. Without a completed load the stored
+        vector is unknown, so it is not overwritten."""
+        if observed is None or not self._base.loaded:
+            return None
+        if loaded is None:
+            return observed.copy()
+        return VectorOps.merge(loaded, observed, beta)
+
     @property
     def speaker_vector(self) -> np.ndarray | None:
         return self._observations.speaker_vector
@@ -196,29 +216,31 @@ class DefaultPersonaCache(PersonaCache):
 
     @property
     def saved_speaker_vector(self) -> np.ndarray | None:
-        """The speaker vector a save writes, or None to leave the stored one as it is.
-
-        While the session runs, its vector stays apart from the user's stored speaker vector; only
-        the save merges it into the one loaded for this same identity, ``SPEAKER_BETA`` of the
-        stored. A user with none stored takes the session's vector. Without a completed load the
-        stored vector is unknown, so it is not overwritten."""
-        observed = self._observations.speaker_vector
-        if observed is None or not self._base.loaded:
-            return None
-        loaded = self._base.profile.speaker_vector
-        if loaded is None:
-            return observed.copy()
-        return VectorOps.merge(loaded, observed, SPEAKER_BETA)
+        """The speaker vector a save writes: the session's voice into the stored one,
+        ``SPEAKER_BETA`` of the stored, or None to leave it as it is."""
+        observed, loaded = self._observations.speaker_vector, self._base.profile.speaker_vector
+        return self._saved(observed, loaded, SPEAKER_BETA)
 
     @property
     def face_vector(self) -> np.ndarray | None:
         return self._observations.face_vector
 
-    @face_vector.setter
-    def face_vector(self, vector: np.ndarray) -> None:
-        self._observations.face_vector = VectorOps.merge(
-            self._observations.face_vector, vector, FACE_BETA
-        )
+    @property
+    def face(self) -> WeightedMean | None:
+        """The participant's face in this session: the frames its identity took, each once."""
+        return None if self._face is None else self._face.copy()
+
+    @face.setter
+    def face(self, face: WeightedMean) -> None:
+        self._face = face.copy()
+        self._observations.face_vector = face.vector
+
+    @property
+    def saved_face_vector(self) -> np.ndarray | None:
+        """The face vector a save writes: the session's face into the stored one, ``FACE_BETA``
+        of the stored, or None to leave it as it is."""
+        observed, loaded = self._observations.face_vector, self._base.profile.face_vector
+        return self._saved(observed, loaded, FACE_BETA)
 
     def add_speaker_vector(self, vector: np.ndarray, seconds: float) -> None:
         if self._voice is None:
@@ -226,6 +248,13 @@ class DefaultPersonaCache(PersonaCache):
         else:
             self._voice.add(vector, seconds)
         self._observations.speaker_vector = self._voice.vector
+
+    def add_face_vector(self, vector: np.ndarray) -> None:
+        if self._face is None:
+            self._face = WeightedMean.of(vector, 1.0)
+        else:
+            self._face.add(vector, 1.0)
+        self._observations.face_vector = self._face.vector
 
     def set_base(self, profile: UserProfile) -> None:
         self._base = _BaseProfile(profile.model_copy(deep=True), loaded=True)
@@ -252,7 +281,8 @@ class DefaultPersonaCache(PersonaCache):
         result = DefaultPersonaCache(participant=self._participant)
         result._observations = self._observations.model_copy(deep=True)
         result._voice = self.voice
-        result._base = self._base.speaker_vector_only()
+        result._face = self.face
+        result._base = self._base.vectors_only()
         result._detail_fields = self._detail_fields.copy()
         result._detail_timestamps = self._detail_timestamps.copy()
         result._detail_operations = deepcopy(self._detail_operations)

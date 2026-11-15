@@ -1314,6 +1314,23 @@ async def test_face_tracks_are_unbounded_and_only_attribute_caches_are_bounded(
     await runtime.aclose()
 
 
+def test_a_face_track_is_the_mean_of_the_frames_it_took() -> None:
+    # A face that turns gradually stays its track: each frame is matched against the mean of
+    # the frames before it, never the first alone (60 degrees from it) or the latest alone
+    # (-10 degrees after 60).
+    from alphaavatar.plugins.persona.processors.face.tracking import FaceTracks
+
+    def toward(degrees: float) -> np.ndarray:
+        vector = np.zeros(512, dtype=np.float32)
+        vector[:2] = np.cos(np.radians(degrees)), np.sin(np.radians(degrees))
+        return vector
+
+    tracks = FaceTracks(threshold=0.65, margin=0.08)
+    source = PerceptionSourceRef("camera", 1)
+    entities = [tracks.resolve(source, [toward(degrees)])[0] for degrees in (0, 45, 60, -10)]
+    assert entities[0] is not None and set(entities) == {entities[0]}
+
+
 async def test_one_face_is_one_participant_across_cameras_and_generations(tmp_path: Path) -> None:
     # KD-44: a face is the session's, matched on any source and generation. The same first-time
     # face on a camera, on that camera's next generation and on another camera is one entity
