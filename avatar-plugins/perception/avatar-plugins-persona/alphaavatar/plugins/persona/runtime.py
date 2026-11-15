@@ -22,7 +22,6 @@ from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcess
 from alphaavatar.agents.persona.schemas import UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
-from alphaavatar.agents.utils.vector import WeightedMean
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.session.enums import IdentitySource
 from alphaavatar.core.session.schemas import Participant
@@ -215,46 +214,17 @@ class PersonaRuntime(PersonaBase):
 
         cache.set_base(profile)
 
-    async def save(self, *, user_id: str | None = None) -> None:
+    async def save(self) -> None:
+        """Write each accepted user's cache. At the session's end the caches are one per user
+        (``_merge_caches``), so each user is written once, with all of its participants'."""
         async with self._save_lock:
             targets = []
-            for participant in self._runtime.session.snapshot().participants.values():
-                target_user_id = participant.user_id
-                if target_user_id is None:
+            for participant_id in tuple(self._persona_cache):
+                cache = self.cache_for(participant_id)
+                if cache is None or cache.participant.user_id is None:
                     continue
-
-                if user_id is not None and target_user_id != user_id:
-                    continue
-
-                if not self._runtime.participants.accepts_identity(participant):
-                    continue
-
-                cache = self.cache_for(participant.participant_id)
-                if cache is None:
-                    continue
-
-                if cache.participant.identity_revision != participant.identity_revision:
-                    continue
-
-                targets.append(cache.snapshot())
-
-            if user_id is not None and not targets:
-                raise PermissionError(f"No writable Persona participant for user_id={user_id!r}")
-
-            # Participants of one user write one voice and one face, all of their speech and
-            # frames: their writes are concurrent, and whichever lands last stores the same.
-            for kind in ("voice", "face"):
-                means: dict[str, WeightedMean] = {}
-                for cache in targets:
-                    if (mean := getattr(cache, kind)) is not None:
-                        if (current := means.get(cache.participant.user_id)) is None:
-                            means[cache.participant.user_id] = mean
-                        else:
-                            current.extend(mean)
-
-                for cache in targets:
-                    if (mean := means.get(cache.participant.user_id)) is not None:
-                        setattr(cache, kind, mean)
+                if self._runtime.participants.accepts_identity(cache.participant):
+                    targets.append(cache.snapshot())
 
             # Each write owns a pinned identity and observation copy, independent of later rebinding.
             results = await asyncio.gather(
@@ -333,6 +303,26 @@ class PersonaRuntime(PersonaBase):
 
     """Runtime operations"""
 
+    def _merge_caches(self) -> None:
+        """One cache per user for the session's end: participants bound to one user (devices,
+        generations, one voice heard as two) each hold part of that person's session, and its
+        profile update and save take all of it. The user's earliest participant keeps the cache;
+        caches without an accepted user stay as they are."""
+        caches: dict[str, DefaultPersonaCache] = {}
+        users: dict[str, DefaultPersonaCache] = {}
+        for participant in self._runtime.session.snapshot().participants.values():
+            if (cache := self.cache_for(participant.participant_id)) is None:
+                continue
+
+            user_id = participant.user_id
+            if user_id is None or not self._runtime.participants.accepts_identity(participant):
+                caches[participant.participant_id] = cache
+            elif (kept := users.get(user_id)) is None:
+                users[user_id] = caches[participant.participant_id] = cache
+            else:
+                kept.absorb(cache)
+        self._persona_cache = caches
+
     async def _start(self) -> None:
         self._sync_session()
         self._session_task = asyncio.create_task(self._consume_session(), name=self.CONSUMER_ID)
@@ -359,19 +349,23 @@ class PersonaRuntime(PersonaBase):
         finalize = start is not None and not start.cancelled() and start.exception() is None
         errors: list[Exception] = []
 
-        async def close_step(operation) -> None:
+        async def close_step(operation) -> bool:
             try:
                 await operation
+                return True
             except asyncio.CancelledError as error:
                 failure = RuntimeError("Persona cleanup operation cancelled itself")
                 failure.__cause__ = error
                 errors.append(failure)
             except Exception as error:
                 errors.append(error)
+            return False
 
-        for processor in reversed(self._processors or ()):
-            if processor.started:
-                await close_step(processor.stop(finalize=finalize))
+        stopped = [
+            processor
+            for processor in reversed(self._processors or ())
+            if processor.started and await close_step(processor.stop(finalize=finalize))
+        ]
 
         if self._session_task is not None:
             self._session_task.cancel()
@@ -388,6 +382,11 @@ class PersonaRuntime(PersonaBase):
         self._runtime.session.events.clear_consumer(self.CONSUMER_ID)
 
         if finalize:
+            # Nothing writes the caches any more: one per user, each profile is updated, and
+            # each user saved, once, with all of its participants' observations.
+            self._merge_caches()
+            for processor in reversed(stopped):
+                await close_step(processor.finalize_caches())
             await close_step(self.save())
         if errors:
             raise ExceptionGroup("Persona shutdown failed", errors)

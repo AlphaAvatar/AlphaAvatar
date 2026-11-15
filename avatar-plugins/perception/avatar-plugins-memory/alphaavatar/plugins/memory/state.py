@@ -142,7 +142,7 @@ class MemoryContextState:
         self._participants = {
             participant.participant_id: participant for participant in participants
         }
-        self._identity_sequence = 0
+        self._session_sequence = 0
 
         dynamic_users = {p.user_id for p in participants if p.user_id is not None}
         self._owner_refs = [
@@ -240,7 +240,7 @@ class MemoryContextState:
             for participant_id, participant in participants.items()
             if include_new or participant_id in self._participants
         }
-        self._identity_sequence = snapshot.sequence
+        self._session_sequence = snapshot.sequence
 
     def capture_identity(
         self, messages: Sequence[MemoryContextItem] | None = None
@@ -309,7 +309,7 @@ class MemoryContextState:
             )
 
         return MemoryIdentitySnapshot(
-            sequence=self._identity_sequence,
+            sequence=self._session_sequence,
             participants=participants,
             owner_refs=tuple(ref.model_copy(deep=True) for ref in deduplicate_refs(owner_refs)),
             participant_refs=tuple(

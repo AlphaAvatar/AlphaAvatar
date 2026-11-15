@@ -469,7 +469,7 @@ class NullPersona(PersonaBase):
     async def load_profile(self, *, participant_id: str) -> None:
         pass
 
-    async def save(self, *, user_id: str | None = None) -> None:
+    async def save(self) -> None:
         pass
 
     async def on_start(self) -> None:

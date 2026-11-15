@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,7 +28,7 @@ import pytest
 from alphaavatar.agents.avatar.provider.base import LLMBase
 from alphaavatar.agents.avatar.provider.schemas.model_result import ProviderModelResult
 from alphaavatar.agents.persona import PersonaProcessorBase
-from alphaavatar.agents.persona.schemas import UserProfile
+from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
@@ -39,13 +39,15 @@ from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
-from alphaavatar.core.session.schemas import IdentityRequest
+from alphaavatar.core.session.schemas import IdentityRequest, Participant
+from alphaavatar.core.time import RuntimeClock
 from alphaavatar.core.turn import TurnRuntime, TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef
 from alphaavatar.plugins.persona.cache import DefaultPersonaCache
 from alphaavatar.plugins.persona.processors.profiler import ProfilerConfig, ProfilerProcessor
 from alphaavatar.plugins.persona.processors.profiler.op import PatchOp, ProfileDelta
+from alphaavatar.plugins.persona.profile import UserProfileDetails
 from alphaavatar.plugins.persona.runtime import PersonaRuntime
 from alphaavatar.plugins.persona.storage import PersonaStore
 
@@ -308,12 +310,13 @@ async def test_profile_delta_is_discarded_when_a_provider_swallows_cancellation(
     cache = persona.cache_for(participant.participant_id)
     await wait_until(lambda: len(cache.turns) == 1, "The profiler never recorded the Turn")
 
-    stopping = asyncio.create_task(profiler.stop(finalize=True))
+    await profiler.stop(finalize=True)
+    finalizing = asyncio.create_task(profiler.finalize_caches())
     async with asyncio.timeout(HANG_GUARD):
         await entered.wait()
-    stopping.cancel()
+    finalizing.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await stopping
+        await finalizing
     assert cache.profile_details is None and not cache.detail_fields
 
     await persona.on_stop()
@@ -541,7 +544,7 @@ async def test_a_rebound_participant_saves_into_its_new_users_stored_vector_alon
 
 @pytest.mark.parametrize("sensor", ["speaker", "face"])
 @pytest.mark.parametrize("stored", ["vector", "none"])
-async def test_participants_of_one_user_save_one_vector_of_all_they_were_observed(
+async def test_participants_of_one_user_save_once_with_all_they_were_observed(
     stored: str, sensor: str, tmp_path: Path
 ) -> None:
     stored_vector = unit(1, 0, 0, 0)
@@ -564,15 +567,108 @@ async def test_participants_of_one_user_save_one_vector_of_all_they_were_observe
             heard(persona.cache_for(participant.participant_id), sensor, vector, seconds)
     await persona.on_stop()
 
-    # Each of alice's writes carries all of hers, so whichever lands last, it is the same.
+    # Alice's participants end as one cache: one write, with all of hers.
     alice = session_mean(sensor, observed[0][1] + observed[1][1])
     written = {
         user: [s[f"{sensor}_vector"] for s in inference.saved if s["user_id"] == user]
         for user in ("alice", "bob")
     }
     expected = merged(stored_vector, alice) if stored == "vector" else alice
-    assert written == {
-        "alice": [pytest.approx(expected)] * 2,
-        "bob": [pytest.approx(unit(0, 0, 0, 1))],
+    assert written == {"alice": [pytest.approx(expected)], "bob": [pytest.approx(unit(0, 0, 0, 1))]}
+    await runtime.aclose()
+
+
+def test_a_users_caches_merge_into_one_holding_all_they_observed() -> None:
+    t0, joined = datetime(2026, 11, 2, 8, tzinfo=UTC), RuntimeClock().now()
+
+    def entry(value: str, source: str, minutes: int) -> dict:
+        at = t0 + timedelta(minutes=minutes)
+        return {"value": value, "source": source, "updated_at": at.isoformat()}
+
+    kept, other, bob = (
+        DefaultPersonaCache(
+            participant=Participant(participant_id=pid, user_id=user, joined_at=joined)
+        )
+        for pid, user in (("p1", "alice"), ("p2", "alice"), ("p3", "bob"))
+    )
+    # The earlier participant's load never completed; the later one's found her stored voice.
+    kept.runtime_state = UserRuntimeState(current_login_at=t0, login_count=1)
+    other.set_base(UserProfile(speaker_vector=unit(1, 0, 0, 0)))
+    other.runtime_state = UserRuntimeState(
+        current_login_at=t0 + timedelta(minutes=5), login_count=7
+    )
+    kept.profile_details = UserProfileDetails(
+        age=entry("35-44 years old", "face", 20), gender=entry("female", "speech", 40)
+    )
+    other.profile_details = UserProfileDetails(
+        age=entry("25-34 years old", "speech", 30),
+        gender=entry("male", "speech", 10),
+        name=entry("Ally", "chat", 1),
+    )
+    heard(kept, "speaker", unit(0, 1, 0, 0), 3.0)
+    heard(other, "speaker", unit(0, 0, 1, 0), 1.0)
+    heard(other, "face", unit(0, 0, 0, 1), 1.0)
+    kept.absorb(other)
+
+    # Each field as a save would merge it: face over speech, then the later of one source.
+    assert {name: (item.value, item.source) for name, item in kept.profile_details if item} == {
+        "age": ("35-44 years old", "face"),
+        "gender": ("female", "speech"),
+        "name": ("Ally", "chat"),
     }
+    assert kept.detail_fields == {"age", "gender", "name"}
+    voice = session_mean("speaker", [(unit(0, 1, 0, 0), 3.0), (unit(0, 0, 1, 0), 1.0)])
+    assert kept.saved_speaker_vector == pytest.approx(merged(unit(1, 0, 0, 0), voice))
+    assert kept.saved_face_vector == pytest.approx(unit(0, 0, 0, 1))
+    assert (kept.runtime_state.login_count, kept.runtime_state.current_login_at) == (7, t0)
+    with pytest.raises(ValueError, match="one user"):
+        kept.absorb(bob)
+
+
+async def test_a_users_participants_are_profiled_and_saved_once_with_all_their_turns(
+    tmp_path: Path,
+) -> None:
+    async def name(prompt: str) -> ProfileDelta:
+        value = "Bob" if "I am Bob" in prompt else "Ally"
+        return ProfileDelta(ops=[PatchOp(op="set", path="/name", value=value)])
+
+    def said(input_id: str, text: str, *speakers) -> None:
+        actors = tuple(
+            TurnEntityRef(
+                participant_id=speaker.participant_id,
+                user_id=speaker.user_id,
+                identity_revision=speaker.identity_revision,
+            )
+            for speaker in speakers
+        )
+        runtime.turn.commit_input(
+            input_id=input_id, modality=TurnInputModality.TEXT, text=text, actors=actors
+        )
+
+    providers, inference = ScriptedProviders(name), PersonaInference()
+    runtime = avatar_runtime(tmp_path, providers, inference)
+    persona, _ = persona_for(runtime)
+    await persona.on_start()
+    first, second, bob = (
+        runtime.participants.join(user_id=user) for user in ("alice", "alice", "bob")
+    )
+    # Alice's later participant speaks first, and one Turn is both of hers.
+    said("input-0", "I like tea", second)
+    said("input-1", "call me Ally", first, second)
+    said("input-2", "I am Bob", bob)
+    await persona.on_stop()
+
+    assert list(persona.persona_cache) == [first.participant_id, bob.participant_id]
+    (alice,) = [prompt for prompt in providers.llm.prompts if "I am Bob" not in prompt]
+    assert len(providers.llm.prompts) == 2 and alice.count("call me Ally") == 1
+    assert alice.index("I like tea") < alice.index("call me Ally")
+    names = {
+        save["user_id"]: [
+            item["metadata"]["value"]["value"]
+            for item in save["details_items"]
+            if item["metadata"]["path"] == "/name"
+        ]
+        for save in inference.saved
+    }
+    assert len(inference.saved) == 2 and names == {"alice": ["Ally"], "bob": ["Bob"]}
     await runtime.aclose()

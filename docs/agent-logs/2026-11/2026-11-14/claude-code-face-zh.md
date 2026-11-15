@@ -140,7 +140,55 @@
 - 改之前：会话中每次身份那一步都按 0.95 旧 / 0.05 新合并人脸向量（前几帧占大头）；保存时整份替换用户存储的人脸向量；同一用户的几个参与者各自写入，留下哪一个不固定。
 - 与说话人的 KD-42、KD-38、KD-39 相同：
   - 会话中的人脸向量改为身份那一步所取各帧的平均（`DefaultPersonaCache._face`，`WeightedMean`，每帧权重 1）。agents 契约 `PersonaCache` 的 `face_vector` setter 改为 `add_face_vector(vector)`，人脸处理器随之改用它。
-  - 保存规则抽成 `_saved(observed, loaded, beta)`，说话人与人脸共用：载入的是同一身份时按 `beta`（`FACE_BETA` 0.95，注释写明含义）合并，没有存储的向量时用会话向量，载入没有完成时不写。`saved_face_vector` 由存储写入；写入副本 `_BaseProfile.vectors_only()` 同时保留存储的说话人和人脸向量。
+  - 保存规则抽成模块级的 `_saved_vector(session, stored, read=, beta=)`，说话人与人脸共用（起初写成类里的 `_saved`，放在了属性之间，不符合编码规范的类内顺序；被属性调用的辅助函数改为放在类之前）：载入的是同一身份时按 `beta`（`FACE_BETA` 0.95，注释写明含义）合并，没有存储的向量时用会话向量，载入没有完成时不写。`saved_face_vector` 由存储写入；写入副本 `_BaseProfile.vectors_only()` 同时保留存储的说话人和人脸向量。
   - `PersonaRuntime.save()` 对 `voice` 和 `face` 都按用户合成一份。
 - 测试：说话人的三个保存测试扩为说话人、人脸各一组并改为不指明传感器的名字（`docs/bugs-zh.md` 的 KD-38、KD-39 随之更新），测试替身可以给出存储的人脸向量。6 处变异全部被发现：保存时直接用会话向量、存储写会话向量、参与者不合并人脸、会话人脸改回逐帧滑动合并、写入副本丢掉会话人脸、写入副本丢掉存储的人脸向量。其中两处起初存活：人脸每帧等权时，测试数据里第一个参与者两帧的平均恰好与第二个参与者那一帧同方向，换成不同方向后都失败。
 - `docs/bugs-zh.md` 的 KD-40 移到已修复；Persona README 补上人脸向量的会话平均与保存规则。
+
+# 第十一批：会话结束时按用户合并 Persona 缓存
+
+- 用户的要求：在 Persona `runtime.py` 提供一个函数，把同一 `user_id` 的几个缓存合并、去重成一个，在 `on_stop` 里用它刷新 `self._persona_cache`，让 Profiler 更新资料和保存都变简单。
+- 改之前：Profiler 在自己的 `stop(finalize=True)` 里对每个参与者的缓存各提取一次资料；同一用户的几个参与者各提取一次、各写入一次。保存时再把同一用户的声纹、人脸向量临时合成一份（第十批），资料各写各的，靠向量库按字段合并。
+- 用户确认的顺序（`PersonaRuntime._close`）：
+  1. 停止全部处理器；
+  2. 取消在途的载入；
+  3. `_merge_caches()` 让每个用户只剩一个缓存；
+  4. 对停止成功的处理器按原顺序调用 `finalize_caches()`；
+  5. `save()`，每个用户写入一次。
+
+  只有正常结束（`finalize`）才做第 3～5 步。
+- 合并规则：
+  - `DefaultPersonaCache.absorb(other)`：只接受同一用户的缓存，否则报错。
+  - 保留下来的缓存属于该用户最早加入、身份仍被接受的参与者。没有用户或身份不被接受的缓存原样保留，保存时照旧跳过。
+  - 轮次按 `turn_id` 去重，按提交时间排序。
+  - 观测到的资料逐字段用 `merge_profile_field` 合并，与 `profile` 属性合并载入资料的方式相同；时间取较晚的，`detail_operations` 接在后面。
+  - 声纹和人脸用 `WeightedMean.extend` 合并。
+  - 载入：保留的缓存没有完成载入、另一个完成了时，取对方的载入和运行状态。
+  - 登录时间取最早的。
+- 其他改动：
+  - agents 契约：`PersonaProcessorBase.finalize_caches()` 默认不做任何事；`PersonaBase.save()` 去掉 `user_id` 参数。它在仓库里没有调用方，带它时的 `PermissionError` 分支一起删除。
+  - `save()` 遍历合并后的缓存，删除第十批按用户合成声纹、人脸向量的那段代码。
+  - Profiler：`_stop` 只停消费者并收完剩下的轮次；提取移到 `finalize_caches()`，`_update_profile` 改为只接收缓存。
+  - Doctor 测试替身的 `save` 签名随之修改。
+  - Persona README 的生命周期一节写明合并与结束顺序；`docs/bugs-zh.md` 的 KD-39 补记本批，并更新回归测试的名字。
+- 测试：
+  - 改了两个：
+    - 提供方吞掉取消的测试改为在 `stop` 之后取消 `finalize_caches()`；
+    - 同一用户多个参与者的保存测试改名为 `test_participants_of_one_user_save_once_with_all_they_were_observed`，alice 只写入一次。
+  - 新增两个：
+    - `test_a_users_caches_merge_into_one_holding_all_they_observed`：资料按来源优先、同来源取较晚的；载入、运行状态与最早登录；声纹均值；不同用户报错。
+    - `test_a_users_participants_are_profiled_and_saved_once_with_all_their_turns`：后加入的参与者先说话，一个轮次同属两人；每个用户只提取一次，轮次不重复、按提交顺序；每个用户写入一次，带着提取出的名字。
+  - 13 处变异全部被发现：
+    - 缓存：不取对方的载入、不取对方的运行状态、不取最早登录、轮次不排序、轮次不去重、均值不合并、资料直接覆盖、字段集合不合并；
+    - 运行时：不合并、保留最后加入的参与者、不调用 `finalize_caches`、先保存后提取；
+    - Profiler：不提取。
+- 验证（离线）：
+  - 工作区结构检查、ruff、format、`git diff --check` 通过。
+  - 全量测试 736 个，735 个通过。失败的 `test_late_stt_final_after_transcript_timeout_never_revives_the_input[listening0]` 是之前见过的 Router 计时用例，与本批无关，单独重跑 5 次都通过。
+
+# 第十二批：Memory `_identity_sequence` 改为 `_session_sequence`
+
+- 待办第 5 项。Memory `state.py` 的会话上下文里，这个字段存的是 `sync_identity` 读到的会话快照序号（`SessionSnapshot.sequence`），再写进 `MemoryIdentitySnapshot.sequence`；它不是参与者的身份版本，改名后不再和 `identity_revision` 混淆。
+- 只改这个私有字段的三处，按词边界替换；仓库里没有别的引用，行为不变。
+- 验证（离线）：Memory 的 ruff、format 通过，Memory 测试 30 个通过；`git diff --check` 通过。没有重跑全量测试。
+- 待办 1～5 项至此都已完成。

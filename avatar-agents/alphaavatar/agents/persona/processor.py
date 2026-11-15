@@ -93,6 +93,11 @@ class PersonaProcessorBase(ABC):
             finally:
                 self._started = False
 
+    async def finalize_caches(self) -> None:
+        """The session's last work on Persona's caches, after every processor has stopped and
+        the caches are one per user; only a finalizing stop leads to it. Nothing by default."""
+        return
+
     @abstractmethod
     async def _start(self) -> None: ...
 

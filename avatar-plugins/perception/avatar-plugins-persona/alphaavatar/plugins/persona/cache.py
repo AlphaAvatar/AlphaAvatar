@@ -50,6 +50,22 @@ class _BaseProfile:
         return _BaseProfile(stored, self.loaded)
 
 
+def _saved_vector(
+    session: np.ndarray | None, stored: np.ndarray | None, *, read: bool, beta: float
+) -> np.ndarray | None:
+    """A vector a save writes, or None to leave the stored one as it is.
+
+    While the session runs, its vector stays apart from the user's stored one; only the save
+    merges it into the one ``read`` for this same identity, ``beta`` of the stored. A user with
+    none stored takes the session's vector. Without a completed read the stored vector is
+    unknown, so it is not overwritten."""
+    if session is None or not read:
+        return None
+    if stored is None:
+        return session.copy()
+    return VectorOps.merge(stored, session, beta)
+
+
 class DefaultPersonaCache(PersonaCache):
     """Participant observations are independent from the current user's read-only profile."""
 
@@ -185,21 +201,6 @@ class DefaultPersonaCache(PersonaCache):
     def runtime_state(self, state: UserRuntimeState) -> None:
         self._observations.runtime_state = state.model_copy(deep=True)
 
-    def _saved(
-        self, observed: np.ndarray | None, loaded: np.ndarray | None, beta: float
-    ) -> np.ndarray | None:
-        """A vector a save writes, or None to leave the stored one as it is.
-
-        While the session runs, its vector stays apart from the user's stored one; only the
-        save merges it into the one loaded for this same identity, ``beta`` of the stored. A
-        user with none stored takes the session's vector. Without a completed load the stored
-        vector is unknown, so it is not overwritten."""
-        if observed is None or not self._base.loaded:
-            return None
-        if loaded is None:
-            return observed.copy()
-        return VectorOps.merge(loaded, observed, beta)
-
     @property
     def speaker_vector(self) -> np.ndarray | None:
         return self._observations.speaker_vector
@@ -218,8 +219,8 @@ class DefaultPersonaCache(PersonaCache):
     def saved_speaker_vector(self) -> np.ndarray | None:
         """The speaker vector a save writes: the session's voice into the stored one,
         ``SPEAKER_BETA`` of the stored, or None to leave it as it is."""
-        observed, loaded = self._observations.speaker_vector, self._base.profile.speaker_vector
-        return self._saved(observed, loaded, SPEAKER_BETA)
+        session, stored = self._observations.speaker_vector, self._base.profile.speaker_vector
+        return _saved_vector(session, stored, read=self._base.loaded, beta=SPEAKER_BETA)
 
     @property
     def face_vector(self) -> np.ndarray | None:
@@ -239,8 +240,8 @@ class DefaultPersonaCache(PersonaCache):
     def saved_face_vector(self) -> np.ndarray | None:
         """The face vector a save writes: the session's face into the stored one, ``FACE_BETA``
         of the stored, or None to leave it as it is."""
-        observed, loaded = self._observations.face_vector, self._base.profile.face_vector
-        return self._saved(observed, loaded, FACE_BETA)
+        session, stored = self._observations.face_vector, self._base.profile.face_vector
+        return _saved_vector(session, stored, read=self._base.loaded, beta=FACE_BETA)
 
     def add_speaker_vector(self, vector: np.ndarray, seconds: float) -> None:
         if self._voice is None:
@@ -292,3 +293,60 @@ class DefaultPersonaCache(PersonaCache):
         if snapshot.turn_id not in self._turn_ids:
             self._turns.append(replace(snapshot, perception_events=(), metadata={}))
             self._turn_ids.add(snapshot.turn_id)
+
+    def absorb(self, other: DefaultPersonaCache) -> None:
+        """Take in the cache of another participant of the same user, so one cache holds the
+        user's whole session: its turns, its observed details (merged field by field as a save
+        would), its voice and face, the earlier login, and its load when this one has none."""
+        if other.participant.user_id != self._participant.user_id:
+            raise ValueError("Only caches of one user can be merged")
+
+        states = (self.runtime_state, other.runtime_state)
+        logins = [s.current_login_at for s in states if s is not None and s.current_login_at]
+        if not self._base.loaded and other._base.loaded:
+            self._base = other._base
+            if other.runtime_state is not None:
+                self.runtime_state = other.runtime_state
+        if logins and (state := self.runtime_state) is not None:
+            state.current_login_at = min(logins)
+
+        for turn in other._turns:
+            self.add_turn(turn)
+        self._turns.sort(key=lambda turn: turn.committed_at.monotonic_ns)
+
+        for kind in ("_voice", "_face"):
+            if (mean := getattr(other, kind)) is None:
+                continue
+            if (current := getattr(self, kind)) is None:
+                setattr(self, kind, mean.copy())
+            else:
+                current.extend(mean)
+        if self._voice is not None:
+            self._observations.speaker_vector = self._voice.vector
+        if self._face is not None:
+            self._observations.face_vector = self._face.vector
+
+        if (observed := other._observations.details) is None or not other._detail_fields:
+            return
+        details = self._observations.details
+        data = details.model_dump(mode="json") if details is not None else {}
+        metadata = deepcopy(getattr(details, "_field_metadata", {}))
+        theirs = observed.model_dump(mode="json")
+        their_metadata = getattr(observed, "_field_metadata", {})
+        for name in other._detail_fields:
+            stamp, changes = other._detail_timestamps[name], other._detail_operations.get(name, [])
+            incoming = {
+                **their_metadata.get(name, {}),
+                "value": theirs.get(name),
+                "updated_at": stamp.isoformat(),
+                "changes": changes,
+            }
+            data[name], metadata[name] = merge_profile_field(
+                data.get(name), metadata.get(name, {}), incoming
+            )
+            self._detail_timestamps[name] = max(self._detail_timestamps.get(name, stamp), stamp)
+            if changes:
+                self._detail_operations.setdefault(name, []).extend(deepcopy(changes))
+        self._detail_fields |= other._detail_fields
+        self._observations.details = type(observed)(**data)
+        self._observations.details._field_metadata = metadata

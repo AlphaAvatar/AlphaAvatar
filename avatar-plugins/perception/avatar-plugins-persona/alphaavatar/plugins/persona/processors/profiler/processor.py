@@ -135,9 +135,11 @@ class ProfilerProcessor(PersonaProcessorBase):
 
         return data, accepted
 
-    async def _update_profile(self, participant_id: str, persona_cache: PersonaCache) -> None:
+    async def _update_profile(self, persona_cache: PersonaCache) -> None:
         if not persona_cache.turns:
             return
+
+        participant_id = persona_cache.participant.participant_id
 
         participant = self.session_runtime.get_participant(participant_id=participant_id)
         if participant is None or participant.user_id is None:
@@ -272,15 +274,13 @@ class ProfilerProcessor(PersonaProcessorBase):
 
         self.runtime.turn.events.clear_consumer(self.CONSUMER_ID)
 
-        if not finalize:
-            logger.info("Persona Profiler stopped without finalization")
-            return
+        logger.info("Persona Profiler stopped finalize=%s", finalize)
 
+    async def finalize_caches(self) -> None:
+        """Each user's profile from all of its session's turns: Persona has merged the caches
+        of each user's participants into one, so each user is extracted once."""
         results = await asyncio.gather(
-            *(
-                self._update_profile(participant_id, cache)
-                for participant_id, cache in self.persona.persona_cache.items()
-            ),
+            *(self._update_profile(cache) for cache in self.persona.persona_cache.values()),
             return_exceptions=True,
         )
 
@@ -297,4 +297,4 @@ class ProfilerProcessor(PersonaProcessorBase):
         if errors:
             raise ExceptionGroup("One or more Persona profiles failed to update", errors)
 
-        logger.info("Persona Profiler stopped")
+        logger.info("Persona Profiler updated the session's profiles")
