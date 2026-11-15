@@ -60,7 +60,6 @@ class AssociationRequest:
     device_participant_id: str | None
     occupied_kinds: tuple[tuple[str, str], ...] = ()
     peer_participant_ids: frozenset[str] = frozenset()
-    candidate_count: int = 1
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, PerceptionSourceRef) or not isinstance(
@@ -70,8 +69,6 @@ class AssociationRequest:
         validate_identity(self.kind, name="kind")
         if self.device_participant_id is not None:
             validate_identity(self.device_participant_id, name="device_participant_id")
-        if type(self.candidate_count) is not int or self.candidate_count < 1:
-            raise ValueError("candidate_count must be a positive integer")
         object.__setattr__(
             self,
             "occupied_kinds",

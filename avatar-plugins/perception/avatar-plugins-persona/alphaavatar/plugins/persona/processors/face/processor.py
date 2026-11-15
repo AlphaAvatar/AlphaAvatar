@@ -55,6 +55,16 @@ from .tracking import FaceTracks
 logger = logging.getLogger(__name__)
 
 
+def _face_area(face: dict[str, Any]) -> float:
+    """The area of a detected face's box: the nearer the face to the camera, the larger. A
+    face without a box is the farthest."""
+    bbox = face.get("bbox")
+    if bbox is None or len(bbox) != 4:
+        return 0.0
+    x1, y1, x2, y2 = (float(value) for value in bbox)
+    return max(x2 - x1, 0.0) * max(y2 - y1, 0.0)
+
+
 @dataclass(frozen=True, slots=True)
 class FaceFrameJob:
     observation: EnvObservation
@@ -386,16 +396,12 @@ class FaceProcessor(PersonaProcessorBase):
         return cache.participant
 
     def _participant_for(
-        self, job: FaceFrameJob, entity: PerceptionEntityRef, *, candidate_count: int
+        self, job: FaceFrameJob, entity: PerceptionEntityRef
     ) -> Participant | None:
         """The entity's participant, with this frame's device as evidence."""
         try:
             return self.runtime.participants.ensure_entity(
-                job.observation.source,
-                entity,
-                kind="face",
-                device_id=job.observation.device_id,
-                candidate_count=candidate_count,
+                job.observation.source, entity, kind="face", device_id=job.observation.device_id
             )
         except (ValueError, RuntimeError):
             logger.debug("Face entity admission unavailable source=%s", job.observation.source)
@@ -487,7 +493,10 @@ class FaceProcessor(PersonaProcessorBase):
                 FACE_INFERENCE_THRESHOLD,
             )
 
-        # One frame inference supplies all faces; their identities go to their own lane.
+        # One frame inference supplies all faces; their identities go to their own lane. Nearest
+        # first: past max_faces the farthest are not tracked, the nearest are identified first,
+        # and on the primary participant's device the nearest new face is the one it takes.
+        faces.sort(key=_face_area, reverse=True)
         candidates = faces[: self._config.max_faces]
         vectors = [self._face_vector(face) for face in candidates]
         associated = self._tracks.resolve(job.observation.source, vectors)
@@ -499,7 +508,7 @@ class FaceProcessor(PersonaProcessorBase):
             if entity is None:
                 continue
 
-            participant = self._participant_for(job, entity, candidate_count=len(faces))
+            participant = self._participant_for(job, entity)
             if participant is None:
                 # Admission refused: an entity associated already stays in the evidence.
                 if (

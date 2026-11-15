@@ -192,3 +192,40 @@
 - 只改这个私有字段的三处，按词边界替换；仓库里没有别的引用，行为不变。
 - 验证（离线）：Memory 的 ruff、format 通过，Memory 测试 30 个通过；`git diff --check` 通过。没有重跑全量测试。
 - 待办 1～5 项至此都已完成。
+
+# 第十三批：删除 `candidate_count`
+
+- 用户的目标：人脸按离摄像头由近到远排序，主参与者默认绑定最近的那张脸，以减少噪声。本批是第一步，按用户的判断删除多余的 `candidate_count`；排序留到下一批。
+- 改之前：人脸处理器把整帧检测到的人脸数（`len(faces)`，包括没有向量、不会被跟踪的脸）作为 `candidate_count` 传给 `ensure_entity`，再放进 `AssociationRequest`。`PrimaryParticipantIdentityPolicy` 只在它等于 1 时把人脸交给主参与者。因此主参与者的摄像头里一帧有两张以上的脸时，没有一张交给主参与者，每张都成为新参与者；之后设备上已有别的参与者，主参与者再也得不到人脸。说话人一直传默认值 1。
+- 删除：
+  - Core `AssociationRequest.candidate_count` 字段及其校验；
+  - `ParticipantRuntime.ensure_entity` 的同名参数、校验和转交；
+  - 策略里 `candidate_count != 1` 这一条；
+  - 人脸处理器 `_participant_for` 的参数。
+
+  策略的其余条件不变：设备属于主参与者、主参与者还没有这一类实体、设备上没出现过别的参与者。
+- 现在一帧的几张脸里，最先处理的那张交给主参与者，其余成为新参与者。最先处理的是检测器给出的第一张，还不是最近的那张；下一批排序后才是最近的那张。`identifiers-zh.md` 写的"主参与者设备上的第一个人脸实体交给主参与者"与此一致，没有改。
+- 测试：
+  - 原来没有测试覆盖"多张脸不交给主参与者"，删除后全量测试照旧。
+  - 新增 `test_a_frame_of_several_faces_fills_the_primary_participant_with_one`：用 Host 装配的 `PrimaryParticipantIdentityPolicy`，主参与者的摄像头一帧出现两张脸，一张属于主参与者，另一张属于新参与者。为此测试辅助函数 `avatar_runtime` 可以传入身份策略。
+  - 把四个文件换回 HEAD 的版本后，这个测试失败（主参与者得到 0 张脸）。
+- 验证（离线）：
+  - ruff、format、`git diff --check` 通过。
+  - 删除后全量测试 736 个，735 个通过，失败的仍是 Router 计时用例 `test_late_stt_final_after_transcript_timeout_never_revives_the_input[listening0]`。
+  - 新增测试后，Persona、参与者和 Core 的测试 182 个通过。
+
+# 第十四批：一帧的人脸由近到远排序
+
+- 用户决定：只排序，不要求最近的一张比第二张明显更大。讨论时确认过，若加差距而差不多近的那帧不交给主参与者，这一帧的脸照样会成为新参与者，设备也已出现过别的参与者，主参与者在会话内再也得不到人脸（`_association_devices` 只在 `ParticipantRuntime` 关闭时清空）。
+- 改之前：检测器按检测分数给出人脸，`faces[: max_faces]` 留下的是分数最高的；第十三批后，主参与者拿到的是检测器给出的第一张。
+- 改动：
+  - 人脸处理器在 `faces[: max_faces]` 之前，用模块级的 `_face_area` 按人脸框面积从大到小排序（近大远小）。没有框的脸面积为 0，排在最后。
+  - 标注、跟踪、身份检索都按这个顺序：超过 `max_faces` 时不跟踪的是最远的脸，近的脸先做身份检索，主参与者设备上的新脸由最近的那张交给主参与者。
+  - 跟踪的匹配与顺序无关（每张脸都对着这一帧之前的跟踪打分）；Router 的视觉寻址遍历全部人脸，也不依赖顺序。
+  - `max_faces` 加注释。Persona README 补上排序规则。`identifiers-zh.md` 的主参与者规则补上"取人脸框最大的那张"和"设备上出现过别的参与者后不再交给主参与者"，第十一批没更新的 KD-39 那句也一并改为"会话结束时合并为一个缓存"。`docs/bugs-zh.md` 的 O-25 记下两人离摄像头差不多远时交给谁不确定，随多人问题处理。
+- 测试：
+  - 测试替身可以给每张脸指定框的边长（`face_sizes`）。
+  - 第十三批的测试收紧为 `test_a_frame_of_several_faces_fills_the_primary_participant_with_the_nearest`：检测器先给出较远的 alice，较近的 bob 属于主参与者，并且先做身份检索。
+  - 新增 `test_past_max_faces_the_farthest_faces_of_a_frame_are_not_tracked`：`max_faces=1` 时只跟踪、检索较近的那张，较远的那张留在标注里、没有实体。
+  - 三处变异都被这两个测试发现：不排序、由远到近、截取之后才排序。没有框的脸排在最后这一条没有单独的测试。
+- 验证（离线）：ruff、format、工作区结构检查、`git diff --check` 通过；全量测试 738 个全部通过。

@@ -249,7 +249,6 @@ class ParticipantRuntime:
         kind: EntityKind,
         participant_id: str | None = None,
         device_id: str | None = None,
-        candidate_count: int = 1,
     ) -> Participant:
         """The entity's participant, on this source too: the one it is bound to, the one named,
         or, for an entity new to the session, the one identity policy selects or a newcomer."""
@@ -257,8 +256,6 @@ class ParticipantRuntime:
             raise ValueError("Participant association kind must be face or speaker")
         if device_id is not None:
             validate_identity(device_id, name="device_id")
-        if type(candidate_count) is not int or candidate_count < 1:
-            raise ValueError("candidate_count must be a positive integer")
 
         participant = (
             self._require_participant(participant_id) if participant_id is not None else None
@@ -288,7 +285,6 @@ class ParticipantRuntime:
                         for value in sorted(values)
                     ),
                     peer_participant_ids=frozenset(self._association_devices.get(device_id, ())),
-                    candidate_count=candidate_count,
                 )
             )
 

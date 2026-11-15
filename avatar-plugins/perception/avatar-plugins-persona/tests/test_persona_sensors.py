@@ -31,7 +31,10 @@ import pytest
 import alphaavatar.plugins.persona  # noqa: F401  Registers the default Persona plugin.
 from alphaavatar.agents.persona.schemas import FaceDetectionResult
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
-from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+from alphaavatar.agents.runtime.modules.participants import (
+    ParticipantRuntime,
+    PrimaryParticipantIdentityPolicy,
+)
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.core.env import EnvObservation
@@ -101,6 +104,7 @@ class SensorInference:
         self.vector_samples: list[int] = []  # The length of each speaker vector request
         self.voices: deque[np.ndarray] = deque()  # Speaker vectors to answer first, in order
         self.saves: list[str] = []
+        self.face_sizes: dict[str, float] = {}  # A face's box side in pixels, 90 unless given
 
     async def _maybe_hold(self, user: str) -> None:
         if user == self.hold:
@@ -136,7 +140,12 @@ class SensorInference:
                 await self._maybe_hold(user)
             faces = [
                 {
-                    "bbox": [100.0 * index, 0.0, 100.0 * index + 90, 90.0],
+                    "bbox": [
+                        100.0 * index,
+                        0.0,
+                        100.0 * index + self.face_sizes.get(user, 90.0),
+                        self.face_sizes.get(user, 90.0),
+                    ],
                     "det_score": 0.9,
                     "embedding": embedding(user, 512).tolist(),
                     "age": 30 + 20 * index,
@@ -167,10 +176,10 @@ class SensorInference:
         pass
 
 
-def avatar_runtime(root: Path, inference: SensorInference) -> AvatarRuntime:
+def avatar_runtime(root: Path, inference: SensorInference, *, policy=None) -> AvatarRuntime:
     workspace = WorkspacePaths.from_root(root / "avatar")
     prepare_workspace(workspace)
-    session = SessionRuntime(session_id="session")
+    session = SessionRuntime(session_id="session", identity_policy=policy)
     session_path = workspace.data.sessions.get("session", date(2026, 11, 2))
     prepare_session_path(session_path)
     perception = PerceptionRuntime(
@@ -1359,6 +1368,60 @@ async def test_one_face_is_one_participant_across_cameras_and_generations(tmp_pa
     assert len(runtime.session.participants) == 1
     assert face._tracks._tracks[entity.entity_id].sources == sources
     await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_frame_of_several_faces_fills_the_primary_participant_with_the_nearest(
+    tmp_path: Path,
+) -> None:
+    # The primary participant's camera shows two faces in one frame, the detector giving the
+    # farther first: the nearer (larger box) is the primary participant's face and is identified
+    # first, the other is a new participant's.
+    inference = SensorInference()
+    inference.replies.extend(["none"] * 2)  # Neither in the library
+    inference.face_sizes["bob"] = 150.0
+    runtime = avatar_runtime(tmp_path, inference, policy=PrimaryParticipantIdentityPolicy())
+    owner = runtime.participants.join(primary=True)
+    runtime.participants.bind_device("camera", owner.participant_id)
+    persona = persona_for(runtime, "face")
+    await persona.on_start()
+    source = PerceptionSourceRef("camera", 1)
+    show(runtime, source, "alice", "bob")
+    await wait_until(lambda: len(inference.searches) == 2, "a face was never searched")
+
+    (annotation,) = face_annotations(runtime)
+    owners = {
+        face.bbox[3]: runtime.participants.resolve(source=source, entity=face.entity)
+        for face in FaceDetectionResult.from_annotation(annotation).faces
+    }
+    assert owners[150.0].participant_id == owner.participant_id
+    assert owners[90.0] is not None and owners[90.0].participant_id != owner.participant_id
+    assert inference.searches == ["face:bob", "face:alice"]
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_past_max_faces_the_farthest_faces_of_a_frame_are_not_tracked(tmp_path: Path) -> None:
+    # With room for one face, the nearer of two is tracked and identified, whichever the
+    # detector gave first; the farther stays in the evidence without an entity.
+    inference = SensorInference()
+    inference.face_sizes["bob"] = 150.0
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "face", max_faces=1)
+    await persona.on_start()
+    show(runtime, PerceptionSourceRef("camera", 1), "alice", "bob")
+    await wait_until(
+        lambda: inference.searches == ["face:bob"], "the nearer face was never searched"
+    )
+
+    (annotation,) = face_annotations(runtime)
+    faces = FaceDetectionResult.from_annotation(annotation).faces
+    assert [(face.bbox[3], face.entity is not None) for face in faces] == [
+        (150.0, True),
+        (90.0, False),
+    ]
+    await persona.on_stop()
+    assert inference.searches == ["face:bob"]
     await runtime.aclose()
 
 

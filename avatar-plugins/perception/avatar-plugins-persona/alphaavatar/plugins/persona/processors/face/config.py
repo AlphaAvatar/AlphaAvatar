@@ -22,6 +22,7 @@ class FaceConfig(BaseModel):
     # Seconds of one source's sampled frames (one every VIDEO_PERSONA_INTERVAL_SEC) the frame
     # queue holds while analysis is behind; the oldest give way to newer ones.
     frame_queue_sec: float = Field(default=0.4, gt=0, allow_inf_nan=False)
+    # Faces of a frame tracked, nearest (largest box) first.
     max_faces: int = Field(default=16, ge=1, le=128)
     # Participants whose face attributes are kept; the earliest kept goes first.
     max_face_caches: int = Field(default=128, ge=1, le=1024)

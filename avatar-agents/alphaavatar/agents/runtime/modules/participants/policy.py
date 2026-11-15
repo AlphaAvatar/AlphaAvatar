@@ -26,7 +26,6 @@ class PrimaryParticipantIdentityPolicy(DefaultIdentityPolicy):
             primary is None
             or primary not in snapshot.participants
             or request.kind not in {"face", "speaker"}
-            or request.candidate_count != 1
             or request.device_participant_id != primary
             or (primary, request.kind) in request.occupied_kinds
             or any(value != primary for value in request.peer_participant_ids)
