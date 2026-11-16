@@ -33,7 +33,7 @@ import doctor_doubles as doubles
 import pytest
 from config_samples import CONFIG, LOOP, SECRETS, files, write
 
-import alphaavatar.host.doctor as host_doctor
+import alphaavatar.host.tools.doctor as host_doctor
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
@@ -42,8 +42,8 @@ from alphaavatar.core.log.records import clean
 from alphaavatar.host.cli import render
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.cli.commands.doctor import GROUPS
-from alphaavatar.host.doctor import CHECKS, Check, CheckStatus, Report
-from alphaavatar.host.setup.environment import Installation
+from alphaavatar.host.tools.doctor import CHECKS, Check, CheckStatus, Report
+from alphaavatar.host.tools.setup.environment import Installation
 
 IDS = [spec.id for spec in CHECKS]
 SESSION = ("session.start", "models.runners", "session.scenarios", "session.cleanup")

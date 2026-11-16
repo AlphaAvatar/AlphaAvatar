@@ -51,7 +51,7 @@ def _needed(out: Report, question: str, default: str = "") -> str:
 
 
 def _server(out: Report, question: str, *, speech: bool) -> str:
-    from alphaavatar.host.setup.choices import server_problem
+    from alphaavatar.host.tools.setup.choices import server_problem
 
     while True:
         url = _needed(out, question, "http://localhost:8000/v1").rstrip("/")
@@ -72,7 +72,7 @@ def _yes(out: Report, question: str, default: bool = True) -> bool:
 def _choose(out: Report):
     """Each part of the reference configuration, kept or changed; a server of one's own for
     the models or speech, if chosen."""
-    from alphaavatar.host.setup.choices import Models, Selection, Speech
+    from alphaavatar.host.tools.setup.choices import Models, Selection, Speech
 
     out.wrapped(
         "From the reference configuration: voice and vision on, memory and persona, each "
@@ -157,8 +157,8 @@ def _session_credentials(rtc, env, *, typed: bool = False) -> None:
     from pydantic import ValidationError
 
     from alphaavatar.core.log import error_fields
-    from alphaavatar.host.sessions.factory import check_session_credentials
-    from alphaavatar.host.setup.environment import SetupError
+    from alphaavatar.host.service.sessions.factory import check_session_credentials
+    from alphaavatar.host.tools.setup.environment import SetupError
 
     try:
         check_session_credentials(rtc, env)
@@ -185,8 +185,8 @@ def _credentials(selection, paths, out: Report, rtc) -> tuple[dict[str, str], di
     import getpass
 
     from alphaavatar.host.configs.credentials import stored_credentials
-    from alphaavatar.host.setup.choices import credentials
-    from alphaavatar.host.setup.environment import SetupError
+    from alphaavatar.host.tools.setup.choices import credentials
+    from alphaavatar.host.tools.setup.environment import SetupError
 
     values, missing = {}, []
     for credential in credentials(selection):
@@ -291,15 +291,15 @@ def _setup(args: argparse.Namespace) -> int:
     from alphaavatar.host.configs.bundles import bundle_path, check_bundle_name, read_settings
     from alphaavatar.host.configs.credentials import load_environment, stored_credentials
     from alphaavatar.host.configs.template import create_bundle, render_bundle, set_default_bundle
-    from alphaavatar.host.setup import choices
-    from alphaavatar.host.setup.environment import (
+    from alphaavatar.host.tools.setup import choices
+    from alphaavatar.host.tools.setup.environment import (
         Installation,
         SetupError,
         Sources,
         check_environment,
         install,
     )
-    from alphaavatar.host.setup.plan import PlanError, plan_install
+    from alphaavatar.host.tools.setup.plan import PlanError, plan_install
 
     existing = args.bundle  # Set up as its settings say; without one, each part is asked.
     terminal = sys.stdin.isatty()

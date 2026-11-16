@@ -198,7 +198,7 @@ this case); `turn` when its final came, after the Turn committed or in time but 
 `turn.committed`, or `transcript` for `unknown`. KD-17, a turn cancelled while waiting for a
 slow final, stays open; these show where a round loses a sentence, not why turn taking did.
 
-The spoken samples are recordings shipped in the Host package (`alphaavatar/host/doctor/
+The spoken samples are recordings shipped in the Host package (`alphaavatar/host/tools/doctor/
 samples/`, 16 kHz mono PCM16, about 2.4 s and 3.3 s), made offline with FFmpeg's flite voice
 by `scripts/quality/doctor_samples.py make`; `scripts/quality/doctor_samples.py check` reads
 them back through Doctor, and CI does so from the built wheel alone. Doctor needs nothing else: small
@@ -538,7 +538,7 @@ to fix, since `config init` and runs without a configuration argument read it. W
 argument, the default bundle comes from the same read of the settings as the stored
 credentials, and settings or stored credentials that cannot be read fail `config.load`.
 
-An App or TUI can call `alphaavatar.host.doctor.diagnose(target, overrides)` (async), or
+An App or TUI can call `alphaavatar.host.tools.doctor.diagnose(target, overrides)` (async), or
 `prepare(...)` for the static checks and `Diagnosis.run()` for the session; the CLI reads
 `.env`, parses arguments, handles Ctrl+C and prints. The session's process is started with
 `spawn`, as inference runners are, so a script that calls these needs the usual

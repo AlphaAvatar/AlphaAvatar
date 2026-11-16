@@ -201,8 +201,8 @@ run "$py" -I - "$tree" <<'PY' || die "The catalog cannot plan the reference bund
 import json, sys
 from pathlib import Path
 from alphaavatar.host.configs import load_selections, select_configuration
-from alphaavatar.host.setup.choices import Selection, bundle_requirements, requirements
-from alphaavatar.host.setup.plan import plan_install
+from alphaavatar.host.tools.setup.choices import Selection, bundle_requirements, requirements
+from alphaavatar.host.tools.setup.plan import plan_install
 catalog = json.loads((Path(sys.argv[1]) / "share/alphaavatar/catalog.json").read_text())
 host, avatar = load_selections(select_configuration("reference"))
 needs, unserved = bundle_requirements(host, avatar, catalog["plugins"])

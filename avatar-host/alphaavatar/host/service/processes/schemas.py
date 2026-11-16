@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.host.sessions.schemas import SessionRequest
+from alphaavatar.host.service.sessions.schemas import SessionRequest
 
 IPC_VERSION = 2
 MAX_LAUNCH_BYTES = 4194304

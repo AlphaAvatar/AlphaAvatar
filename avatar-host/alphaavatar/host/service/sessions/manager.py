@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.host.execution.execution import HostExecution
+from alphaavatar.host.service.execution.execution import HostExecution
 
 from .attachment import SessionAttachment
 

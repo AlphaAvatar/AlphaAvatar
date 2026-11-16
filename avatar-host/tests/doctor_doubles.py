@@ -537,14 +537,14 @@ def child(*args: object) -> None:
         runs.write(json.dumps(line) + "\n")
     _deny_network(files / "network", spec.get("loopback"))
     install(spec, files)
-    from alphaavatar.host.doctor import process
+    from alphaavatar.host.tools.doctor import process
 
     process._main(*args)
 
 
 def install(spec: dict, files: Path) -> None:
     """The stand-ins, resolved where the configuration names its plugins and runners."""
-    from alphaavatar.host.doctor import samples, session
+    from alphaavatar.host.tools.doctor import samples, session
 
     llm = ScriptedLLM(files, **spec.get("llm", {}))
     stt = ScriptedSTT(list(spec.get("stt", ())), files, chatty=spec.get("stdout", False))

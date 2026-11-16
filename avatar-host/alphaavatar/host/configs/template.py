@@ -212,7 +212,7 @@ def render_bundle(
     import yaml
 
     from alphaavatar.agents.configs import AvatarConfig
-    from alphaavatar.host.application.config import HostConfig
+    from alphaavatar.host.service.application.config import HostConfig
 
     check_bundle_name(name)
     bodies = SECTIONS | dict(sections or {})

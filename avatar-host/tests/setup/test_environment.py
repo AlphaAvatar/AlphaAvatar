@@ -29,9 +29,9 @@ from pathlib import Path
 
 import pytest
 
-from alphaavatar.host.setup import environment
-from alphaavatar.host.setup.environment import Installation, SetupError, Sources, install
-from alphaavatar.host.setup.plan import Artifact, Plan, PlanError, plan_install
+from alphaavatar.host.tools.setup import environment
+from alphaavatar.host.tools.setup.environment import Installation, SetupError, Sources, install
+from alphaavatar.host.tools.setup.plan import Artifact, Plan, PlanError, plan_install
 
 CATALOG = {
     "format": 1,

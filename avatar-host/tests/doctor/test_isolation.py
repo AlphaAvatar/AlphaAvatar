@@ -30,9 +30,9 @@ import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.core.log.trace import InputTrace
 from alphaavatar.host.configs import load_application
-from alphaavatar.host.doctor import samples, session
-from alphaavatar.host.doctor.doctor import _external
-from alphaavatar.host.doctor.transport import LogRecord, SourceTimeline
+from alphaavatar.host.tools.doctor import samples, session
+from alphaavatar.host.tools.doctor.doctor import _external
+from alphaavatar.host.tools.doctor.transport import LogRecord, SourceTimeline
 
 THIRD_PARTY = Path(__file__).parents[1] / "fixtures" / "thirdparty"
 

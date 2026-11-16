@@ -10,15 +10,19 @@ do not depend on Host. The App is not required to run the service.
 alphaavatar/host/
 ├── main.py             # Public alphaavatar command.
 ├── version.py
-├── cli/                # dev/start, arguments, help and version.
+├── cli/                # Commands (dev/start, config, setup, doctor), arguments and rendering.
 ├── configs/            # Strict Host/Avatar configuration loading.
 ├── workspace/          # Application, config and cache paths; Workspace continuity.
-├── application/        # Bootstrap, shared services, health and signals.
-├── execution/          # Hosted execution ownership and end policies.
-├── processes/          # Execution subprocesses, IPC and bounded cleanup.
-├── sessions/           # Attachments, modes and backend selection.
-│   └── livekit/        # Native dispatch, connections and Character transport.
-└── log/                # Console, JSONL, previews and optional event diagnostics.
+├── log/                # Console, JSONL, previews and optional event diagnostics.
+├── service/            # The running Host.
+│   ├── application/    # Bootstrap, shared services, health and signals.
+│   ├── execution/      # Hosted execution ownership and end policies.
+│   ├── processes/      # Execution subprocesses, IPC and bounded cleanup.
+│   └── sessions/       # Attachments, modes and backend selection.
+│       └── livekit/    # Native dispatch, connections and Character transport.
+└── tools/              # Run on demand, beside the service.
+    ├── doctor/         # Static and runtime diagnosis.
+    └── setup/          # Installation planning and environments.
 ```
 
 [Startup overview](../.github/assets/avatar-host/start-up-flow.png) ·
@@ -58,7 +62,7 @@ every command and the bundle layout. The Python entry points live in
 `alphaavatar.host.configs` (`select_configuration`, `load_application`,
 `check_application_paths`, `validate_plugin_settings`, `create_bundle`, `read_settings`,
 `describe_summary`, `describe_application`, `describe_error`, `format_failure`,
-`output_scrubber`); Doctor's report comes from `alphaavatar.host.doctor.diagnose` (async),
+`output_scrubber`); Doctor's report comes from `alphaavatar.host.tools.doctor.diagnose` (async),
 or `prepare` and `Diagnosis.run` to run the static checks first.
 
 ## Configuration

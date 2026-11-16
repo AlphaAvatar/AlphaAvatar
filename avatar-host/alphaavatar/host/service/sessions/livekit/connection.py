@@ -20,8 +20,8 @@ from livekit import rtc
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.host.sessions.base import SessionConnection
-from alphaavatar.host.sessions.schemas import SessionContext, SessionEnd, SessionRequest
+from alphaavatar.host.service.sessions.base import SessionConnection
+from alphaavatar.host.service.sessions.schemas import SessionContext, SessionEnd, SessionRequest
 from alphaavatar.rtc.livekit.utils.events import RoomEventBindings
 
 from .config import LiveKitConfig, websocket_url

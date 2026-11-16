@@ -104,9 +104,9 @@ Find the owner before adding state, a background task or a close operation.
 
 | Owner | What it owns | Implementation entry |
 | --- | --- | --- |
-| Host application | Shared services, execution supervision, health and signals. | [application/](avatar-host/alphaavatar/host/application/). |
-| Host execution | A child execution's Engine and AvatarRuntime lifecycle. | [execution/](avatar-host/alphaavatar/host/execution/). |
-| Session attachment | Input/output adapters, subscriptions and connection attachment. | [sessions/](avatar-host/alphaavatar/host/sessions/). |
+| Host application | Shared services, execution supervision, health and signals. | [service/application/](avatar-host/alphaavatar/host/service/application/). |
+| Host execution | A child execution's Engine and AvatarRuntime lifecycle. | [service/execution/](avatar-host/alphaavatar/host/service/execution/). |
+| Session attachment | Input/output adapters, subscriptions and connection attachment. | [service/sessions/](avatar-host/alphaavatar/host/service/sessions/). |
 | SessionRuntime | Participants, accepted identity bindings and session events. | [session/](avatar-core/alphaavatar/core/session/). |
 | AvatarRuntime | Composition of state, Core runtimes, Foundation, participants and capabilities. | [runtime.py](avatar-agents/alphaavatar/agents/runtime/runtime.py). |
 | PerceptionRuntime | Observation/annotation publication, source lineage and temporal evidence. | [perception/](avatar-core/alphaavatar/core/perception/). |
@@ -575,7 +575,7 @@ Use this table to avoid starting in a convenient but non-owning module.
 | --- | --- |
 | CLI argument/help/default | Host `cli/` → command implementation → `docs/cli/` → CLI tests. |
 | Bundle/profile option | Host `configs/` → Agents config → plugin validation → example/CLI docs. |
-| Startup or subprocess cleanup | Host application/execution/processes → lifecycle owner → lifecycle tests. |
+| Startup or subprocess cleanup | Host `service/` application/execution/processes → lifecycle owner → lifecycle tests. |
 | RTC input/output | RTC adapter → injected Core contract → Host assembly → adapter tests. |
 | VAD or segment timing | Voice VAD → Router audio activity → source/segment evidence → timing tests. |
 | STT request/terminal state | Voice STT → Router transcription → turn-taking deadline/admission → Doctor. |
@@ -590,7 +590,7 @@ Use this table to avoid starting in a convenient but non-owning module.
 | Doctor metric | Producer trace boundary → Core trace schema → Host measurement → compare script/tests/docs. |
 | New plugin/package | Plugin boundary guide → entry points/factory → metadata/workspace/lock → catalog/tests. |
 | Future App presentation | App design/implementation → Core/RTC delivery contract → frontend checks. |
-| Deployment or install | Host/setup or packaging → `docs/DEPLOY.md` / setup guide → installation validation. |
+| Deployment or install | Host `tools/setup` or packaging → `docs/DEPLOY.md` / setup guide → installation validation. |
 
 Search with `rg` for a contract's constructors, serializers and consumers before renaming it.
 When changing trace fields, inspect both producers and offline report reconstruction.

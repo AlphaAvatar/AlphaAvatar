@@ -20,18 +20,18 @@ from uuid import uuid4
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import LifecycleComponent
-from alphaavatar.host.sessions.attachment import SessionAttachment
-from alphaavatar.host.sessions.base import SessionBackend, SessionConnection
-from alphaavatar.host.sessions.mode import resolve_session_mode, resolve_session_type
-from alphaavatar.host.sessions.schemas import SessionRequest
+from alphaavatar.host.service.sessions.attachment import SessionAttachment
+from alphaavatar.host.service.sessions.base import SessionBackend, SessionConnection
+from alphaavatar.host.service.sessions.mode import resolve_session_mode, resolve_session_type
+from alphaavatar.host.service.sessions.schemas import SessionRequest
 
 from .config import LiveKitConfig, LiveKitCredentials
 from .connection import LiveKitConnection
 
 if TYPE_CHECKING:
     from alphaavatar.host.configs.application import ApplicationConfig
-    from alphaavatar.host.execution.execution import HostExecution
-    from alphaavatar.host.execution.manager import ExecutionManager
+    from alphaavatar.host.service.execution.execution import HostExecution
+    from alphaavatar.host.service.execution.manager import ExecutionManager
 
     from .dispatch import LiveKitDispatch
 

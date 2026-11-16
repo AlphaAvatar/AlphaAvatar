@@ -32,8 +32,8 @@ import yaml
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.host.cli.app import main
-from alphaavatar.host.setup import environment
-from alphaavatar.host.setup.choices import Selection, requirements, sections
+from alphaavatar.host.tools.setup import environment
+from alphaavatar.host.tools.setup.choices import Selection, requirements, sections
 
 CREDENTIALS = {
     "OPENAI_API_KEY": "sk-fictional-0042",
@@ -428,7 +428,7 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
 ) -> None:
     from alphaavatar.host.configs import application_paths, load_application, select_configuration
     from alphaavatar.host.configs.credentials import stored_credentials
-    from alphaavatar.host.setup.choices import server_key
+    from alphaavatar.host.tools.setup.choices import server_key
 
     a, b = "http://a.invalid:8000/v1", "http://b.invalid:8000/v1"
     prompts: list[str] = []

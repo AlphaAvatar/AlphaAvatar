@@ -49,11 +49,11 @@ from alphaavatar.core.media import AudioFrame, AudioFramePayload
 from alphaavatar.core.output.enums import OutputLane
 from alphaavatar.core.output.schemas import OutputTranscriptChunk
 from alphaavatar.core.output.stream import OutputSubscription
-from alphaavatar.host.application.bootstrap import create_execution
 from alphaavatar.host.configs import load_application
-from alphaavatar.host.doctor.transport import DiagnosticSink
-from alphaavatar.host.execution.execution import HostExecution
-from alphaavatar.host.sessions.schemas import SessionContext
+from alphaavatar.host.service.application.bootstrap import create_execution
+from alphaavatar.host.service.execution.execution import HostExecution
+from alphaavatar.host.service.sessions.schemas import SessionContext
+from alphaavatar.host.tools.doctor.transport import DiagnosticSink
 from alphaavatar.plugins.router.processors.turn_taking import processor as turn_taking
 
 HANG_GUARD = 20

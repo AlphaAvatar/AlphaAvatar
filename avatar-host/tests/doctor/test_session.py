@@ -46,7 +46,7 @@ import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.cli.commands import doctor as cli_doctor
 from alphaavatar.host.configs import ConfigSource, load_application
-from alphaavatar.host.doctor import (
+from alphaavatar.host.tools.doctor import (
     prepare,
     process as doctor_process,
     samples,
@@ -973,8 +973,8 @@ def reference_run(tmp_path: Path, statuses) -> tuple[object, frozenset[str]]:
     from alphaavatar.agents.runtime.inference import plan_inference_runners
     from alphaavatar.host.configs.paths import ApplicationPaths
     from alphaavatar.host.configs.template import create_bundle
-    from alphaavatar.host.doctor import CheckStatus
-    from alphaavatar.host.doctor.schemas.session import RunnerResult
+    from alphaavatar.host.tools.doctor import CheckStatus
+    from alphaavatar.host.tools.doctor.schemas.session import RunnerResult
 
     paths = ApplicationPaths.from_root(tmp_path / "home")
     create_bundle(paths, "ref", avatar_id="ref")

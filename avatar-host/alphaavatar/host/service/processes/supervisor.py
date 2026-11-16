@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.host.sessions.schemas import SessionRequest
+from alphaavatar.host.service.sessions.schemas import SessionRequest
 
 from .config import ProcessConfig
 from .group import ProcessGroup

@@ -26,7 +26,8 @@ import pytest
 
 from alphaavatar.host.cli.commands import doctor as doctor_command
 from alphaavatar.host.cli.render import Report
-from alphaavatar.host.doctor import (
+from alphaavatar.host.log.format import BRAND_BLUE, GREEN, RESET, SIGNAL_CYAN
+from alphaavatar.host.tools.doctor import (
     CHECKS,
     Check,
     CheckStatus,
@@ -35,7 +36,6 @@ from alphaavatar.host.doctor import (
     ScenarioOutcome,
     ScenarioResult,
 )
-from alphaavatar.host.log.format import BRAND_BLUE, GREEN, RESET, SIGNAL_CYAN
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 COLOR = re.compile(r"\x1b\[[0-9;]*m")  # Styles alone; line erases stay.
@@ -227,7 +227,7 @@ def metric(name: str, value: float | None, note: str | None = None, **fields) ->
 
 def diagnosis(*scenarios: ScenarioResult) -> Diagnosis:
     """Every check passed but the media devices; the session ran these rounds."""
-    from alphaavatar.host.doctor.measure import summarize
+    from alphaavatar.host.tools.doctor.measure import summarize
 
     checks = []
     for spec in CHECKS:

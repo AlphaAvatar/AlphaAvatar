@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import pytest
 
-from alphaavatar.host.doctor import samples
-from alphaavatar.host.doctor.enums import ScenarioOutcome
-from alphaavatar.host.doctor.measure import TurnObservation, scenario, summarize
-from alphaavatar.host.doctor.schemas import Metric, ScenarioResult
-from alphaavatar.host.doctor.transport import LogRecord, OutputRecord, SourceTimeline
+from alphaavatar.host.tools.doctor import samples
+from alphaavatar.host.tools.doctor.enums import ScenarioOutcome
+from alphaavatar.host.tools.doctor.measure import TurnObservation, scenario, summarize
+from alphaavatar.host.tools.doctor.schemas import Metric, ScenarioResult
+from alphaavatar.host.tools.doctor.transport import LogRecord, OutputRecord, SourceTimeline
 
 MS = 1_000_000
 START = 1000  # The frame with the last voiced sample, in ms
@@ -545,7 +545,7 @@ def test_a_request_without_the_turns_input_does_not_pass_and_evidence_keeps_its_
 
 
 def test_frames_context_selected_are_told_apart_from_frames_the_request_carried() -> None:
-    from alphaavatar.host.doctor.transport import Frame
+    from alphaavatar.host.tools.doctor.transport import Frame
 
     timeline = SourceTimeline(started_ns=1, voiced_end_ns=START * MS, voiced_end_sequence=3)
     timeline.frames = [Frame("screen", n, f"frame-{n}", n * MS, n * MS) for n in (1, 2)]
@@ -772,7 +772,7 @@ def run(at: int, value: float | None, outcome: str = "passed", **fields) -> Scen
 
 
 def test_the_95th_percentile_waits_for_enough_samples() -> None:
-    from alphaavatar.host.doctor.measure import P95_SAMPLES
+    from alphaavatar.host.tools.doctor.measure import P95_SAMPLES
 
     few = summarize([run(at, float(at)) for at in range(1, P95_SAMPLES + 1)])[0].figures[0]
     # Round 1 apart: the later rounds are one short of the threshold.

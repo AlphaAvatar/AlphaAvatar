@@ -406,7 +406,7 @@ class _Run:
     async def execute(self) -> None:
         """The runtime started once, as start starts it, then each round of the scenario,
         each in a session of its own; nothing starts unauthorized, nor partly."""
-        from alphaavatar.host.application.application import create_inference_runtime
+        from alphaavatar.host.service.application.application import create_inference_runtime
 
         if self.blocked is not None:
             return
@@ -469,9 +469,9 @@ class _Run:
     async def _session(self, task: samples.Task, at: int) -> None:
         """One round of the scenario, in a session of its own: nothing of an earlier round
         is in its history."""
-        from alphaavatar.host.application.bootstrap import create_execution
-        from alphaavatar.host.execution.execution import HostExecution
-        from alphaavatar.host.sessions.schemas import SessionContext
+        from alphaavatar.host.service.application.bootstrap import create_execution
+        from alphaavatar.host.service.execution.execution import HostExecution
+        from alphaavatar.host.service.sessions.schemas import SessionContext
 
         config, tasks = self.config, (task,)
         session_id = f"doctor-{uuid4().hex}"

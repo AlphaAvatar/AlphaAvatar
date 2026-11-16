@@ -141,8 +141,8 @@ jobs:
               ("alphaavatar.rtc.livekit.video.input", "LiveKitVideoInput"),
               ("alphaavatar.rtc.livekit.status.output", "LiveKitStatusOutput"),
               ("alphaavatar.rtc.livekit.transcript.output", "LiveKitTranscriptOutput"),
-              ("alphaavatar.host.sessions.livekit.connection", "LiveKitConnection"),
-              ("alphaavatar.host.sessions.livekit.character", "LiveKitCharacterTransport"),
+              ("alphaavatar.host.service.sessions.livekit.connection", "LiveKitConnection"),
+              ("alphaavatar.host.service.sessions.livekit.character", "LiveKitCharacterTransport"),
           )
           for module, name in adapters:
               component = getattr(importlib.import_module(module), name)

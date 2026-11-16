@@ -140,8 +140,8 @@ def offered() -> dict[str, dict[str, str]] | None:
     """By capability type and name, the requirement `alphaavatar setup` installs for each
     implementation it offers here; None outside an installed package, where it installs none.
     """
-    from alphaavatar.host.setup.choices import requirements_offered
-    from alphaavatar.host.setup.environment import Installation, SetupError
+    from alphaavatar.host.tools.setup.choices import requirements_offered
+    from alphaavatar.host.tools.setup.environment import Installation, SetupError
 
     try:
         catalog = Installation.running().catalog
@@ -208,7 +208,7 @@ def check_capabilities(config: ApplicationConfig) -> Capabilities:
     capabilities = resolve_capabilities(config)
     if capabilities.selection.problems:
         raise unavailable(UnavailablePlugins(capabilities.selection))
-    from alphaavatar.host.setup.choices import requirements_offered
+    from alphaavatar.host.tools.setup.choices import requirements_offered
 
     installs = requirements_offered() if offered() is not None else frozenset()
     items: dict[str, Missing] = {}

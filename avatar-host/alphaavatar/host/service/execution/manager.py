@@ -21,10 +21,10 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.host.processes.process import ExecutionProcess
-from alphaavatar.host.processes.schemas import ProcessResult
-from alphaavatar.host.processes.supervisor import ProcessSupervisor
-from alphaavatar.host.sessions.schemas import SessionRequest
+from alphaavatar.host.service.processes.process import ExecutionProcess
+from alphaavatar.host.service.processes.schemas import ProcessResult
+from alphaavatar.host.service.processes.supervisor import ProcessSupervisor
+from alphaavatar.host.service.sessions.schemas import SessionRequest
 
 from .policy import ExecutionPolicy
 from .schemas import TERMINAL_STATES, ExecutionReservation, ExecutionState, ExecutionView

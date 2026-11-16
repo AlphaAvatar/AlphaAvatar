@@ -34,7 +34,7 @@ from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
-    from alphaavatar.host.application.config import HostConfig
+    from alphaavatar.host.service.application.config import HostConfig
 
 VectorStore = Literal["lancedb", "qdrant"]
 OPENAI_KEY = "OPENAI_API_KEY"

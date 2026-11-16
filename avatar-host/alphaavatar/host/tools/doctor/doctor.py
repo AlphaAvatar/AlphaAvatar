@@ -540,7 +540,7 @@ def _packages() -> Check:
 
 def _install(requirements: str) -> str:
     """How to install what is missing: setup in an installed package, else into this Python."""
-    from alphaavatar.host.setup.environment import Installation, SetupError
+    from alphaavatar.host.tools.setup.environment import Installation, SetupError
 
     try:
         Installation.running()

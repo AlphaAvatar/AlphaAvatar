@@ -23,12 +23,12 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.host.execution.execution import HostExecution
-from alphaavatar.host.execution.stop import ExecutionStop
-from alphaavatar.host.sessions.factory import create_session_backend
-from alphaavatar.host.sessions.manager import SessionManager
-from alphaavatar.host.sessions.mode import resolve_session_mode, resolve_session_type
-from alphaavatar.host.sessions.schemas import SessionContext, SessionEnd, SessionRequest
+from alphaavatar.host.service.execution.execution import HostExecution
+from alphaavatar.host.service.execution.stop import ExecutionStop
+from alphaavatar.host.service.sessions.factory import create_session_backend
+from alphaavatar.host.service.sessions.manager import SessionManager
+from alphaavatar.host.service.sessions.mode import resolve_session_mode, resolve_session_type
+from alphaavatar.host.service.sessions.schemas import SessionContext, SessionEnd, SessionRequest
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from alphaavatar.agents.workspace import SessionPath, WorkspacePaths
     from alphaavatar.core.session import SessionRuntime
     from alphaavatar.host.configs.application import ApplicationConfig
-    from alphaavatar.host.sessions.attachment import SessionAttachment
+    from alphaavatar.host.service.sessions.attachment import SessionAttachment
 
 
 async def create_avatar_runtime(

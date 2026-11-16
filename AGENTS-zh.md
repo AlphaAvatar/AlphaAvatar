@@ -104,9 +104,9 @@ Ruff 明确禁止导入这一已移除的 SDK API。
 
 | 所属组件 | 管理内容 | 实现入口 |
 | --- | --- | --- |
-| Host application | 共享服务、执行监督、健康状态和信号。 | [application/](avatar-host/alphaavatar/host/application/)。 |
-| Host execution | 子执行实例的 Engine 和 AvatarRuntime 生命周期。 | [execution/](avatar-host/alphaavatar/host/execution/)。 |
-| Session attachment | 输入／输出适配器、订阅和连接附着。 | [sessions/](avatar-host/alphaavatar/host/sessions/)。 |
+| Host application | 共享服务、执行监督、健康状态和信号。 | [service/application/](avatar-host/alphaavatar/host/service/application/)。 |
+| Host execution | 子执行实例的 Engine 和 AvatarRuntime 生命周期。 | [service/execution/](avatar-host/alphaavatar/host/service/execution/)。 |
+| Session attachment | 输入／输出适配器、订阅和连接附着。 | [service/sessions/](avatar-host/alphaavatar/host/service/sessions/)。 |
 | SessionRuntime | 参与者、已接受的身份绑定及会话事件。 | [session/](avatar-core/alphaavatar/core/session/)。 |
 | AvatarRuntime | 组合状态、Core 运行时、Foundation、参与者和能力。 | [runtime.py](avatar-agents/alphaavatar/agents/runtime/runtime.py)。 |
 | PerceptionRuntime | 观测／标注发布、来源谱系和时序证据。 | [perception/](avatar-core/alphaavatar/core/perception/)。 |
@@ -575,7 +575,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | --- | --- |
 | CLI 参数、帮助或默认值 | Host `cli/` → 命令实现 → `docs/cli/` → CLI 测试。 |
 | Bundle/profile 选项 | Host `configs/` → Agents 配置 → 插件校验 → 示例与 CLI 文档。 |
-| 启动或子进程清理 | Host application/execution/processes → 生命周期所属组件 → 生命周期测试。 |
+| 启动或子进程清理 | Host `service/` 下的 application/execution/processes → 生命周期所属组件 → 生命周期测试。 |
 | RTC 输入或输出 | RTC 适配器 → 注入的 Core 契约 → Host 装配 → 适配器测试。 |
 | VAD 或片段计时 | Voice VAD → Router 音频活动 → 来源与片段证据 → 计时测试。 |
 | STT 请求或终态 | Voice STT → Router 转录 → 轮次判断截止时间与准入 → Doctor。 |
@@ -590,7 +590,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | Doctor 指标 | 生产者追踪边界 → Core 追踪 schema → Host 测量 → 对比脚本、测试与文档。 |
 | 新插件或包 | 插件边界指南 → 入口点与工厂 → 元数据、工作区与锁文件 → 目录与测试。 |
 | 未来的 App 展示 | App 设计与实现 → Core/RTC 交付契约 → 前端检查。 |
-| 部署或安装 | Host/setup 或 packaging → `docs/DEPLOY.md` 与 setup 指南 → 安装验证。 |
+| 部署或安装 | Host `tools/setup` 或 packaging → `docs/DEPLOY.md` 与 setup 指南 → 安装验证。 |
 
 重命名契约前，用 `rg` 搜索其构造函数、序列化器与消费者。
 修改追踪字段时，同时检查生产者与离线报告重建。

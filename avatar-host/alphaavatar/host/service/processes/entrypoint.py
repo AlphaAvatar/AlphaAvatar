@@ -20,8 +20,8 @@ import sys
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.log import configure_from_env, format_error
-from alphaavatar.host.application.signals import shutdown_signals
-from alphaavatar.host.execution.stop import ExecutionStop
+from alphaavatar.host.service.application.signals import shutdown_signals
+from alphaavatar.host.service.execution.stop import ExecutionStop
 
 from .channel import receive, send
 from .schemas import MAX_LAUNCH_BYTES, MAX_MESSAGE_BYTES, ProcessLaunch, ProcessMessage
@@ -91,8 +91,8 @@ async def _run(launch: ProcessLaunch) -> int:
     async def execute() -> str:
         nonlocal stage
         stage = "import execution bootstrap"
-        from alphaavatar.host.application.bootstrap import run_execution
         from alphaavatar.host.configs.loader import restore_application
+        from alphaavatar.host.service.application.bootstrap import run_execution
 
         stage = "restore application configuration"
         config = restore_application(launch.application)

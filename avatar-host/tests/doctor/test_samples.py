@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from importlib import resources
 
-from alphaavatar.host.doctor import samples
+from alphaavatar.host.tools.doctor import samples
 
 
 def test_each_spoken_task_ships_a_short_16_khz_mono_recording() -> None:

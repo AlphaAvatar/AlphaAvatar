@@ -502,3 +502,30 @@ test 共 23 个五人随机户。陌生人检索 766,467 次，已注册检索 2
     - 参与者测试补一段：未知类型在 `ensure_entity` 中被拒绝，且什么都没有关联。
   - 三处变异都被发现：请求不转换 `kind`、不转换已占类型、`ensure_entity` 不检查。
 - 验证（离线）：ruff、format、工作区结构检查、`git diff --check` 通过；全量测试 742 个全部通过。
+
+# 第十九批：Host 顶层目录归并
+
+- 用户的要求：Host 顶层目录太多。讨论后的结论：
+  - 不把业务包放进 `cli/`。`application` 是 Host 运行时；`doctor` 有给 App/TUI 用的 `diagnose()`；`setup` 被 Linux 打包和配置层使用。放进 `cli/` 会让它们反过来依赖 CLI。
+  - 改为按职责归并，用户确认按下表分组：
+
+    | 合并后 | 原来的包 |
+    |---|---|
+    | `service/` | `application`、`execution`、`processes`、`sessions` |
+    | `tools/` | `doctor`、`setup` |
+    | 保持不变 | `cli`、`configs`、`workspace`、`log` |
+
+    顶层目录由 10 个变为 6 个。
+- 做法：
+  - 用 `mv` 整包移动，没有用 `git mv`，避免暂存。各包内部不改；两个组包的 `__init__.py` 只有许可证头，不做重新导出。
+  - 全仓库改写模块名 `alphaavatar.host.X` 和路径 `alphaavatar/host/X/`，共 49 个文件，`docs/agent-logs/` 的历史记录不改。范围包括：源码；测试；CI 里按模块名导入的检查（`quality.yml`）；`packaging/linux/build.sh`；`scripts/quality/doctor_samples.py`；`AGENTS.md`、`AGENTS-zh.md`；`identifiers-zh.md`；`docs/cli/doctor.md`；Host README。
+  - 启动子进程用的两个模块名字符串，也随之改为 `alphaavatar.host.service.processes.entrypoint` 和 `alphaavatar.host.tools.setup.probe`。
+  - `cli/commands/doctor.py` 里的 `from alphaavatar.host import doctor` 改为 `from alphaavatar.host.tools import doctor`。
+  - 对外 API 改为 `alphaavatar.host.tools.doctor.diagnose`，不留旧路径的别名。
+  - 两份导航文件里的链接文字和修改路线、Host README 的目录树（原来就漏了 doctor 和 setup）都按新布局重写。
+- 没有改：`host.doctor.*`、`host.execution.*`、`host.processes.*` 这类 YAML 配置键。它们是 `host:` 配置段里的名字，不是模块路径。
+- 验证（离线）：
+  - 路径变了，有 7 处导入顺序（I001）随之变化，已自动修好；之后 ruff、format、工作区结构检查、`git diff --check` 通过。
+  - 移动后的主要模块都能导入，旧的 `alphaavatar.host.doctor`、`alphaavatar.host.application` 已找不到。CI 和打包脚本引用的名字都能解析，`build.sh` 语法检查通过。
+  - Host 测试 319 个通过，包括按模块名启动执行子进程的生命周期测试和 setup 测试；全量测试 742 个全部通过。
+- 工作区：git 看到的是旧路径 55 个文件删除、两个新目录未跟踪，暂存时用 `git add -A` 才能识别为重命名。

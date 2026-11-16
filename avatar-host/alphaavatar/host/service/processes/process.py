@@ -21,7 +21,7 @@ from typing import Any
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import LifecycleComponent
-from alphaavatar.host.sessions.schemas import SessionRequest
+from alphaavatar.host.service.sessions.schemas import SessionRequest
 
 from .channel import receive, send
 from .config import ProcessConfig
@@ -217,7 +217,7 @@ class ExecutionProcess(LifecycleComponent):
                 asyncio.create_subprocess_exec(
                     *_interpreter(),
                     "-m",
-                    "alphaavatar.host.processes.entrypoint",
+                    "alphaavatar.host.service.processes.entrypoint",
                     stdin=asyncio.subprocess.PIPE,
                     start_new_session=True,
                 ),

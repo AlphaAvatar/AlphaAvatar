@@ -25,9 +25,9 @@ from livekit.protocol import agent, models
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env.schemas import DeviceId
-from alphaavatar.host.execution.manager import ExecutionManager
-from alphaavatar.host.execution.schemas import ExecutionReservation, ExecutionView
-from alphaavatar.host.sessions.schemas import SessionRequest
+from alphaavatar.host.service.execution.manager import ExecutionManager
+from alphaavatar.host.service.execution.schemas import ExecutionReservation, ExecutionView
+from alphaavatar.host.service.sessions.schemas import SessionRequest
 from alphaavatar.host.version import __version__
 
 from .config import LiveKitConfig, LiveKitCredentials, websocket_url

@@ -72,8 +72,8 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
         async def serve() -> None:
             nonlocal stage
             stage = "import Host"
-            from alphaavatar.host.application.application import AvatarHost
-            from alphaavatar.host.application.signals import shutdown_signals
+            from alphaavatar.host.service.application.application import AvatarHost
+            from alphaavatar.host.service.application.signals import shutdown_signals
 
             stage = "construct Host"
             host = AvatarHost(config, devmode=devmode)

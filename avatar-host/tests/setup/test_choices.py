@@ -35,7 +35,7 @@ import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.configs import ConfigSource, resolve_capabilities, validate_application
 from alphaavatar.host.configs.template import render_bundle
-from alphaavatar.host.setup.choices import (
+from alphaavatar.host.tools.setup.choices import (
     OPENAI_KEY,
     Models,
     Selection,
@@ -47,7 +47,7 @@ from alphaavatar.host.setup.choices import (
     server_key,
     server_problem,
 )
-from alphaavatar.host.setup.plan import plan_install
+from alphaavatar.host.tools.setup.plan import plan_install
 from alphaavatar.host.workspace import ApplicationPaths
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -624,8 +624,8 @@ class Bare(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, Bare())
 from alphaavatar.host.configs import ConfigSource, load_selections
-from alphaavatar.host.sessions.factory import check_session_credentials
-from alphaavatar.host.setup.choices import bundle_requirements
+from alphaavatar.host.service.sessions.factory import check_session_credentials
+from alphaavatar.host.tools.setup.choices import bundle_requirements
 
 home, plugins, bundle = Path(sys.argv[1]), json.loads(sys.argv[2]), Path(sys.argv[3])
 host, avatar = load_selections(ConfigSource(bundle, bundle.stem, home=home))

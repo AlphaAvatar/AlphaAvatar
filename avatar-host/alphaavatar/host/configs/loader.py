@@ -25,8 +25,8 @@ from uuid import UUID
 from pydantic import SecretStr
 
 from alphaavatar.agents.workspace import WorkspacePaths
-from alphaavatar.host.application.config import HostConfig
-from alphaavatar.host.sessions.factory import validate_session_config
+from alphaavatar.host.service.application.config import HostConfig
+from alphaavatar.host.service.sessions.factory import validate_session_config
 from alphaavatar.host.workspace import ApplicationPaths
 
 from .application import ApplicationConfig

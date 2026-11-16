@@ -72,7 +72,7 @@ def test_each_selection_is_checked_against_what_is_installed(
 def test_an_installed_package_says_which_missing_plugins_setup_installs(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    from alphaavatar.host.setup.environment import Installation
+    from alphaavatar.host.tools.setup.environment import Installation
 
     base = tmp_path / "prefix" / "versions" / "base-1"
     (base / "share" / "alphaavatar").mkdir(parents=True)

@@ -10,10 +10,10 @@
 | --- | --- | --- | --- |
 | `avatar_id` / `avatar.id` | 配置中的 Avatar 实例身份，选择 Workspace，并作为 Avatar Memory 的 owner。 | 应用配置命名空间；不等于 Avatar 在 RTC 中的接入设备 `agent_device_id`。 | 调用方通过 [Avatar 配置](../avatar-agents/alphaavatar/agents/configs/avatar_info_config.py) 提供；Workspace 按该配置装配。 |
 | `session_id` | Core `SessionRuntime` 的会话标识，关联参与者、事件及会话目录。 | 在所属运行环境中标识一次 Session；默认 UUID，也可由调用方显式提供。 | [SessionRuntime.__init__()](../avatar-core/alphaavatar/core/session/runtime.py)。 |
-| `execution_id` | Host 管理的一次执行实例，由执行管理器持有。 | Host 执行管理器中的启动、停止和状态查询范围；不同于一次模型循环的 `run_id`。 | [ExecutionManager.reserve()](../avatar-host/alphaavatar/host/execution/manager.py) 独立生成 UUID。 |
+| `execution_id` | Host 管理的一次执行实例，由执行管理器持有。 | Host 执行管理器中的启动、停止和状态查询范围；不同于一次模型循环的 `run_id`。 | [ExecutionManager.reserve()](../avatar-host/alphaavatar/host/service/execution/manager.py) 独立生成 UUID。 |
 | `attachment_id` | 会话后端的一次连接附着标识，关联请求与结束通知。 | 对应一次附着；不把连接重建解释为新人物，也不等于 `execution_id` 或 `session_id`。 | `ExecutionManager.reserve()` 独立生成 UUID；后端写入 `SessionRequest`，结束通知复用。 |
-| `lease_id` | 执行预留租约的标识，由 Host 预留流程持有。 | 与预留对象、来源和到期时间共同校验；预留失效后不能据旧租约启动执行。 | `ExecutionManager.reserve()` 独立生成 UUID，写入 [ExecutionReservation](../avatar-host/alphaavatar/host/execution/schemas.py)。 |
-| Host `source_id` | `SessionRequest`、`ExecutionReservation` 中的后端调度来源。 | 通过 `(backend, source_id)` 关联预留及去重；与媒体 `PerceptionSourceRef.source_id` 是不同命名空间。 | [LiveKitBackend.serve()](../avatar-host/alphaavatar/host/sessions/livekit/backend.py) 在 direct 模式生成 UUID；dispatch 模式由 [LiveKitDispatch](../avatar-host/alphaavatar/host/sessions/livekit/dispatch.py) 采用服务端 `job.id`。 |
+| `lease_id` | 执行预留租约的标识，由 Host 预留流程持有。 | 与预留对象、来源和到期时间共同校验；预留失效后不能据旧租约启动执行。 | `ExecutionManager.reserve()` 独立生成 UUID，写入 [ExecutionReservation](../avatar-host/alphaavatar/host/service/execution/schemas.py)。 |
+| Host `source_id` | `SessionRequest`、`ExecutionReservation` 中的后端调度来源。 | 通过 `(backend, source_id)` 关联预留及去重；与媒体 `PerceptionSourceRef.source_id` 是不同命名空间。 | [LiveKitBackend.serve()](../avatar-host/alphaavatar/host/service/sessions/livekit/backend.py) 在 direct 模式生成 UUID；dispatch 模式由 [LiveKitDispatch](../avatar-host/alphaavatar/host/service/sessions/livekit/dispatch.py) 采用服务端 `job.id`。 |
 
 - `execution_id`、`attachment_id`、`session_id` 分别描述执行实例、连接附着和会话，不能因为当前恰好一一对应而互相替代。
 - Session 关闭不是 Episode 或 Context 的统一结束条件，也不代表所有长期数据已经保存。这些 ID 本身不承诺跨进程恢复任务。

@@ -22,8 +22,8 @@ from .schemas import SessionContext, SessionEnd, SessionRequest
 
 if TYPE_CHECKING:
     from alphaavatar.host.configs.application import ApplicationConfig
-    from alphaavatar.host.execution.execution import HostExecution
-    from alphaavatar.host.execution.manager import ExecutionManager
+    from alphaavatar.host.service.execution.execution import HostExecution
+    from alphaavatar.host.service.execution.manager import ExecutionManager
 
     from .attachment import SessionAttachment
 

@@ -20,9 +20,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from alphaavatar.host.doctor.enums import ScenarioOutcome
-from alphaavatar.host.doctor.measure import summarize
-from alphaavatar.host.doctor.schemas import Evidence, Metric, ScenarioResult
+from alphaavatar.host.tools.doctor.enums import ScenarioOutcome
+from alphaavatar.host.tools.doctor.measure import summarize
+from alphaavatar.host.tools.doctor.schemas import Evidence, Metric, ScenarioResult
 
 SCRIPT = Path(__file__).parents[3] / "scripts" / "quality" / "doctor_compare.py"
 

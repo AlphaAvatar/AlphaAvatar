@@ -235,7 +235,7 @@ def init(name: str, *, avatar_id: str) -> int:
 
 def _bare_package() -> bool:
     """An installed base package with no setup environment: plugins are yet to be installed."""
-    from alphaavatar.host.setup.environment import Installation, SetupError
+    from alphaavatar.host.tools.setup.environment import Installation, SetupError
 
     try:
         Installation.running()

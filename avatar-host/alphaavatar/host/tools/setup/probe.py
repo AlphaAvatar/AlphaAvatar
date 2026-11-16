@@ -13,7 +13,7 @@
 # limitations under the License.
 """Load the native code a setup environment's own packages hold, as this machine runs it.
 
-    <environment>/bin/python -I -m alphaavatar.host.setup.probe
+    <environment>/bin/python -I -m alphaavatar.host.tools.setup.probe
 
 For each shared library a package installed into the environment (not the base) holds, the
 outermost regular package around it is imported; a top-level extension module is imported

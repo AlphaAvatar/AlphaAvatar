@@ -21,9 +21,9 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.host.execution.manager import ExecutionManager
-from alphaavatar.host.processes.supervisor import ProcessSupervisor
-from alphaavatar.host.sessions.factory import create_session_backend
+from alphaavatar.host.service.execution.manager import ExecutionManager
+from alphaavatar.host.service.processes.supervisor import ProcessSupervisor
+from alphaavatar.host.service.sessions.factory import create_session_backend
 
 from .health import HealthServer
 

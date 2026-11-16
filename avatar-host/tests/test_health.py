@@ -30,10 +30,10 @@ from inference_runner_samples import EchoRunner
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import InferenceRuntime
-from alphaavatar.host.application.application import AvatarHost
-from alphaavatar.host.application.health import HealthServer
 from alphaavatar.host.configs.loader import restore_application, validate_application
-from alphaavatar.host.execution.schemas import ExecutionView
+from alphaavatar.host.service.application.application import AvatarHost
+from alphaavatar.host.service.application.health import HealthServer
+from alphaavatar.host.service.execution.schemas import ExecutionView
 
 HANG_GUARD = 30
 SECRETS = {

@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.host.doctor.config import DoctorConfig
-from alphaavatar.host.execution.policy import ExecutionPolicy
 from alphaavatar.host.log.config import LogConfig
-from alphaavatar.host.processes.config import ProcessConfig
-from alphaavatar.host.sessions.config import SessionConfig
+from alphaavatar.host.service.execution.policy import ExecutionPolicy
+from alphaavatar.host.service.processes.config import ProcessConfig
+from alphaavatar.host.service.sessions.config import SessionConfig
+from alphaavatar.host.tools.doctor.config import DoctorConfig
 
 
 class HealthConfig(BaseModel):

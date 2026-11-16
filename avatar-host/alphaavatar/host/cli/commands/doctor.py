@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Doctor command: arguments and presentation; the checks live in ``alphaavatar.host.doctor``.
+"""Doctor command: arguments and presentation; the checks live in ``alphaavatar.host.tools.doctor``.
 
 Text and JSON show the same report, already through the configuration output boundary; the
 text groups it through the shared renderer (``cli.render``), and ``--json`` keeps every event
@@ -30,7 +30,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from alphaavatar.host.cli.render import STATUS, Report
-from alphaavatar.host.doctor import CheckStatus, ScenarioOutcome
+from alphaavatar.host.tools.doctor import CheckStatus, ScenarioOutcome
 
 # Text groups only; JSON keeps the flat list and the stable check IDs.
 GROUPS = {
@@ -65,7 +65,7 @@ LATENCY = (
 def _stages() -> tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...]:
     """Each stage of the chain to the first audio frame: its total, then its rows, each
     from the node before; with every boundary, the totals add up to the first audio frame."""
-    from alphaavatar.host.doctor.measure import NODES, STAGES
+    from alphaavatar.host.tools.doctor.measure import NODES, STAGES
 
     return tuple(
         (
@@ -114,7 +114,7 @@ def doctor(
     metrics: bool = True,
     rounds: int = 5,
 ) -> int:
-    from alphaavatar.host.doctor import CHECKS
+    from alphaavatar.host.tools.doctor import CHECKS
 
     if listing:
         if as_json:
@@ -135,8 +135,8 @@ def doctor(
 
     from functools import partial
 
-    from alphaavatar.host import doctor as diagnosis
     from alphaavatar.host.configs.credentials import load_environment
+    from alphaavatar.host.tools import doctor as diagnosis
 
     # The text report, and the question before it; with --json, stdout is the JSON alone.
     out = Report(sys.stderr if as_json else sys.stdout)
@@ -218,7 +218,7 @@ def _yes(out: Report, question: str) -> bool:
 
 def _run(out: Report, prepared):
     """The report of one diagnosis, and whether Ctrl+C stopped it."""
-    from alphaavatar.host.application.signals import shutdown_signals
+    from alphaavatar.host.service.application.signals import shutdown_signals
 
     async def run():
         stop = asyncio.Event()
@@ -405,7 +405,7 @@ def _explained(out: Report, check, *, indent: int, summary: bool = True) -> None
 
 def _covers(result) -> str:
     """What a scenario that passed showed, by its task."""
-    from alphaavatar.host.doctor import samples
+    from alphaavatar.host.tools.doctor import samples
 
     tasks = (samples.VOICE_VISION, samples.VOICE)
     return next((task.covers for task in tasks if task.name == result.name), result.summary)

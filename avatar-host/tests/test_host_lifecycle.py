@@ -53,13 +53,13 @@ from alphaavatar.agents.runtime.plugin import (
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.log.records import LOG_CLIENT_ENV
 from alphaavatar.core.session import SessionRuntime
-from alphaavatar.host.application.application import AvatarHost
-from alphaavatar.host.application.bootstrap import create_avatar_runtime
 from alphaavatar.host.configs.loader import validate_application
-from alphaavatar.host.processes import process as execution_process
-from alphaavatar.host.processes.config import ProcessConfig
-from alphaavatar.host.processes.supervisor import ProcessSupervisor
-from alphaavatar.host.sessions.schemas import SessionRequest
+from alphaavatar.host.service.application.application import AvatarHost
+from alphaavatar.host.service.application.bootstrap import create_avatar_runtime
+from alphaavatar.host.service.processes import process as execution_process
+from alphaavatar.host.service.processes.config import ProcessConfig
+from alphaavatar.host.service.processes.supervisor import ProcessSupervisor
+from alphaavatar.host.service.sessions.schemas import SessionRequest
 
 HANG_GUARD = 60
 JOURNAL = JournalRunner.INFERENCE_METHOD
@@ -68,7 +68,7 @@ JOURNAL = JournalRunner.INFERENCE_METHOD
 CHILD_SITE = f"""
 import os
 
-import alphaavatar.host.application.bootstrap as bootstrap
+import alphaavatar.host.service.application.bootstrap as bootstrap
 
 
 async def run_execution(config, request, *, stop, ready):
@@ -368,14 +368,14 @@ print(json.dumps({{
     "caller_site": getattr(sys.modules.get("sitecustomize"), "CALLER", False),
     "environment": [os.environ.get(name) for name in
                     ("OPENAI_API_KEY", {LOG_CLIENT_ENV!r}, {INFERENCE_SOCKET_ENV!r})],
-    "entrypoint": find_spec("alphaavatar.host.processes.entrypoint").origin,
+    "entrypoint": find_spec("alphaavatar.host.service.processes.entrypoint").origin,
 }}))
 """
 # The Host's side: the child started by the interpreter the Host starts it with. Both run
 # with -B: -I ignores PYTHONDONTWRITEBYTECODE, and the checkout must stay as it was.
 HOST_START = f"""
 import subprocess, sys
-from alphaavatar.host.processes.process import _interpreter
+from alphaavatar.host.service.processes.process import _interpreter
 
 sys.exit(subprocess.run([*_interpreter(), "-B", "-c", {CHILD_REPORT!r}]).returncode)
 """
@@ -408,7 +408,7 @@ def test_an_execution_child_is_isolated_exactly_when_its_host_is(
     # in development it still does, as the execution tests' own child site needs.
     assert (report["isolated"], report["caller_site"]) == (int(isolated), not isolated)
     assert report["environment"] == passed
-    entrypoint = Path(__file__).parents[1] / "alphaavatar/host/processes/entrypoint.py"
+    entrypoint = Path(__file__).parents[1] / "alphaavatar/host/service/processes/entrypoint.py"
     assert report["entrypoint"] == str(entrypoint)
 
 
@@ -431,7 +431,9 @@ async def test_the_execution_child_starts_with_the_hosts_interpreter(
     )
     with pytest.raises(OSError, match="not started"):
         await child.on_start()
-    assert started == [("/installed/python", "-I", "-m", "alphaavatar.host.processes.entrypoint")]
+    assert started == [
+        ("/installed/python", "-I", "-m", "alphaavatar.host.service.processes.entrypoint")
+    ]
 
 
 async def test_host_keeps_shared_inference_while_execution_children_remain(

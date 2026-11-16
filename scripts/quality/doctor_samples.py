@@ -35,7 +35,7 @@ from pathlib import Path
 
 
 def _tasks():
-    from alphaavatar.host.doctor import samples
+    from alphaavatar.host.tools.doctor import samples
 
     return samples, [task for task in (samples.VOICE_VISION, samples.VOICE) if task.speech]
 
