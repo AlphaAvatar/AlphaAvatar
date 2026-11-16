@@ -31,6 +31,7 @@ from alphaavatar.core.env.schemas import (
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import (
+    EntityKind,
     IdentityOutcome,
     IdentityRequest,
     IdentitySource,
@@ -100,7 +101,7 @@ def test_device_participant_and_user_identifiers_stay_separate(tmp_path: Path) -
     assert len({"phone-1", owner.participant_id, owner.user_id}) == 3
 
     camera, face = PerceptionSourceRef("camera-1", 1), PerceptionEntityRef("face-b")
-    guest = runtime.ensure_entity(camera, face, kind="face")
+    guest = runtime.ensure_entity(camera, face, kind=EntityKind.FACE)
     assert guest.participant_id != owner.participant_id
     assert guest.user_id not in {None, owner.user_id}
     # The device names its explicit submitter only; it never claims people seen through it.
@@ -215,7 +216,7 @@ async def test_agent_identity_decisions_use_their_own_turn_and_version(tmp_path:
 def test_late_recognition_cannot_reopen_retired_or_evicted_associations(tmp_path: Path) -> None:
     runtime = participants(tmp_path, max_segments=1)
     microphone, voice = PerceptionSourceRef("microphone-1", 1), PerceptionEntityRef("speaker-1")
-    person = runtime.ensure_entity(microphone, voice, kind="speaker")
+    person = runtime.ensure_entity(microphone, voice, kind=EntityKind.SPEAKER)
     segment = PerceptionSegmentRef(microphone, "segment-1")
     token = runtime.observe_segment(segment)
     assert runtime.bind_segment(segment, voice, token=token)
@@ -253,19 +254,19 @@ def test_an_entity_keeps_its_participant_on_every_source_and_generation(tmp_path
     voice = PerceptionEntityRef("speaker-a")
     first, later = PerceptionSourceRef("microphone-1", 1), PerceptionSourceRef("microphone-1", 2)
     laptop = PerceptionSourceRef("microphone-2", 1)
-    person = runtime.ensure_entity(first, voice, kind="speaker")
+    person = runtime.ensure_entity(first, voice, kind=EntityKind.SPEAKER)
     segment = PerceptionSegmentRef(first, "segment-1")
     assert runtime.bind_segment(segment, voice, token=runtime.observe_segment(segment))
 
     # A new generation releases its predecessor's segments, never the entity's participant.
-    assert runtime.ensure_entity(later, voice, kind="speaker") == person
+    assert runtime.ensure_entity(later, voice, kind=EntityKind.SPEAKER) == person
     assert runtime.resolve(segment=segment) is None
     assert runtime.resolve(source=first, entity=voice) is None  # Retired: nothing resolves there
     assert runtime.resolve(source=later, entity=voice) == person
     assert person.participant_id in runtime.active_participant_ids
 
     # Another device's source is the same entity's, and retiring it keeps the entity's binding.
-    assert runtime.ensure_entity(laptop, voice, kind="speaker") == person
+    assert runtime.ensure_entity(laptop, voice, kind=EntityKind.SPEAKER) == person
     runtime.retire_source(laptop)
     assert runtime.resolve(source=later, entity=voice) == person
 
@@ -276,37 +277,49 @@ def test_a_participant_has_one_entity_of_each_kind(tmp_path: Path) -> None:
     face, voice, other = (
         PerceptionEntityRef(name) for name in ("face-a", "speaker-a", "speaker-b")
     )
-    person = runtime.ensure_entity(camera, face, kind="face")
+    person = runtime.ensure_entity(camera, face, kind=EntityKind.FACE)
     named = person.participant_id
-    assert runtime.ensure_entity(microphone, voice, kind="speaker", participant_id=named) == person
+    assert (
+        runtime.ensure_entity(microphone, voice, kind=EntityKind.SPEAKER, participant_id=named)
+        == person
+    )
 
     # A second voice for the same participant is refused, and nothing of it is kept.
     with pytest.raises(ValueError, match="already has a speaker entity"):
-        runtime.ensure_entity(microphone, other, kind="speaker", participant_id=named)
+        runtime.ensure_entity(microphone, other, kind=EntityKind.SPEAKER, participant_id=named)
     assert runtime.resolve(entity=other) is None
     # A bound entity keeps its kind and its participant.
     with pytest.raises(ValueError, match="another kind"):
-        runtime.ensure_entity(camera, face, kind="speaker")
+        runtime.ensure_entity(camera, face, kind=EntityKind.SPEAKER)
     stranger = runtime.join()
     with pytest.raises(ValueError, match="another participant"):
         runtime.ensure_entity(
-            microphone, voice, kind="speaker", participant_id=stranger.participant_id
+            microphone, voice, kind=EntityKind.SPEAKER, participant_id=stranger.participant_id
         )
+
+    # Only a face or a voice is associated; anything else is refused before anything changes.
+    with pytest.raises(ValueError, match="must be face or speaker"):
+        runtime.ensure_entity(camera, PerceptionEntityRef("hand-a"), kind="hand")
+    assert runtime.resolve(entity=PerceptionEntityRef("hand-a")) is None
 
     # Released, its kind is free again.
     runtime.release_entity(voice)
-    assert runtime.ensure_entity(microphone, other, kind="speaker", participant_id=named) == person
+    assert (
+        runtime.ensure_entity(microphone, other, kind=EntityKind.SPEAKER, participant_id=named)
+        == person
+    )
 
 
 def test_bindings_keep_an_entitys_participant_and_kind_and_one_entity_of_each_kind() -> None:
     bindings = ParticipantBindings()
-    bindings.bind_entity("speaker-a", "participant-1", "speaker")
-    bindings.bind_entity("face-a", "participant-1", "face")
-    bindings.bind_entity("speaker-a", "participant-1", "speaker")  # Again: the same binding
+    face, speaker = EntityKind.FACE, EntityKind.SPEAKER
+    bindings.bind_entity("speaker-a", "participant-1", speaker)
+    bindings.bind_entity("face-a", "participant-1", face)
+    bindings.bind_entity("speaker-a", "participant-1", speaker)  # Again: the same binding
     for entity_id, participant_id, kind, refused in (
-        ("speaker-a", "participant-2", "speaker", "another participant"),
-        ("speaker-a", "participant-1", "face", "another kind"),
-        ("speaker-b", "participant-1", "speaker", "already has a speaker entity"),
+        ("speaker-a", "participant-2", speaker, "another participant"),
+        ("speaker-a", "participant-1", face, "another kind"),
+        ("speaker-b", "participant-1", speaker, "already has a speaker entity"),
     ):
         with pytest.raises(ValueError, match=refused):
             bindings.bind_entity(entity_id, participant_id, kind)
@@ -317,7 +330,7 @@ def test_bindings_keep_an_entitys_participant_and_kind_and_one_entity_of_each_ki
 
     # Released, an entity frees its kind; the participant stays bound by the other.
     assert bindings.release_entity("speaker-a") == "participant-1"
-    bindings.bind_entity("speaker-b", "participant-1", "speaker")
+    bindings.bind_entity("speaker-b", "participant-1", speaker)
     assert bindings.release_entity("speaker-b") == "participant-1"
     assert bindings.has_participant("participant-1")
     assert bindings.release_entity("face-a") == "participant-1"

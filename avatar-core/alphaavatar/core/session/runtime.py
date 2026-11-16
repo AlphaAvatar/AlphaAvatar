@@ -27,6 +27,7 @@ from .schemas import (
     AssociationRequest,
     IdentityRequest,
     Participant,
+    ParticipantId,
     SessionEvent,
     SessionSnapshot,
     validate_identity,
@@ -83,7 +84,7 @@ class SessionRuntime:
         # Keep identity changes independently of the bounded notification stream.
         self._identity_history: dict[str, list[SessionEvent]] = {}
 
-        self._primary_participant_id: str | None = None
+        self._primary_participant_id: ParticipantId | None = None
         self._closed = False
         self._identity_policy = (
             identity_policy if identity_policy is not None else DefaultIdentityPolicy()
@@ -171,13 +172,13 @@ class SessionRuntime:
                 return None
             return self._participants[selected]
 
-    def identity_history(self, participant_id: str) -> tuple[SessionEvent, ...]:
+    def identity_history(self, participant_id: ParticipantId) -> tuple[SessionEvent, ...]:
         """Accepted identity history for this session lifetime, including initial admission."""
         with self._lock:
             return tuple(self._identity_history.get(participant_id, ()))
 
     def get_identity(
-        self, participant_id: str, identity_revision: int | None = None
+        self, participant_id: ParticipantId, identity_revision: int | None = None
     ) -> Participant | None:
         if identity_revision is not None:
             validate_sequence(identity_revision, name="identity_revision")
@@ -193,7 +194,7 @@ class SessionRuntime:
         self,
         *,
         user_id: str | None = None,
-        participant_id: str | None = None,
+        participant_id: ParticipantId | None = None,
         timezone: str | None = None,
         primary: bool = False,
         generated: bool = False,
@@ -244,7 +245,7 @@ class SessionRuntime:
         return participant
 
     def get_participant(
-        self, *, participant_id: str | None = None, user_id: str | None = None
+        self, *, participant_id: ParticipantId | None = None, user_id: str | None = None
     ) -> Participant | None:
         with self._lock:
             if participant_id is not None:

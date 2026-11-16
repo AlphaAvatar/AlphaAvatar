@@ -11,13 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .enums import IdentityOutcome, IdentitySource, SessionEventKind
+from .enums import EntityKind, IdentityOutcome, IdentitySource, SessionEventKind
 from .runtime import DefaultIdentityPolicy, IdentityPolicy, SessionRuntime
 from .schemas import IdentityRequest, Participant, SessionEvent, SessionSnapshot, SessionStreamRead
 from .stream import SessionStream
 
 __all__ = [
     "DefaultIdentityPolicy",
+    "EntityKind",
     "IdentityOutcome",
     "IdentityPolicy",
     "IdentityRequest",

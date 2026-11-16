@@ -28,7 +28,7 @@ from livekit import rtc
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
+from alphaavatar.core.env.schemas import DeviceId, PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.perception import PerceptionRuntime
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 class _UserTranscript:
     segment: PerceptionSegmentRef
     input_source: PerceptionSourceRef
-    device_id: str
+    device_id: DeviceId
     track_sid: str
     segment_id: str
     text: str
@@ -116,7 +116,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
             return None
         return PerceptionSourceRef(source_id=source_id, source_generation=generation)
 
-    def _track_sid(self, source: PerceptionSourceRef, device_id: str) -> str | None:
+    def _track_sid(self, source: PerceptionSourceRef, device_id: DeviceId) -> str | None:
         if device_id not in self._device_ids:
             return None
         participant = self._room.remote_participants.get(device_id)
@@ -146,7 +146,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
                 return sid
         return None
 
-    def _segment_id(self, device_id: str, segment: PerceptionSegmentRef) -> str:
+    def _segment_id(self, device_id: DeviceId, segment: PerceptionSegmentRef) -> str:
         identity = json.dumps(
             (self._perception.session_id, device_id, segment.to_dict()),
             ensure_ascii=False,

@@ -13,9 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.core.session.schemas import validate_identity
-
-from .schemas import DeviceId, EntityId, EntityKind, ParticipantId
+from alphaavatar.core.env.schemas import DeviceId, EntityId
+from alphaavatar.core.session.enums import EntityKind
+from alphaavatar.core.session.schemas import ParticipantId, validate_identity
 
 
 class ParticipantBindings:
@@ -34,7 +34,7 @@ class ParticipantBindings:
         self._entities: dict[EntityId, tuple[ParticipantId, EntityKind]] = {}
         self._kinds: dict[ParticipantId, dict[EntityKind, EntityId]] = {}
 
-    def check_device(self, device_id: str, participant_id: str) -> None:
+    def check_device(self, device_id: DeviceId, participant_id: ParticipantId) -> None:
         validate_identity(device_id, name="device_id")
         validate_identity(participant_id, name="participant_id")
         previous = self._devices.get(device_id)
@@ -43,17 +43,19 @@ class ParticipantBindings:
         if previous is None and len(self._devices) >= self._max_devices:
             raise RuntimeError("Participant device capacity reached")
 
-    def bind_device(self, device_id: str, participant_id: str) -> None:
+    def bind_device(self, device_id: DeviceId, participant_id: ParticipantId) -> None:
         self.check_device(device_id, participant_id)
         self._devices[device_id] = participant_id
 
-    def get_device(self, device_id: str) -> ParticipantId | None:
+    def get_device(self, device_id: DeviceId) -> ParticipantId | None:
         return self._devices.get(device_id)
 
-    def has_participant(self, participant_id: str) -> bool:
+    def has_participant(self, participant_id: ParticipantId) -> bool:
         return participant_id in self._devices.values() or participant_id in self._kinds
 
-    def check_entity(self, entity_id: str, kind: str, participant_id: str | None = None) -> None:
+    def check_entity(
+        self, entity_id: EntityId, kind: EntityKind, participant_id: ParticipantId | None = None
+    ) -> None:
         """Whether the entity can be bound as this kind, to this participant when one is named:
         a bound entity keeps its participant and kind, and a participant takes no second entity
         of a kind it has."""
@@ -71,17 +73,19 @@ class ParticipantBindings:
         if len(self._entities) >= self._max_entities:
             raise RuntimeError("Participant entity capacity reached")
 
-    def bind_entity(self, entity_id: str, participant_id: str, kind: str) -> None:
+    def bind_entity(
+        self, entity_id: EntityId, participant_id: ParticipantId, kind: EntityKind
+    ) -> None:
         validate_identity(participant_id, name="participant_id")
         self.check_entity(entity_id, kind, participant_id)
         self._entities[entity_id] = (participant_id, kind)
         self._kinds.setdefault(participant_id, {})[kind] = entity_id
 
-    def get_entity(self, entity_id: str) -> ParticipantId | None:
+    def get_entity(self, entity_id: EntityId) -> ParticipantId | None:
         bound = self._entities.get(entity_id)
         return None if bound is None else bound[0]
 
-    def release_entity(self, entity_id: str) -> ParticipantId | None:
+    def release_entity(self, entity_id: EntityId) -> ParticipantId | None:
         bound = self._entities.pop(entity_id, None)
         if bound is None:
             return None

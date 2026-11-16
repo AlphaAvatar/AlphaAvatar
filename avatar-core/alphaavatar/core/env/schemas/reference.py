@@ -16,6 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+type SourceId = str  # One input stream of a device, across its generations
+type EntityId = str  # A perceived face or voice, unique within its session
+type DeviceId = str  # A connected device of the session
+
 
 def _validate_id(name: str, value: str) -> None:
     if not value:
@@ -24,7 +28,7 @@ def _validate_id(name: str, value: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class PerceptionSourceRef:
-    source_id: str
+    source_id: SourceId
     source_generation: int
 
     def __post_init__(self) -> None:
@@ -65,7 +69,7 @@ class PerceptionEntityRef:
     """A perceived face or voice, unique within its session; it can appear on several sources
     and generations, and it belongs to one participant."""
 
-    entity_id: str
+    entity_id: EntityId
 
     def __post_init__(self) -> None:
         _validate_id("entity_id", self.entity_id)

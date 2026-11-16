@@ -20,7 +20,7 @@ from types import MappingProxyType
 from alphaavatar.core.time import RuntimeTime
 
 from ..enums import IdentitySource, SessionEventKind
-from .participant import Participant
+from .participant import Participant, ParticipantId
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +32,7 @@ class SessionEvent:
     participant: Participant | None = None
     previous_user_id: str | None = None
     source: IdentitySource | None = None
-    primary_participant_id: str | None = None
+    primary_participant_id: ParticipantId | None = None
     reason: str | None = None
     score: float | None = None
 
@@ -41,7 +41,7 @@ class SessionEvent:
 class SessionSnapshot:
     session_id: str
     sequence: int
-    primary_participant_id: str | None
+    primary_participant_id: ParticipantId | None
     participants: Mapping[str, Participant]
     closed: bool
     created_at: RuntimeTime

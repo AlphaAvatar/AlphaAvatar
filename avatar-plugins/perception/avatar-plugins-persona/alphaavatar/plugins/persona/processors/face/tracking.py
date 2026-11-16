@@ -19,9 +19,8 @@ from uuid import uuid4
 
 import numpy as np
 
-from alphaavatar.agents.runtime.modules.participants.schemas import EntityId
 from alphaavatar.agents.utils.vector import WeightedMean
-from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
+from alphaavatar.core.env.schemas import EntityId, PerceptionEntityRef, PerceptionSourceRef
 
 
 @dataclass(slots=True)

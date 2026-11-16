@@ -23,7 +23,7 @@ from livekit import rtc
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import DeviceId, PerceptionSourceRef, SourceId
 from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import VideoFramePayload
 from alphaavatar.core.media.codecs.video import encode_video_frame_to_jpeg
@@ -49,7 +49,7 @@ class _VideoTrackBinding:
 
     source: PerceptionSourceRef
     source_kind: MediaSourceKind
-    device_id: str
+    device_id: DeviceId
 
     publication: rtc.RemoteTrackPublication
     stream: rtc.VideoStream
@@ -134,8 +134,8 @@ class LiveKitVideoInput(LifecycleComponent):
 
     @staticmethod
     def _source_id(
-        device_id: str, source_kind: MediaSourceKind, publication: rtc.RemoteTrackPublication
-    ) -> str:
+        device_id: DeviceId, source_kind: MediaSourceKind, publication: rtc.RemoteTrackPublication
+    ) -> SourceId:
         owner = device_id or "anonymous"
 
         # Standard LiveKit camera/screenshare publications represent one logical
@@ -340,7 +340,7 @@ class LiveKitVideoInput(LifecycleComponent):
                 await self._close_stream(binding)
 
     def _create_stream(
-        self, *, track: rtc.Track, publication: rtc.RemoteTrackPublication, device_id: str
+        self, *, track: rtc.Track, publication: rtc.RemoteTrackPublication, device_id: DeviceId
     ) -> None:
         if not self._started or device_id in self._excluded_device_ids:
             return

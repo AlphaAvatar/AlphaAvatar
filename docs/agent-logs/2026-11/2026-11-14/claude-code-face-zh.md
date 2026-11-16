@@ -468,3 +468,37 @@ test 共 23 个五人随机户。陌生人检索 766,467 次，已注册检索 2
   - 帧队列的配置测试扩为 `test_the_sampling_interval_and_frame_queue_take_positive_times_and_size_the_queue`；新增 `test_a_source_is_sampled_once_per_configured_interval`（间隔 1 秒时，0、0.5、1.2 秒三帧只分析两帧）。三处变异都被发现：取帧、队列长度改回固定的 0.2，去掉为正的检查。
   - 第二个测试起初让队列只放两帧，"取帧固定 0.2"的变异因为队列丢帧碰巧也得到两帧而存活；把队列加大到能放下全部三帧后被发现。
 - 验证（离线）：ruff、format、工作区结构检查、`git diff --check` 通过；全量测试 741 个全部通过。
+
+# 第十八批：参与者相关标识的类型移到 Core
+
+- 用户的要求：`agents/runtime/modules/participants/schemas.py` 里的 `DeviceId`、`EntityKind`、`ParticipantId`、`SourceId`（以及 `EntityId`）作为 Core 的通用类型，因为别的模块也在用。
+  - 用户的决定：替换 Core、Agents、RTC、Host 里对应的 `str` 标注；`EntityKind` 改成枚举。
+  - `ParticipantInput` 按建议留在 Agents：它是能力输入，字段说明写给模型看；Core 里对应的请求是 `IdentityRequest`。
+- 位置：
+  - `SourceId`、`EntityId`、`DeviceId` 放在 `core/env/schemas/reference.py`，与 `PerceptionSourceRef`、`PerceptionEntityRef` 同处。env 是 Core 最底层的包，observation、perception、turn、session 都能直接引用。
+  - `ParticipantId` 放在 `core/session/schemas/participant.py`。turn 引用它，不会形成循环。
+  - 四者都是 `str` 的类型别名，只用于标注。
+  - `EntityKind` 是 `core/session/enums/entity.py` 的 `StrEnum`（FACE、SPEAKER），从 `alphaavatar.core.session` 导出。
+- `EntityKind` 的契约变化：
+  - `AssociationRequest.kind` 和 `occupied_kinds` 里的类型，构造时转成 `EntityKind`，不认识的取值直接拒绝；以前只校验"是合法的标识字符串"。
+  - 身份策略里 `request.kind not in {"face", "speaker"}` 这一条已经由请求保证，删去。
+  - `ensure_entity` 的检查改为对照枚举，报错文字不变。
+  - Persona 两个处理器传 `EntityKind.FACE` / `EntityKind.SPEAKER`。
+- 替换的标注：
+  - Core：Session、身份与关联请求、观测、感知事件与来源注册、Turn 的实体引用。
+  - Agents：参与者模块、Persona 契约、Engine、Router 的 `InteractionEntityRef`、Character 连接、Voice 的 STT 与转写事件。
+  - RTC：LiveKit 的音频、视频、文字输入和用户转写。
+  - Host：`SessionContext`、dispatch、Character 传输、Doctor 的诊断来源。
+  - Persona 两个跟踪器改为从 Core 导入 `EntityId`。
+- 没有替换的：
+  - Host 执行管理的 `source_id` 是调度来源，Memory 的 `MemorySourceRef.source_id` 和图谱链接的 `source_id` 是另外的命名空间。
+  - pydantic 模型的字段：Host 的 LiveKit 配置与 `SessionRequest`、`ParticipantTimeContext`、`ParticipantInput`。pydantic 会把 `type` 别名变成 schema 里的引用。
+  - 不在本批范围的插件里的同类标注，例如 Voice 插件 STT 实现的 `stream(source_id: str)`；它们与基类的别名兼容。
+- 文档：`identifiers-zh.md` 的人物关联一节写明四个别名和 `EntityKind` 的位置，以及哪些同名字段不使用它们。
+- 测试：
+  - 15 处 `ensure_entity(kind="...")` 和绑定层测试里的类型字符串，迁移到 `EntityKind`。
+  - 新增两个直接回归：
+    - Core 的 `test_an_association_names_its_entity_kinds_from_the_closed_set`：按值给出的类型变成枚举成员，`kind` 或已占类型里有未知取值都被拒绝。
+    - 参与者测试补一段：未知类型在 `ensure_entity` 中被拒绝，且什么都没有关联。
+  - 三处变异都被发现：请求不转换 `kind`、不转换已占类型、`ensure_entity` 不检查。
+- 验证（离线）：ruff、format、工作区结构检查、`git diff --check` 通过；全量测试 742 个全部通过。

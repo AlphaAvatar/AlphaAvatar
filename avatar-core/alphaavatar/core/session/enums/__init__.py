@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .entity import EntityKind
 from .identity import IdentityOutcome, IdentitySource
 from .kind import SessionEventKind
 
-__all__ = ["IdentityOutcome", "IdentitySource", "SessionEventKind"]
+__all__ = ["EntityKind", "IdentityOutcome", "IdentitySource", "SessionEventKind"]

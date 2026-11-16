@@ -20,7 +20,7 @@ from typing import Any
 
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef, SourceId
 from alphaavatar.core.log.trace import InputTrace
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
 
@@ -594,7 +594,7 @@ class PerceptionRuntime:
         with self._lock:
             return self._source_registry.snapshot(modality=modality, source_kind=source_kind)
 
-    def next_source(self, source_id: str) -> PerceptionSourceRef:
+    def next_source(self, source_id: SourceId) -> PerceptionSourceRef:
         with self._lock:
             return self._source_registry.next_source(source_id)
 

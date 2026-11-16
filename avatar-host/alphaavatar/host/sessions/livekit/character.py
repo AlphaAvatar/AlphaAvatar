@@ -24,6 +24,7 @@ from uuid import uuid4
 from livekit import api, rtc
 
 from alphaavatar.agents.character import CharacterConnection, CharacterTransport
+from alphaavatar.core.env.schemas import DeviceId
 
 
 class LiveKitCharacterTransport(CharacterTransport):
@@ -33,7 +34,7 @@ class LiveKitCharacterTransport(CharacterTransport):
         self,
         *,
         room: rtc.Room,
-        agent_device_id: str,
+        agent_device_id: DeviceId,
         livekit_url: str | None = None,
         api_key: str | None = None,
         api_secret: str | None = None,
@@ -80,7 +81,7 @@ class LiveKitCharacterTransport(CharacterTransport):
         self._ready_seen = self._started = self._closed = False
 
     @property
-    def device_id(self) -> str:
+    def device_id(self) -> DeviceId:
         return self._device_id
 
     @property

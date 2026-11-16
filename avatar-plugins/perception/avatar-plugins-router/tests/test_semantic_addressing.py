@@ -45,7 +45,7 @@ from alphaavatar.core.env.schemas import (
     PerceptionSourceRef,
 )
 from alphaavatar.core.media import AudioFrame, AudioFramePayload, TextPayload
-from alphaavatar.core.session import SessionRuntime
+from alphaavatar.core.session import EntityKind, SessionRuntime
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.plugins.router.processors.addressing.semantic import processor as semantic
@@ -162,7 +162,7 @@ class Speech:
         self.closes[segment_id] = close
         if speaker is not None:
             participants = self.runtime.participants
-            participants.ensure_entity(self.source, speaker, kind="speaker")
+            participants.ensure_entity(self.source, speaker, kind=EntityKind.SPEAKER)
             token = participants.observe_segment(close.segment)
             participants.bind_segment(close.segment, speaker, token=token)
         if text is not None:
@@ -307,7 +307,7 @@ async def test_transcripts_out_of_order_repeated_or_identified_late_are_read_in_
     await wait_until(lambda: speech.judged("b"), "the later segment was never judged")
     # Its speaker becomes known after its transcript: later judgments name them.
     participants, segment = speech.runtime.participants, speech.segment("b")
-    participants.ensure_entity(segment.source, BOB, kind="speaker")
+    participants.ensure_entity(segment.source, BOB, kind=EntityKind.SPEAKER)
     participants.bind_segment(segment, BOB, token=participants.observe_segment(segment))
     speech.final("a", "Hey Assistant,")
     await wait_until(lambda: len(speech.judged("b")) == 2, "the later segment was not re-judged")

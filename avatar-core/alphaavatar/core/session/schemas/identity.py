@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from .participant import Participant
+from .participant import Participant, ParticipantId
 from .validation import validate_identity, validate_sequence
 
 
@@ -24,7 +24,7 @@ from .validation import validate_identity, validate_sequence
 class IdentityRef:
     """A participant's accepted identity version, without mutable profile data."""
 
-    participant_id: str
+    participant_id: ParticipantId
     user_id: str | None
     identity_revision: int
 

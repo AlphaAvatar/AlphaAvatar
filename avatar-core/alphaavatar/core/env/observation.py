@@ -22,7 +22,7 @@ from alphaavatar.core.time import RuntimeTimeRange
 
 from .annotation import EnvAnnotation
 from .enums import ObservationKind, SpeechCancellationReason
-from .schemas import PerceptionSegmentRef, PerceptionSourceRef
+from .schemas import DeviceId, PerceptionSegmentRef, PerceptionSourceRef
 
 _SEGMENT_REQUIRED_KINDS = {
     ObservationKind.AUDIO_SEGMENT,
@@ -74,7 +74,7 @@ class EnvObservation:
     payload: MediaPayload | None = None
     segment: PerceptionSegmentRef | None = None
 
-    device_id: str | None = None
+    device_id: DeviceId | None = None
 
     frame_id: str | None = None
     path: str | None = None
@@ -149,7 +149,7 @@ class EnvObservation:
         source: PerceptionSourceRef,
         payload: MediaPayload | None = None,
         segment: PerceptionSegmentRef | None = None,
-        device_id: str | None = None,
+        device_id: DeviceId | None = None,
         frame_id: str | None = None,
         path: str | None = None,
         mime_type: str | None = None,

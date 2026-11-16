@@ -15,16 +15,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from alphaavatar.core.env.schemas import PerceptionEntityRef
+from alphaavatar.core.env.schemas import DeviceId, PerceptionEntityRef
+from alphaavatar.core.session.schemas import ParticipantId
 
 
 @dataclass(frozen=True, slots=True)
 class TurnEntityRef:
     kind: str | None = None
-    participant_id: str | None = None
+    participant_id: ParticipantId | None = None
     identity_revision: int | None = None
     user_id: str | None = None
-    device_id: str | None = None
+    device_id: DeviceId | None = None
     entity: PerceptionEntityRef | None = None
 
     def __post_init__(self) -> None:

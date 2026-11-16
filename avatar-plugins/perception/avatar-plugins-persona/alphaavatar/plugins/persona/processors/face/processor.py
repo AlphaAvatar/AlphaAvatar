@@ -37,7 +37,7 @@ from alphaavatar.core.media import PayloadFormatUnavailable, VideoFrame
 from alphaavatar.core.media.codecs.video import bgr_to_video_frame, video_frame_to_bgr
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
-from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.enums import EntityKind, IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest, Participant
 
 from ...runtime import PersonaRuntime
@@ -401,7 +401,10 @@ class FaceProcessor(PersonaProcessorBase):
         """The entity's participant, with this frame's device as evidence."""
         try:
             return self.runtime.participants.ensure_entity(
-                job.observation.source, entity, kind="face", device_id=job.observation.device_id
+                job.observation.source,
+                entity,
+                kind=EntityKind.FACE,
+                device_id=job.observation.device_id,
             )
         except (ValueError, RuntimeError):
             logger.debug("Face entity admission unavailable source=%s", job.observation.source)

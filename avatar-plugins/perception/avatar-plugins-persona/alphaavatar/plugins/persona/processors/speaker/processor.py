@@ -36,7 +36,7 @@ from alphaavatar.core.env.schemas import (
 from alphaavatar.core.media import AudioFrame, AudioSegmentPayload, PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
-from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.enums import EntityKind, IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest, Participant
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
@@ -554,7 +554,10 @@ class SpeakerProcessor(PersonaProcessorBase):
                 return
 
             self.runtime.participants.ensure_entity(
-                state.segment.source, state.entity, kind="speaker", device_id=state.device_id
+                state.segment.source,
+                state.entity,
+                kind=EntityKind.SPEAKER,
+                device_id=state.device_id,
             )
             if not self.runtime.participants.bind_segment(
                 state.segment, state.entity, token=state.token

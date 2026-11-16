@@ -18,13 +18,14 @@ from dataclasses import dataclass
 
 from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 
-from ..enums import IdentitySource
+from ..enums import EntityKind, IdentitySource
+from .participant import ParticipantId
 from .validation import validate_identity, validate_sequence
 
 
 @dataclass(frozen=True, slots=True)
 class IdentityRequest:
-    participant_id: str
+    participant_id: ParticipantId
     user_id: str | None
     source: IdentitySource
     expected_revision: int
@@ -55,28 +56,25 @@ class AssociationRequest:
     source: PerceptionSourceRef
     entity: PerceptionEntityRef
 
-    kind: str
+    kind: EntityKind
 
-    device_participant_id: str | None
-    occupied_kinds: tuple[tuple[str, str], ...] = ()
-    peer_participant_ids: frozenset[str] = frozenset()
+    device_participant_id: ParticipantId | None
+    occupied_kinds: tuple[tuple[ParticipantId, EntityKind], ...] = ()
+    peer_participant_ids: frozenset[ParticipantId] = frozenset()
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, PerceptionSourceRef) or not isinstance(
             self.entity, PerceptionEntityRef
         ):
             raise TypeError("Association requires explicit perception source and entity references")
-        validate_identity(self.kind, name="kind")
+        object.__setattr__(self, "kind", EntityKind(self.kind))
         if self.device_participant_id is not None:
             validate_identity(self.device_participant_id, name="device_participant_id")
         object.__setattr__(
             self,
             "occupied_kinds",
             tuple(
-                (
-                    validate_identity(participant_id, name="participant_id"),
-                    validate_identity(kind, name="kind"),
-                )
+                (validate_identity(participant_id, name="participant_id"), EntityKind(kind))
                 for participant_id, kind in self.occupied_kinds
             ),
         )

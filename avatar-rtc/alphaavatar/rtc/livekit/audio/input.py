@@ -23,7 +23,7 @@ from livekit import rtc
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import DeviceId, PerceptionSourceRef, SourceId
 from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import AudioFramePayload
 from alphaavatar.core.perception import PerceptionRuntime
@@ -47,7 +47,7 @@ class _AudioTrackBinding:
     track_source: int
 
     source: PerceptionSourceRef
-    device_id: str
+    device_id: DeviceId
 
     publication: rtc.RemoteTrackPublication
     stream: rtc.AudioStream
@@ -103,7 +103,7 @@ class LiveKitAudioInput(LifecycleComponent):
         self._started = False
 
     @staticmethod
-    def _source_id(device_id: str, track_sid: str, track_source: int) -> str:
+    def _source_id(device_id: DeviceId, track_sid: str, track_source: int) -> SourceId:
         owner = device_id or "anonymous"
         discriminator = f"source:{track_source}" if track_source else f"track:{track_sid}"
         return f"env:audio:{owner}:{discriminator}"
@@ -291,7 +291,7 @@ class LiveKitAudioInput(LifecycleComponent):
                 await self._close_stream(binding)
 
     def _create_stream(
-        self, *, track: rtc.Track, publication: rtc.RemoteTrackPublication, device_id: str
+        self, *, track: rtc.Track, publication: rtc.RemoteTrackPublication, device_id: DeviceId
     ) -> None:
         if not self._started or device_id in self._excluded_device_ids:
             return

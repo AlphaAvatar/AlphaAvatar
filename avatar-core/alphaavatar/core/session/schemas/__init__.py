@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .identity import IdentityBasis, IdentityRef
-from .participant import Participant
+from .participant import Participant, ParticipantId
 from .request import AssociationRequest, IdentityRequest
 from .session import SessionEvent, SessionSnapshot, SessionStreamRead
 from .validation import validate_identity
@@ -23,6 +23,7 @@ __all__ = [
     "IdentityRef",
     "IdentityRequest",
     "Participant",
+    "ParticipantId",
     "SessionEvent",
     "SessionSnapshot",
     "SessionStreamRead",

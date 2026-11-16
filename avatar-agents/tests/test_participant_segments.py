@@ -30,7 +30,7 @@ from alphaavatar.core.env.schemas import (
 )
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
-from alphaavatar.core.session import SessionRuntime
+from alphaavatar.core.session import EntityKind, SessionRuntime
 from alphaavatar.core.turn import TurnRuntime
 
 SOURCE = PerceptionSourceRef("microphone", 1)
@@ -58,7 +58,7 @@ def ready(runtime: ParticipantRuntime) -> list[dict]:
 
 
 def bound(runtime: ParticipantRuntime, segment: PerceptionSegmentRef, token: int) -> None:
-    runtime.ensure_entity(SOURCE, VOICE, kind="speaker", device_id="microphone")
+    runtime.ensure_entity(SOURCE, VOICE, kind=EntityKind.SPEAKER, device_id="microphone")
     assert runtime.bind_segment(segment, VOICE, token=token)
 
 

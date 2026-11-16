@@ -17,14 +17,19 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 from alphaavatar.core.session import (
     DefaultIdentityPolicy,
+    EntityKind,
     IdentityOutcome,
     IdentityRequest,
     IdentitySource,
     SessionEventKind,
     SessionRuntime,
 )
+from alphaavatar.core.session.schemas import AssociationRequest
 
 HANG_GUARD = 30
 
@@ -40,6 +45,25 @@ def request(
         expected_revision=basis,
         **fields,
     )
+
+
+def test_an_association_names_its_entity_kinds_from_the_closed_set() -> None:
+    def association(kind: str, occupied: str = "speaker") -> AssociationRequest:
+        return AssociationRequest(
+            source=PerceptionSourceRef("camera", 1),
+            entity=PerceptionEntityRef("face-a"),
+            kind=kind,
+            device_participant_id=None,
+            occupied_kinds=(("participant-1", occupied),),
+        )
+
+    # A kind given by its value is the enum member, in the request and its occupied kinds.
+    accepted = association("face")
+    assert accepted.kind is EntityKind.FACE
+    assert accepted.occupied_kinds == (("participant-1", EntityKind.SPEAKER),)
+    for kind, occupied in (("hand", "speaker"), ("face", "hand")):
+        with pytest.raises(ValueError, match="EntityKind"):
+            association(kind, occupied)
 
 
 def test_corrections_keep_the_participant_and_retain_every_accepted_version() -> None:

@@ -25,7 +25,7 @@ from livekit import rtc
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import DeviceId, PerceptionSourceRef
 from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.time import RuntimeClock, RuntimeTimeRange
@@ -103,7 +103,7 @@ class LiveKitTextInput(LifecycleComponent):
         elif (error := task.exception()) is not None:
             self._fail(error)
 
-    def _receive(self, reader: rtc.TextStreamReader, device_id: str) -> None:
+    def _receive(self, reader: rtc.TextStreamReader, device_id: DeviceId) -> None:
         # Identity comes from the RTC callback, never from reader attributes.
         if self._close_task is not None or self._failure is not None:
             self._fail(RuntimeError("Text stream arrived after intake closed"))
@@ -119,7 +119,7 @@ class LiveKitTextInput(LifecycleComponent):
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(self._observe)
 
-    async def _read(self, reader: rtc.TextStreamReader, device_id: str) -> None:
+    async def _read(self, reader: rtc.TextStreamReader, device_id: DeviceId) -> None:
         info = reader.info
         if not isinstance(info.stream_id, str) or not 1 <= len(info.stream_id) <= 512:
             raise ValueError("Invalid RTC text stream identity")

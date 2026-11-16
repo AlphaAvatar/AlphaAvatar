@@ -32,6 +32,8 @@
 
 - `SessionContext.device_id` 表示用户的接入设备；`CharacterConnection.device_id` 表示渲染目标设备。字段所属对象决定角色，不要求二者相同。
 - `device_ids`、`excluded_device_ids` 是设备集合；`previous_user_id` 是历史引用，均不新增身份层。
+- 类型：`DeviceId`、`SourceId`、`EntityId` 定义在 Core 的 [`core.env.schemas`](../avatar-core/alphaavatar/core/env/schemas/reference.py)，与 `PerceptionSourceRef`、`PerceptionEntityRef` 同处；`ParticipantId` 定义在 [`core.session.schemas`](../avatar-core/alphaavatar/core/session/schemas/participant.py)。四者都是 `str` 的类型别名，只用于标注，不做校验。实体类型 `EntityKind`（`FACE`、`SPEAKER`）是 [`core.session.enums`](../avatar-core/alphaavatar/core/session/enums/entity.py) 中的枚举，`AssociationRequest` 和 `ParticipantRuntime.ensure_entity()` 只接受这两种。
+- Host 的调度 `source_id`、Memory 的来源与图谱编号是另外的命名空间，pydantic 模型（配置、能力输入）的字段也保持 `str`，不使用这些别名。
 - 同设备、同 `user_id` 都不会自动合并参与者；同一实体只对应一个参与者。不同媒体是否为同一人，由明确的关联证据决定。
 
 ### 2.1 映射只有一个权威维护位置

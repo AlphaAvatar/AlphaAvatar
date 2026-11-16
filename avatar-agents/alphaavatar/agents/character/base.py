@@ -16,6 +16,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from dataclasses import dataclass, field
 
+from alphaavatar.core.env.schemas import DeviceId
 from alphaavatar.core.lifecycle import LifecycleComponent
 
 
@@ -25,8 +26,8 @@ class CharacterConnection:
 
     transport: str
     url: str
-    agent_device_id: str
-    device_id: str
+    agent_device_id: DeviceId
+    device_id: DeviceId
     token: str = field(repr=False)
 
     def __post_init__(self) -> None:

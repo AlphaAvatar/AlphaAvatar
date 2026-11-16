@@ -24,6 +24,7 @@ from livekit import api
 from livekit.protocol import agent, models
 
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.env.schemas import DeviceId
 from alphaavatar.host.execution.manager import ExecutionManager
 from alphaavatar.host.execution.schemas import ExecutionReservation, ExecutionView
 from alphaavatar.host.sessions.schemas import SessionRequest
@@ -38,10 +39,10 @@ logger = logging.getLogger(__name__)
 class _Offer:
     reservation: ExecutionReservation
     epoch: int
-    agent_device_id: str
+    agent_device_id: DeviceId
     fingerprint: tuple
     room_name: str
-    device_id: str | None
+    device_id: DeviceId | None
 
 
 def _fingerprint(job: agent.Job) -> tuple:

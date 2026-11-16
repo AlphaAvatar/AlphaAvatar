@@ -19,16 +19,19 @@ from uuid import uuid4
 
 from alphaavatar.agents.workspace import UserPath, WorkspacePaths
 from alphaavatar.core.env.schemas import (
+    DeviceId,
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,
+    SourceId,
 )
 from alphaavatar.core.session import Participant, SessionRuntime
-from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.enums import EntityKind, IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import (
     AssociationRequest,
     IdentityBasis,
     IdentityRequest,
+    ParticipantId,
     validate_identity,
 )
 from alphaavatar.core.turn import TurnRuntime
@@ -37,7 +40,7 @@ from alphaavatar.core.turn.schemas import TurnSnapshot
 from ...capability import avatar_capability
 from ...capability.enums import AvatarCapabilityName
 from .binding import ParticipantBindings
-from .schemas import DeviceId, EntityKind, ParticipantId, ParticipantInput, SourceId
+from .schemas import ParticipantInput
 
 
 @dataclass(slots=True)
@@ -115,7 +118,7 @@ class ParticipantRuntime:
     def active_participant_ids(self) -> frozenset[ParticipantId]:
         return frozenset(self._active_participants)
 
-    def _require_participant(self, participant_id: str) -> Participant:
+    def _require_participant(self, participant_id: ParticipantId) -> Participant:
         if self._closed:
             raise RuntimeError("ParticipantRuntime is closed")
         participant = self.get(participant_id)
@@ -160,13 +163,13 @@ class ParticipantRuntime:
             if segment.source == source:
                 self._settle(self._segments.pop(segment), "released", "source_retired")
 
-    def _admit_participant(self, participant_id: str) -> None:
+    def _admit_participant(self, participant_id: ParticipantId) -> None:
         if participant_id not in self._active_participants:
             if len(self._active_participants) >= self._max_participants:
                 raise RuntimeError("Active participant capacity reached")
             self._active_participants.add(participant_id)
 
-    def _release_participant(self, participant_id: str) -> None:
+    def _release_participant(self, participant_id: ParticipantId) -> None:
         if not self._bindings.has_participant(participant_id):
             # Session retains accepted identity versions for old Turns and admitted writes.
             self._active_participants.discard(participant_id)
@@ -177,7 +180,7 @@ class ParticipantRuntime:
         self,
         *,
         user_id: str | None = None,
-        participant_id: str | None = None,
+        participant_id: ParticipantId | None = None,
         timezone: str | None = None,
         primary: bool = False,
     ) -> Participant:
@@ -197,7 +200,7 @@ class ParticipantRuntime:
         self._active_participants.add(participant.participant_id)
         return participant
 
-    def get(self, participant_id: str) -> Participant | None:
+    def get(self, participant_id: ParticipantId) -> Participant | None:
         return self.session.get_participant(participant_id=participant_id)
 
     def project_turn(self, snapshot: TurnSnapshot) -> TurnSnapshot:
@@ -235,7 +238,7 @@ class ParticipantRuntime:
     def identity_basis_is_current(self, basis: IdentityBasis) -> bool:
         return not self._closed and basis.matches(self.get)
 
-    def bind_device(self, device_id: str, participant_id: str) -> None:
+    def bind_device(self, device_id: DeviceId, participant_id: ParticipantId) -> None:
         self._require_participant(participant_id)
         self._bindings.check_device(device_id, participant_id)
         self._admit_participant(participant_id)
@@ -247,12 +250,12 @@ class ParticipantRuntime:
         entity: PerceptionEntityRef,
         *,
         kind: EntityKind,
-        participant_id: str | None = None,
-        device_id: str | None = None,
+        participant_id: ParticipantId | None = None,
+        device_id: DeviceId | None = None,
     ) -> Participant:
         """The entity's participant, on this source too: the one it is bound to, the one named,
         or, for an entity new to the session, the one identity policy selects or a newcomer."""
-        if kind not in {"face", "speaker"}:
+        if kind not in set(EntityKind):
             raise ValueError("Participant association kind must be face or speaker")
         if device_id is not None:
             validate_identity(device_id, name="device_id")
@@ -403,7 +406,7 @@ class ParticipantRuntime:
 
     def resolve(
         self,
-        device_id: str | None = None,
+        device_id: DeviceId | None = None,
         *,
         source: PerceptionSourceRef | None = None,
         entity: PerceptionEntityRef | None = None,

@@ -26,6 +26,7 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
 from alphaavatar.core.env.schemas import (
+    DeviceId,
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,
@@ -250,7 +251,7 @@ class AvatarEngine(LifecycleComponent):
 
     def _participant_entity(
         self,
-        device_id: str | None,
+        device_id: DeviceId | None,
         *,
         kind: str = "person",
         entity: PerceptionEntityRef | None = None,

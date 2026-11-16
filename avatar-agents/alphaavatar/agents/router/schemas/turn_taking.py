@@ -19,6 +19,7 @@ from typing import Any
 from alphaavatar.core.env import EnvAnnotation
 from alphaavatar.core.env.enums import AnnotationKind
 from alphaavatar.core.env.schemas import (
+    DeviceId,
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,
@@ -65,7 +66,7 @@ def _annotation(
 class InteractionEntityRef:
     kind: InteractionEntityKind
     entity: PerceptionEntityRef | None = None
-    device_id: str | None = None
+    device_id: DeviceId | None = None
     source: PerceptionSourceRef | None = None
 
     def __post_init__(self) -> None:

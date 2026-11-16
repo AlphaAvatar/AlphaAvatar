@@ -24,6 +24,7 @@ import pytest
 from configured_chain import DEVICE, Chain, configured_chain, wait_until
 
 from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSegmentRef
+from alphaavatar.core.session import EntityKind
 
 ALICE, BOB = PerceptionEntityRef("voice-alice"), PerceptionEntityRef("voice-bob")
 # Each segment: the speaker its speech names, and the one its association settles on.
@@ -54,7 +55,7 @@ async def test_a_turns_actors_are_its_segments_associations_never_its_device(
     participants = runtime.participants
     # Two people heard on the device, each a participant of their own besides its owner.
     people = {
-        voice: participants.ensure_entity(session.speech, voice, kind="speaker")
+        voice: participants.ensure_entity(session.speech, voice, kind=EntityKind.SPEAKER)
         for voice in (ALICE, BOB)
     }
     primary = participants.resolve(DEVICE, by_device=True)

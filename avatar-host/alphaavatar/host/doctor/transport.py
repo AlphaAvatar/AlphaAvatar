@@ -32,6 +32,7 @@ from uuid import uuid4
 import numpy as np
 
 if TYPE_CHECKING:
+    from alphaavatar.core.env.schemas import DeviceId
     from alphaavatar.core.output import OutputRuntime
     from alphaavatar.core.perception import PerceptionRuntime
 
@@ -67,7 +68,7 @@ class DiagnosticSource:
         self,
         perception: PerceptionRuntime,
         *,
-        device_id: str,
+        device_id: DeviceId,
         frame_ms: int,
         video_interval_sec: float,
     ) -> None:

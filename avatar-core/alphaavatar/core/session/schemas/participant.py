@@ -19,10 +19,12 @@ from alphaavatar.core.time import RuntimeTime
 
 from .validation import validate_identity, validate_sequence
 
+type ParticipantId = str  # One person in the session, bound to at most one user at a time
+
 
 @dataclass(frozen=True, slots=True)
 class Participant:
-    participant_id: str
+    participant_id: ParticipantId
     user_id: str | None
     joined_at: RuntimeTime
     identity_revision: int = 0
