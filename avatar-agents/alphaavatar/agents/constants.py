@@ -24,7 +24,7 @@ SPEAKER_BETA = 0.95  # A save keeps this much of the user's stored speaker vecto
 SPEAKER_MATCH_THRESHOLD = 0.6  # Cosine of the campplus speaker vectors
 
 FACE_BETA = 0.95  # A save keeps this much of the user's stored face vector
-FACE_MATCH_THRESHOLD = 0.45
+FACE_MATCH_THRESHOLD = 0.40  # Cosine of the buffalo_l w600k_r50 face vectors
 FACE_INFERENCE_THRESHOLD = 1.0
 
 USER_TAG_PREFIX = "User_"
