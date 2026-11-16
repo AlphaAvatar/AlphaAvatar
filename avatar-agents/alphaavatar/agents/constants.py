@@ -17,15 +17,7 @@ DEFAULT_CONTEXT_VALUE = "No reliable information is currently available."
 RUNTIME_CONTEXT_TOOL_NAME = "alphaavatar_runtime_context"
 
 VIDEO_VISION_INTERVAL_SEC = 1
-VIDEO_PERSONA_INTERVAL_SEC = 0.2
 VIDEO_MEMORY_INTERVAL_SEC = 0.5
-
-SPEAKER_BETA = 0.95  # A save keeps this much of the user's stored speaker vector
-SPEAKER_MATCH_THRESHOLD = 0.6  # Cosine of the campplus speaker vectors
-
-FACE_BETA = 0.95  # A save keeps this much of the user's stored face vector
-FACE_MATCH_THRESHOLD = 0.40  # Cosine of the buffalo_l w600k_r50 face vectors
-FACE_INFERENCE_THRESHOLD = 1.0
 
 USER_TAG_PREFIX = "User_"
 

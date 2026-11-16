@@ -19,7 +19,6 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
 from alphaavatar.agents.persona.cache import PersonaCache
 from alphaavatar.agents.persona.schemas import DetailsBase, UserProfile, UserRuntimeState
 from alphaavatar.agents.utils.vector import VectorOps, WeightedMean
@@ -28,6 +27,9 @@ from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .profile import UserProfileDetails
 from .profile.serialization import field_metadata, merge_profile_field
+
+SPEAKER_BETA = 0.95  # A save keeps this much of the user's stored speaker vector
+FACE_BETA = 0.95  # A save keeps this much of the user's stored face vector
 
 
 @dataclass(frozen=True, slots=True)

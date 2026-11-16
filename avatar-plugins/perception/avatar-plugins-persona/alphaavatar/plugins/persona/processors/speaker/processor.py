@@ -21,7 +21,6 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from alphaavatar.agents.constants import SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import avatar_capability
@@ -465,7 +464,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         user_id = await self.persona.store.search_speaker_vector(
             speaker_vector=state.vector,
-            threshold=SPEAKER_MATCH_THRESHOLD,
+            threshold=self._config.identity_match_threshold,
             timeout=self._vector_config.inference_timeout_sec,
         )
         if not self._speaks_as(state, participant):
@@ -478,7 +477,10 @@ class SpeakerProcessor(PersonaProcessorBase):
                     user_id=user_id,
                     source=IdentitySource.PERCEPTION,
                     expected_revision=participant.identity_revision,
-                    reason=f"Speaker vector matched the stored user above {SPEAKER_MATCH_THRESHOLD}",
+                    reason=(
+                        "Speaker vector matched the stored user above "
+                        f"{self._config.identity_match_threshold}"
+                    ),
                 )
             )
             if outcome not in (IdentityOutcome.APPLIED, IdentityOutcome.UNCHANGED):

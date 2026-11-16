@@ -452,3 +452,19 @@ test 共 23 个五人随机户。陌生人检索 766,467 次，已注册检索 2
   - **按帧绑对**：分母是已注册会话的全部帧 26,581（含没检测到人脸的 4 帧），分子是处理完该帧后绑定为本人的帧，绑定会延续。
   - **帧级拒识**：分母是做了检索的帧 26,577，分子是该帧自己的检索 top-1 低于阈值的帧。
   - 0.40 时两者是 25,738/26,581（96.83%）和 2,613/26,577（9.83%），0.45 时是 24,699（92.92%）和 4,524（17.02%）。相加超过 100%，因为一帧可以被自己的检索拒识，同时仍处在之前的正确绑定上。
+
+# 第十七批：Persona 的阈值与常量移出 agents
+
+- 用户的要求：`agents/constants.py` 里只有 Persona 用到的常量，不放在 agents 层。按 AGENTS.md，处理器自己的设置跟着处理器走。
+- 改动：
+  - **身份阈值放进各自插件的配置**：`speaker.identity_match_threshold`（默认 0.6，CAM++ 向量的余弦）和 `face.identity_match_threshold`（默认 0.40，buffalo_l `w600k_r50` 向量的余弦），放在各自的跟踪阈值旁边，同一行注释说明是哪个模型的余弦。两个处理器的检索和绑定理由都改为读配置。理由：评估说明身份阈值随模型而变，0.40 和 0.45 之间也是部署时的取舍。
+  - **保存权重留作 Persona 插件内的常量**：`SPEAKER_BETA`、`FACE_BETA` 移到 `cache.py` 模块级。它们是 PersonaRuntime 的存储规则，决定用户存储的向量更新得多快，没有校准过，不适合作为部署可调项。
+  - **推理告警阈值留作人脸处理器的常量**：`FACE_INFERENCE_THRESHOLD`（1.0 秒）原样移到 `face/processor.py`，注释说明含义。之前已报告、未改：告警文字说"比实时慢"，但每 0.2 秒取一帧、队列缓冲 0.4 秒，0.2～1.0 秒之间已经在丢帧却不告警。
+  - **用户追加：人脸取帧间隔放进人脸配置**：`face.sample_interval_sec`（默认 0.2，必须为正），替代 `VIDEO_PERSONA_INTERVAL_SEC`。它与已在配置中的 `face.frame_queue_sec` 一起决定帧队列长度，也是部署时要按 CPU 调的项（buffalo_l 的检测单线程每帧 217 ms）。配置要求为正之后，处理器里"间隔大于 0 才判断"的分支就不再需要，已删去。
+  - `agents/constants.py` 删去这六个常量，不留别名。仓库里没有其他引用；Persona README 补上两个身份阈值和取帧间隔的说明。
+- 测试：
+  - 测试替身记录每次向量检索收到的阈值。
+  - 新增 `test_each_sensor_searches_and_binds_with_its_configured_identity_threshold`（说话人、人脸各一）：配置 0.37 时，检索收到 0.37，绑定理由写的也是 0.37。四处变异都被发现：两个处理器的检索、绑定理由各改回写死的值。
+  - 帧队列的配置测试扩为 `test_the_sampling_interval_and_frame_queue_take_positive_times_and_size_the_queue`；新增 `test_a_source_is_sampled_once_per_configured_interval`（间隔 1 秒时，0、0.5、1.2 秒三帧只分析两帧）。三处变异都被发现：取帧、队列长度改回固定的 0.2，去掉为正的检查。
+  - 第二个测试起初让队列只放两帧，"取帧固定 0.2"的变异因为队列丢帧碰巧也得到两帧而存活；把队列加大到能放下全部三帧后被发现。
+- 验证（离线）：ruff、format、工作区结构检查、`git diff --check` 通过；全量测试 741 个全部通过。

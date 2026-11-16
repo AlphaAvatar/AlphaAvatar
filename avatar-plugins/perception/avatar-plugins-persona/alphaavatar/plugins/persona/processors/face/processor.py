@@ -24,11 +24,6 @@ from typing import Any
 import cv2
 import numpy as np
 
-from alphaavatar.agents.constants import (
-    FACE_INFERENCE_THRESHOLD,
-    FACE_MATCH_THRESHOLD,
-    VIDEO_PERSONA_INTERVAL_SEC,
-)
 from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.persona.schemas import FaceDetection, FaceDetectionResult, FaceKeypoints5
 from alphaavatar.agents.runtime import AvatarRuntime
@@ -53,6 +48,8 @@ from .model_files import FACE_MODEL_CONFIG
 from .tracking import FaceTracks
 
 logger = logging.getLogger(__name__)
+
+FACE_INFERENCE_THRESHOLD = 1.0  # Seconds of one frame's analysis past which it is logged as slow
 
 
 def _face_area(face: dict[str, Any]) -> float:
@@ -111,7 +108,7 @@ class FaceProcessor(PersonaProcessorBase):
 
         # Two lanes: frames, whose analysis, association and annotation visual routing reads;
         # and each associated face's identity, which the next frame never waits on.
-        frames = math.ceil(round(config.frame_queue_sec / VIDEO_PERSONA_INTERVAL_SEC, 6))
+        frames = math.ceil(round(config.frame_queue_sec / config.sample_interval_sec, 6))
         self._frame_queue: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=frames)
         self._identity_queue: asyncio.Queue[FaceIdentityJob] = asyncio.Queue(
             maxsize=config.max_faces
@@ -170,7 +167,7 @@ class FaceProcessor(PersonaProcessorBase):
 
         last_ts = self._last_sample_ts.get(source, 0.0)
 
-        if VIDEO_PERSONA_INTERVAL_SEC > 0 and timestamp - last_ts < VIDEO_PERSONA_INTERVAL_SEC:
+        if timestamp - last_ts < self._config.sample_interval_sec:
             return
 
         job = FaceFrameJob(observation)
@@ -370,7 +367,7 @@ class FaceProcessor(PersonaProcessorBase):
             return None
 
         user_id = await self.persona.store.search_face_vector(
-            face_vector=vector, threshold=FACE_MATCH_THRESHOLD, timeout=timeout
+            face_vector=vector, threshold=self._config.identity_match_threshold, timeout=timeout
         )
         if not self._identity_is_current(job, entity, participant):
             return None
@@ -382,7 +379,10 @@ class FaceProcessor(PersonaProcessorBase):
                     user_id=user_id,
                     source=IdentitySource.PERCEPTION,
                     expected_revision=participant.identity_revision,
-                    reason=f"Face vector matched the stored user above {FACE_MATCH_THRESHOLD}",
+                    reason=(
+                        "Face vector matched the stored user above "
+                        f"{self._config.identity_match_threshold}"
+                    ),
                 )
             )
             if outcome not in (IdentityOutcome.APPLIED, IdentityOutcome.UNCHANGED):

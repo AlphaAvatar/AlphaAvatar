@@ -27,6 +27,7 @@ class SpeakerConfig(BaseModel):
     max_speaker_caches: int = Field(default=64, ge=1, le=512)
 
     # Cosines of the campplus speaker vectors.
+    identity_match_threshold: float = Field(default=0.6, ge=0, le=1)
     track_match_threshold: float = Field(default=0.55, ge=0, le=1)
     track_match_margin: float = Field(default=0.0, ge=0, le=1)
     segment_consistency_threshold: float = Field(default=0.4, ge=0, le=1)

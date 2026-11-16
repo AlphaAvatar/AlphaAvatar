@@ -89,6 +89,7 @@ class SensorInference:
 
     def __init__(self) -> None:
         self.searches: list[str] = []
+        self.search_thresholds: list[float] = []  # The threshold each vector search was asked for
         self.hold: str | None = None
         self.fail: str | None = None  # A user whose speaker vector request fails
         self.held, self.release = asyncio.Event(), asyncio.Event()
@@ -160,6 +161,7 @@ class SensorInference:
             kind = request["op"].split("_")[1]
             user = PEOPLE[int(np.argmax(request["param"][f"{kind}_vector"]))]
             self.searches.append(f"{kind}:{user}")
+            self.search_thresholds.append(request["param"]["threshold"])
             if self.hold_search:
                 self.hold_search = False
                 self.search_held.set()
@@ -339,6 +341,26 @@ async def wait_until(condition: Callable[[], bool], failure: str) -> None:
                 await asyncio.sleep(0.001)
     except TimeoutError:
         pytest.fail(failure, pytrace=False)
+
+
+@pytest.mark.parametrize("sensor", ["speaker", "face"])
+async def test_each_sensor_searches_and_binds_with_its_configured_identity_threshold(
+    sensor: str, tmp_path: Path
+) -> None:
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, sensor, identity_match_threshold=0.37)
+    await persona.on_start()
+    observe(runtime, sensor, PerceptionSourceRef("device", 1), "alice")
+    await wait_until(lambda: participant_of(runtime, "alice") is not None, "alice was never bound")
+
+    participant = participant_of(runtime, "alice")
+    history = runtime.session.identity_history(participant.participant_id)
+    (bound,) = [e for e in history if e.reason and "matched the stored user" in e.reason]
+    assert set(inference.search_thresholds) == {0.37}
+    assert bound.reason.endswith("matched the stored user above 0.37")
+    await persona.on_stop()
+    await runtime.aclose()
 
 
 @pytest.mark.parametrize("sensor", ["speaker", "face"])
@@ -1161,15 +1183,36 @@ def face_annotations(runtime: AvatarRuntime) -> list:
     return [e.payload for e in events if e.payload.kind == AnnotationKind.FACE_DETECTION]
 
 
-def test_the_frame_queue_takes_a_positive_time_and_holds_at_least_one_frame(tmp_path: Path) -> None:
+def test_the_sampling_interval_and_frame_queue_take_positive_times_and_size_the_queue(
+    tmp_path: Path,
+) -> None:
     from alphaavatar.plugins.persona.processors.face.config import FaceConfig
 
-    for seconds in (0.0, -0.2, float("inf")):
-        with pytest.raises(ValueError, match="frame_queue_sec"):
-            FaceConfig(frame_queue_sec=seconds)
+    for name in ("sample_interval_sec", "frame_queue_sec"):
+        for seconds in (0.0, -0.2, float("inf")):
+            with pytest.raises(ValueError, match=name):
+                FaceConfig(**{name: seconds})
     runtime = avatar_runtime(tmp_path, SensorInference())
-    face = persona_for(runtime, "face", frame_queue_sec=0.05)._processors[0]
-    assert face._frame_queue.maxsize == 1
+    for settings, frames in (({"frame_queue_sec": 0.05}, 1), ({"sample_interval_sec": 0.1}, 4)):
+        face = persona_for(runtime, "face", **settings)._processors[0]
+        assert face._frame_queue.maxsize == frames
+
+
+async def test_a_source_is_sampled_once_per_configured_interval(tmp_path: Path) -> None:
+    # One second between samples: of frames at 0, 0.5 and 1.2 s, the one at 0.5 s is skipped. The
+    # queue holds all three, so sampling alone decides which are analyzed.
+    runtime = avatar_runtime(tmp_path, SensorInference())
+    persona = persona_for(runtime, "face", sample_interval_sec=1.0, frame_queue_sec=5.0)
+    await persona.on_start()
+    source = PerceptionSourceRef("camera", 1)
+    for later in (0.0, 0.5, 1.2):
+        show(runtime, source, "alice", later=later)
+    await wait_until(
+        lambda: len(face_annotations(runtime)) == 2, "the sampled frames were never analyzed"
+    )
+    await persona.on_stop()
+    assert len(face_annotations(runtime)) == 2
+    await runtime.aclose()
 
 
 @pytest.mark.parametrize(("seconds", "kept"), [(0.4, 2), (0.6, 3)])
