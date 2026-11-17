@@ -226,23 +226,6 @@ def _credentials(selection, paths, out: Report, rtc) -> tuple[dict[str, str], di
     return values, saved
 
 
-def _machine(plan) -> list[str]:
-    """What this machine lacks for the plan's native code."""
-    problems = []
-    found = os.confstr("CS_GNU_LIBC_VERSION") or ""
-    have = tuple(map(int, found.split()[-1].split("."))) if found.startswith("glibc") else None
-    if plan.glibc is not None and (have is None or have < tuple(map(int, plan.glibc.split(".")))):
-        problems.append(f"glibc {plan.glibc} or newer; found {found or 'none'}")
-    try:
-        text = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace")
-        flags = set(next(line for line in text.splitlines() if line.startswith("flags")).split())
-    except (OSError, StopIteration):
-        flags = set()
-    if lacking := [flag for flag in plan.cpu if flag not in flags]:
-        problems.append(f"a CPU with {', '.join(plan.cpu)}; {', '.join(lacking)} missing")
-    return problems
-
-
 def _single_file(texts: dict[str, str], name: str, home: Path, target: Path) -> None:
     """The bundle with its profiles inlined, as config check reads it before files exist."""
     import yaml
@@ -254,14 +237,16 @@ def _single_file(texts: dict[str, str], name: str, home: Path, target: Path) -> 
     target.write_text(yaml.safe_dump(bundle, sort_keys=False, allow_unicode=True), "utf-8")
 
 
-def _megabytes(size: int) -> str:
-    return f"{size / 1e6:,.0f} MB"
-
-
 def _apart(out: Report, started: int) -> None:
     """A blank line after what the steps printed, before the result on stderr."""
     if out.lines > started:
         out.write()
+
+
+def _refused(args: argparse.Namespace, diagnostic: str) -> None:
+    """With --plan, stdout holds JSON even for a refusal: why, as the report shows it."""
+    if args.plan:
+        print(json.dumps({"error": {"diagnostic": diagnostic}}, indent=1))
 
 
 def _interrupt(signum: int, frame: Any) -> None:
@@ -297,7 +282,9 @@ def _setup(args: argparse.Namespace) -> int:
         SetupError,
         Sources,
         check_environment,
+        check_machine,
         install,
+        megabytes,
     )
     from alphaavatar.host.tools.setup.plan import PlanError, plan_install
 
@@ -355,17 +342,9 @@ def _setup(args: argparse.Namespace) -> int:
             document = plan.document() | {"id": plan.id, "download_bytes": plan.download_bytes}
             print(json.dumps(document, indent=1))
             return 0
-        if problems := _machine(plan):
-            raise SetupError("This machine lacks what the plan needs: " + "; ".join(problems))
+        check_machine(installation, plan)
         target = installation.environment(plan)
         reused = installation.reusable(plan)
-        free = os.statvfs(installation.prefix)
-        # Installed packages take about three times their download; downloads go first.
-        if not reused and free.f_bavail * free.f_frsize < 4 * plan.download_bytes:
-            raise SetupError(
-                f"{_megabytes(free.f_bavail * free.f_frsize)} free in {installation.prefix}; "
-                f"the plan downloads {_megabytes(plan.download_bytes)} and needs about four times"
-            )
         if existing is None:
             out.begin(2, "Credentials")
             with tempfile.TemporaryDirectory() as scratch:
@@ -378,7 +357,7 @@ def _setup(args: argparse.Namespace) -> int:
             _session_credentials(host.rtc, os.environ)
             out.step(2, "Credentials", "From the environment, .env or those stored")
 
-        size = "installed already" if reused else _megabytes(plan.download_bytes)
+        size = "installed already" if reused else megabytes(plan.download_bytes)
         planned = f"{len(plan.artifacts)} packages · {size}"
         out.begin(3, "Install")
         if extra := sorted(set(kept) - set(needed)):
@@ -465,12 +444,14 @@ def _setup(args: argparse.Namespace) -> int:
         errors.status("FAIL", "Setup failed; nothing was enabled")
         errors.verbatim(str(error), indent=STATUS)
         errors.write()
+        _refused(args, str(error))
         return 1
     except Exception as error:
         _apart(out, started)
         errors.status("FAIL", "Setup failed; nothing was enabled")
         errors.verbatim(format_failure(error))
         errors.write()
+        _refused(args, format_failure(error))
         return 2
     found_stored = stored_credentials(paths)
     out.write()

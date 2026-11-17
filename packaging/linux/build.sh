@@ -11,6 +11,8 @@
 #       install, each distribution's artifact with its SHA-256
 #   *.whl  the artifacts this build makes: AlphaAvatar's packages, and the locked sources with
 #       no wheel for the platform (llama-cpp-python, compiled for x86-64-v3)
+#   alphaavatar-linux-x86_64.manifest.json  the package's manifest, as it holds it: what
+#       `alphaavatar upgrade` reads of a release to tell its build before downloading it
 #   install.sh  the installer, as packaging/linux holds it
 #   SHA256SUMS  every file above
 # Other artifacts are uv.lock's wheels (torch and torchaudio: torch-cpu.txt's CPU builds), which
@@ -229,7 +231,8 @@ catalog = json.load(open(sys.argv[1], encoding="utf-8"))
 print("\n".join(d["file"] for d in catalog["distributions"].values() if d.get("sha256") and not d["url"]))' \
   "$tree/share/alphaavatar/catalog.json" | while read -r file; do cp "$wheels/$file" "$out/"; done
 cp "$here/install.sh" "$out/"
+cp "$tree/share/alphaavatar/manifest.json" "$out/alphaavatar-linux-x86_64.manifest.json"
 (cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" && sha256sum -- *.whl \
-  install.sh "$name.tar.gz" > SHA256SUMS)
+  install.sh alphaavatar-linux-x86_64.manifest.json "$name.tar.gz" > SHA256SUMS)
 echo "Built $out/$name.tar.gz ($(du -h "$out/$name.tar.gz" | cut -f1)), glibc >= $base_floor;" \
   "$(ls "$out"/*.whl | wc -l) wheels, glibc >= ${built_floor:-none}"

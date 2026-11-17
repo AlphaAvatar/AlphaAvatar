@@ -14,9 +14,12 @@
 from __future__ import annotations
 
 import argparse
+import re
 from collections.abc import Sequence
 
 from alphaavatar.host.version import __version__
+
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?")  # As install.sh takes one
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -70,6 +73,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     setup.add_argument(
         "--plan", action="store_true", help="Print the install plan as JSON; change nothing"
     )
+    upgrade = commands.add_parser(
+        "upgrade",
+        help="Upgrade this installation to another build, the latest release by default: its "
+        "environment for the default bundle prepared and checked before current switches",
+    )
+    upgrade.add_argument(
+        "--check", action="store_true", help="Show the current and target builds; change nothing"
+    )
+    target = upgrade.add_mutually_exclusive_group()
+    target.add_argument("--version", metavar="X.Y.Z", help="That release's package")
+    target.add_argument(
+        "--file",
+        metavar="PACKAGE",
+        help="A downloaded package, such as a CI build: its own wheels are looked for beside it",
+    )
+    upgrade.add_argument(
+        "--sha256", metavar="HEX", help="The package's SHA-256 (default: the .sha256 beside it)"
+    )
+    upgrade.add_argument(
+        "--artifacts",
+        metavar="DIR|URL",
+        help="Where the target build's own wheels are, if neither beside --file nor its release",
+    )
     doctor = commands.add_parser(
         "doctor",
         help="Diagnose the installation and a configuration: static checks, then the runtime "
@@ -107,6 +133,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .commands.setup import setup as run_setup
 
         return run_setup(args)
+    if args.command == "upgrade":
+        if args.version is not None and not VERSION.fullmatch(args.version):
+            parser.error("--version takes a release's X.Y.Z")
+        if args.sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", args.sha256):
+            parser.error("--sha256 takes 64 hex digits")
+        from .commands.upgrade import upgrade as run_upgrade
+
+        return run_upgrade(args)
     if args.command in ("dev", "start"):
         from .commands.run import run
 

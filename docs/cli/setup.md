@@ -15,7 +15,7 @@ alphaavatar setup my-avatar --plan   # print the install plan, change nothing
 | `BUNDLE` | An existing bundle: no questions, the credentials from the environment, `.env` or those stored. Omitted, setup asks in a terminal |
 | `--name`, `--avatar-id` | The new bundle's name (default `avatar`) and Avatar ID (default: the name); not with `BUNDLE` |
 | `--artifacts DIR\|URL` | Where this build's own wheels are when it is not a release: a CI build's directory |
-| `--plan` | Print the plan as JSON: packages, sizes, SHA-256s; nothing is installed or written |
+| `--plan` | Print the plan as JSON: packages, sizes, SHA-256s; nothing is installed or written. A refusal prints `{"error": {"diagnostic": …}}` there too, the reason as the report gives it |
 
 ## Asked: a new bundle
 

@@ -122,6 +122,13 @@ current environment holds, so earlier bundles keep working, even one that finish
 this setup waited for confirmation.
 `packaging/linux/build.sh` builds the same files from a checkout.
 
+To upgrade, stop the service and run [`alphaavatar upgrade`](cli/upgrade.md), `--check` first
+to see the current build and the target's; `--file <package>` takes a CI build. It prepares
+the target's base and the default bundle's environment beside the current ones, planned by the
+target from the bundle's settings, checks them, and switches `current` once; a failure leaves
+the installation as it was. Running `install.sh` again instead switches to the new base alone,
+leaving the bundle's capabilities to a new `alphaavatar setup <bundle>`.
+
 ## Check the configuration in the foreground
 
 The supplied demo uses `examples/agent_configs/roles/demo.yaml`. Review its enabled

@@ -47,11 +47,11 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from .plan import Artifact, Plan
 
@@ -201,19 +201,45 @@ def _ssl_context():
     return ssl.create_default_context(cafile=certifi.where())
 
 
-def _verified(path: Path, artifact: Artifact) -> bool:
-    if not path.is_file() or path.stat().st_size != artifact.size:
-        return False
+def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         while chunk := stream.read(1 << 20):
             digest.update(chunk)
-    return digest.hexdigest() == artifact.sha256
+    return digest.hexdigest()
+
+
+def _verified(path: Path, artifact: Artifact) -> bool:
+    if not path.is_file() or path.stat().st_size != artifact.size:
+        return False
+    return sha256(path) == artifact.sha256
+
+
+def download(url: str, stream: BinaryIO, problems: list[str]) -> bool:
+    """``url`` into ``stream``, tried up to three times; False, with why in ``problems``, if it
+    never arrived whole. A client error is not tried again."""
+    for attempt in range(3):
+        if attempt:
+            time.sleep(2**attempt)
+        stream.seek(0)
+        stream.truncate()
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "alphaavatar-setup"})
+            with urllib.request.urlopen(request, timeout=60, context=_ssl_context()) as response:
+                shutil.copyfileobj(response, stream, 1 << 20)
+            return True
+        except urllib.error.HTTPError as error:
+            problems.append(f"{url}: HTTP {error.code}")
+            if error.code < 500:
+                return False
+        except (OSError, urllib.error.URLError) as error:
+            problems.append(f"{url}: {type(error).__name__}")
+    return False
 
 
 def fetch(artifact: Artifact, sources: Sources, stage: Path) -> Path:
     """The artifact, copied or downloaded into this run's stage and verified there."""
-    problems = []
+    problems: list[str] = []
     target, partial = stage / artifact.file, stage / f"{artifact.file}.part"
     for source in sources.candidates(artifact):
         if isinstance(source, Path):
@@ -229,27 +255,8 @@ def fetch(artifact: Artifact, sources: Sources, stage: Path) -> Path:
             partial.unlink()
             problems.append(f"{source}: not the planned file (size or SHA-256 differ)")
             continue
-        received = False
-        for attempt in range(3):
-            if attempt:
-                time.sleep(2**attempt)
-            try:
-                request = urllib.request.Request(
-                    source, headers={"User-Agent": "alphaavatar-setup"}
-                )
-                with urllib.request.urlopen(
-                    request, timeout=60, context=_ssl_context()
-                ) as response:
-                    with partial.open("wb") as stream:
-                        shutil.copyfileobj(response, stream, 1 << 20)
-                received = True
-                break
-            except urllib.error.HTTPError as error:
-                problems.append(f"{source}: HTTP {error.code}")
-                if error.code < 500:
-                    break
-            except (OSError, urllib.error.URLError) as error:
-                problems.append(f"{source}: {type(error).__name__}")
+        with partial.open("wb") as stream:
+            received = download(source, stream, problems)
         if received and _verified(partial, artifact):
             os.replace(partial, target)
             return target
@@ -286,7 +293,7 @@ def locked(prefix: Path) -> Iterator[None]:
         yield
 
 
-def _switch(prefix: Path, target: Path, stage: Path) -> None:
+def switch_current(prefix: Path, target: Path, stage: Path) -> None:
     link = stage / "current"
     link.unlink(missing_ok=True)
     os.symlink(os.path.relpath(target, prefix), link)
@@ -336,7 +343,7 @@ def complete(environment: Path, plan: Plan) -> bool:
 
 
 @contextmanager
-def _signals_wait() -> Iterator[None]:
+def signals_deferred() -> Iterator[None]:
     """Signals received meanwhile act once the block ends, as they would have; in whichever
     thread one arrives, Python runs its handler here."""
     received: list[int] = []
@@ -357,6 +364,128 @@ def _marked(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink() and (path / OWNER).is_file()
 
 
+def megabytes(size: int) -> str:
+    return f"{size / 1e6:,.0f} MB"
+
+
+def machine_problems(glibc: str | None, cpu: Sequence[str]) -> list[str]:
+    """What this machine lacks for native code needing ``glibc`` and the ``cpu`` flags."""
+    problems = []
+    found = os.confstr("CS_GNU_LIBC_VERSION") or ""
+    have = tuple(map(int, found.split()[-1].split("."))) if found.startswith("glibc") else None
+    if glibc is not None and (have is None or have < tuple(map(int, glibc.split(".")))):
+        problems.append(f"glibc {glibc} or newer; found {found or 'none'}")
+    try:
+        text = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace")
+        flags = set(next(line for line in text.splitlines() if line.startswith("flags")).split())
+    except (OSError, StopIteration):
+        flags = set()
+    if lacking := [flag for flag in cpu if flag not in flags]:
+        problems.append(f"a CPU with {', '.join(cpu)}; {', '.join(lacking)} missing")
+    return problems
+
+
+def check_machine(installation: Installation, plan: Plan) -> None:
+    """This machine runs the plan's native code, and the prefix has room for it unless its
+    environment is installed: installed packages take about three times their download."""
+    if problems := machine_problems(plan.glibc, plan.cpu):
+        raise SetupError("This machine lacks what the plan needs: " + "; ".join(problems))
+    free = os.statvfs(installation.prefix)
+    room = free.f_bavail * free.f_frsize
+    if not installation.reusable(plan) and room < 4 * plan.download_bytes:
+        raise SetupError(
+            f"{megabytes(room)} free in {installation.prefix}; the plan downloads "
+            f"{megabytes(plan.download_bytes)} and needs about four times"
+        )
+
+
+def install_locked(
+    installation: Installation,
+    plan: Plan,
+    sources: Sources,
+    *,
+    check: Callable[[Path], None],
+    enable: Callable[[], None],
+    replan: Callable[[tuple[str, ...]], Plan] | None = None,
+    replacing: str | None = None,
+    progress: Callable[[str], None] = lambda line: None,
+) -> Path:
+    """``install``, under the lock the caller holds. ``replacing`` is the base an upgrade
+    switches from: current may run it rather than the plan's own."""
+    prefix = installation.prefix
+    previous = installation.current()
+    if (base := installation.current_base()) not in (None, plan.base, replacing):
+        raise SetupError(
+            f"{prefix / 'current'} runs AlphaAvatar {base} now, not {plan.base}, which this "
+            "setup belongs to; run `alphaavatar setup` again"
+        )
+    if missing := sorted(set(installation.installed_requirements()) - set(plan.requirements)):
+        if replan is None:
+            raise SetupError(f"The current environment holds {', '.join(missing)}; plan them")
+        plan = replan(installation.installed_requirements())
+        progress(
+            f"Another setup installed {', '.join(missing)} meanwhile; kept, plan {plan.id[:16]}"
+        )
+    environment = installation.environment(plan)
+    if (prefix / "envs").is_symlink():  # What is made through it would be elsewhere.
+        raise SetupError(f"{prefix / 'envs'} is not this installation's own directory")
+    made_envs = not (prefix / "envs").exists()
+    (prefix / "envs").mkdir(exist_ok=True)
+    for stale in (prefix / "envs").glob(".setup-*"):
+        if _marked(stale):  # A stage whose run was killed: the lock is ours now.
+            shutil.rmtree(stale)
+    stage = Path(tempfile.mkdtemp(prefix=".setup-", dir=prefix / "envs"))
+    (stage / OWNER).touch()
+    created = enabled = False
+    try:
+        if installation.reusable(plan):
+            progress(f"Environment {environment} is already installed; checking it")
+        else:
+            if environment.exists() or environment.is_symlink():
+                # This plan's own directory, left incomplete by a run that is gone, is
+                # rebuilt; anything else there, a link included, is not setup's to remove.
+                if not _marked(environment) or environment == previous:
+                    raise SetupError(f"{environment} exists and is not setup's; left as it is")
+                shutil.rmtree(environment)
+            files = []
+            for index, artifact in enumerate(plan.artifacts, 1):
+                progress(f"[{index}/{len(plan.artifacts)}] {artifact.file}")
+                files.append(fetch(artifact, sources, stage))
+            progress(f"Installing {len(files)} packages into {environment}")
+            (stage / "env").mkdir()
+            (stage / "env" / OWNER).touch()
+            os.rename(stage / "env", environment)  # It appears with setup's mark.
+            created = True
+            _create(installation, environment, files)
+        progress("Checking the environment before switching to it")
+        check(environment)
+        if created:
+            (environment / PLAN_FILE).parent.mkdir(parents=True, exist_ok=True)
+            (environment / PLAN_FILE).write_text(
+                json.dumps(plan.document(), indent=1) + "\n", encoding="utf-8"
+            )
+        # The switch and enabling are one step to signals: they wait until current, the
+        # default bundle and its credentials agree.
+        with signals_deferred():
+            switch_current(prefix, environment, stage)
+            enable()
+            enabled = True
+    finally:
+        # Whatever ends the run, the state on disk decides what to undo; signals wait.
+        with signals_deferred():
+            if not enabled and installation.current() == environment:
+                if previous is not None:
+                    switch_current(prefix, previous, stage)
+                else:
+                    (prefix / "current").unlink()
+            if created and not enabled and installation.current() != environment:
+                shutil.rmtree(environment, ignore_errors=True)
+            shutil.rmtree(stage, ignore_errors=True)
+            if made_envs and not enabled and not any((prefix / "envs").iterdir()):
+                (prefix / "envs").rmdir()
+    return environment
+
+
 def install(
     installation: Installation,
     plan: Plan,
@@ -375,79 +504,16 @@ def install(
     ``check`` or ``enable`` fails, or a signal ends the run before the switch, current goes
     back to what it was and the environment this run created is removed.
     """
-    prefix = installation.prefix
-    with locked(prefix):
-        previous = installation.current()
-        if (base := installation.current_base()) not in (None, plan.base):
-            raise SetupError(
-                f"{prefix / 'current'} runs AlphaAvatar {base} now, not {plan.base}, which this "
-                "setup belongs to; run `alphaavatar setup` again"
-            )
-        if missing := sorted(set(installation.installed_requirements()) - set(plan.requirements)):
-            if replan is None:
-                raise SetupError(f"The current environment holds {', '.join(missing)}; plan them")
-            plan = replan(installation.installed_requirements())
-            progress(
-                f"Another setup installed {', '.join(missing)} meanwhile; kept, plan {plan.id[:16]}"
-            )
-        environment = installation.environment(plan)
-        if (prefix / "envs").is_symlink():  # What is made through it would be elsewhere.
-            raise SetupError(f"{prefix / 'envs'} is not this installation's own directory")
-        made_envs = not (prefix / "envs").exists()
-        (prefix / "envs").mkdir(exist_ok=True)
-        for stale in (prefix / "envs").glob(".setup-*"):
-            if _marked(stale):  # A stage whose run was killed: the lock is ours now.
-                shutil.rmtree(stale)
-        stage = Path(tempfile.mkdtemp(prefix=".setup-", dir=prefix / "envs"))
-        (stage / OWNER).touch()
-        created = enabled = False
-        try:
-            if installation.reusable(plan):
-                progress(f"Environment {environment} is already installed; checking it")
-            else:
-                if environment.exists() or environment.is_symlink():
-                    # This plan's own directory, left incomplete by a run that is gone, is
-                    # rebuilt; anything else there, a link included, is not setup's to remove.
-                    if not _marked(environment) or environment == previous:
-                        raise SetupError(f"{environment} exists and is not setup's; left as it is")
-                    shutil.rmtree(environment)
-                files = []
-                for index, artifact in enumerate(plan.artifacts, 1):
-                    progress(f"[{index}/{len(plan.artifacts)}] {artifact.file}")
-                    files.append(fetch(artifact, sources, stage))
-                progress(f"Installing {len(files)} packages into {environment}")
-                (stage / "env").mkdir()
-                (stage / "env" / OWNER).touch()
-                os.rename(stage / "env", environment)  # It appears with setup's mark.
-                created = True
-                _create(installation, environment, files)
-            progress("Checking the environment before switching to it")
-            check(environment)
-            if created:
-                (environment / PLAN_FILE).parent.mkdir(parents=True, exist_ok=True)
-                (environment / PLAN_FILE).write_text(
-                    json.dumps(plan.document(), indent=1) + "\n", encoding="utf-8"
-                )
-            # The switch and enabling are one step to signals: they wait until current, the
-            # default bundle and its credentials agree.
-            with _signals_wait():
-                _switch(prefix, environment, stage)
-                enable()
-                enabled = True
-        finally:
-            # Whatever ends the run, the state on disk decides what to undo; signals wait.
-            with _signals_wait():
-                if not enabled and installation.current() == environment:
-                    if previous is not None:
-                        _switch(prefix, previous, stage)
-                    else:
-                        (prefix / "current").unlink()
-                if created and not enabled and installation.current() != environment:
-                    shutil.rmtree(environment, ignore_errors=True)
-                shutil.rmtree(stage, ignore_errors=True)
-                if made_envs and not enabled and not any((prefix / "envs").iterdir()):
-                    (prefix / "envs").rmdir()
-    return environment
+    with locked(installation.prefix):
+        return install_locked(
+            installation,
+            plan,
+            sources,
+            check=check,
+            enable=enable,
+            replan=replan,
+            progress=progress,
+        )
 
 
 def check_environment(environment: Path, config: Path | str, env: dict[str, str]) -> int:

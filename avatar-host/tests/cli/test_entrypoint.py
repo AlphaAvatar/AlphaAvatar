@@ -221,5 +221,5 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
     assert run("config", "show", "console").returncode == 2
     helped = run("--help")
     assert helped.returncode == 0, helped.stderr
-    assert "{dev,start,config,setup,doctor}" in helped.stdout  # No top-level check.
+    assert "{dev,start,config,setup,upgrade,doctor}" in helped.stdout  # No top-level check.
     assert "{init,check}" in run("config", "--help").stdout

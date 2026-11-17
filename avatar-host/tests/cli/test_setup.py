@@ -132,7 +132,10 @@ def test_an_existing_bundle_is_planned_from_its_settings_and_refused_what_none_i
         mock.patch("sys.stdin.isatty", return_value=False),
     ):
         assert main(["setup", "reference", "--plan"]) == 2
-        assert "Bundle 'reference' does not exist" in capsys.readouterr().err
+        refused = capsys.readouterr()
+        assert "Bundle 'reference' does not exist" in refused.err
+        # stdout stays JSON, why included, as upgrade reads the target's plan.
+        assert "Bundle 'reference' does not exist" in json.loads(refused.out)["error"]["diagnostic"]
         assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
         capsys.readouterr()
         # The plan alone changes nothing, and is the same plan each time.
