@@ -70,7 +70,7 @@ Python 工作区包含四个基础包和十二个插件包。
 | `avatar-app/` | 为客户端／App 预留的范围；尚未提供可安装的 App。 | [App README](avatar-app/README.md)。 |
 | `examples/` | 完整配置示例及配套示例。 | [示例 README](examples/README.md)。 |
 | `tests/fixtures/` | 共享小样本及按需启用的大样本清单。 | `conftest.py` 和样本清单。 |
-| `packaging/linux/` | Linux 包构建、安装及能力 wheel。 | [Setup 指南](docs/cli/setup.md)、[升级指南](docs/cli/upgrade.md)。 |
+| `packaging/linux/` | Linux 包构建、安装及能力 wheel。 | [Setup 指南](docs/cli/setup.md)、[升级指南](docs/cli/upgrade.md)、[清理指南](docs/cli/cleanup.md)。 |
 | `scripts/` | 质量、文档、维护和发布工具。 | [任务导航](#21-常见改动路径)。 |
 | `docs/` | 指南、CLI 参考、路线图、部署、发布历史和 Agent 记录。 | [文档索引](#22-文档索引)。 |
 
@@ -590,7 +590,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | Doctor 指标 | 生产者追踪边界 → Core 追踪 schema → Host 测量 → 对比脚本、测试与文档。 |
 | 新插件或包 | 插件边界指南 → 入口点与工厂 → 元数据、工作区与锁文件 → 目录与测试。 |
 | 未来的 App 展示 | App 设计与实现 → Core/RTC 交付契约 → 前端检查。 |
-| 部署、安装或升级 | Host `tools/setup`、`tools/upgrade` 或 packaging → `docs/DEPLOY.md` 与 setup 或升级指南 → 安装验证。 |
+| 部署、安装、升级或清理 | Host `tools/setup`、`tools/upgrade`、`tools/cleanup` 或 packaging → `docs/DEPLOY.md` 与 setup、升级或清理指南 → 安装验证。 |
 
 重命名契约前，用 `rg` 搜索其构造函数、序列化器与消费者。
 修改追踪字段时，同时检查生产者与离线报告重建。
@@ -615,6 +615,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | [cli/config.md](docs/cli/config.md) | Bundle/profile 创建，以及生效配置的检查与校验。 |
 | [cli/setup.md](docs/cli/setup.md) | Linux 安装环境，以及可选能力与依赖的安装配置。 |
 | [cli/upgrade.md](docs/cli/upgrade.md) | Linux 包在构建之间升级：build ID、在当前版本旁准备、一次切换、失败处理。 |
+| [cli/cleanup.md](docs/cli/cleanup.md) | 清理 `current` 不再使用的 env 和构建：保留什么及原因、安装锁、先停止 Host。 |
 | [cli/doctor.md](docs/cli/doctor.md) | 静态与运行时诊断、外部服务控制、报告、证据和计时指标。 |
 | [cli/dev.md](docs/cli/dev.md) | 开发模式启动、默认值、日志和支持的选项。 |
 | [cli/start.md](docs/cli/start.md) | 服务模式启动、配置覆盖和运行行为。 |

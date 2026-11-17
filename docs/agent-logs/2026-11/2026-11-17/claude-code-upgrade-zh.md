@@ -8,7 +8,8 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| 第一步 | `alphaavatar upgrade` 与 `--check`：按 build ID 区分构建；目标包校验后解包到旁边，目标自己的 `setup <bundle> --plan` 和 catalog 规划默认 bundle 的环境，目标自己的命令验收，之后在安装锁下一次切换 `current`；失败保持原环境 | 2026-11-17 | `afe1feba` | 未提交（用户提交） | 待审查 |
+| 第一步 | `alphaavatar upgrade` 与 `--check`：按 build ID 区分构建；目标包校验后解包到旁边，目标自己的 `setup <bundle> --plan` 和 catalog 规划默认 bundle 的环境，目标自己的命令验收，之后在安装锁下一次切换 `current`；失败保持原环境 | 2026-11-17 | `afe1feba` | `122128b8`（用户提交） | 已提交 |
+| 第二步 | 修复审查发现的三处：默认 bundle 和凭据在安装锁内读取；同构建 `--file` 先只读核对，不复制、不建暂存；目录移入与记录归属在信号延后期间一起完成。新增 `alphaavatar cleanup`（`tools/cleanup/`） | 2026-11-17 | `122128b8` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -148,3 +149,115 @@
 - 13 个变异对新路径重跑，13/13 被捕获；跑完工作区 20 个改动文件的 SHA-256 与跑前一致。
 - 真实构建：clone 回到 `afe1feba`，套用工作区改动（不含日志），只把 16 个 `version.py` 改为 0.6.9；逐文件比对与工作区一致。A `0.6.9-26c8619cf0f5`、B `0.6.9-adac0dac0d0a`、C `0.6.9-3a489cda69aa`，B、C 的构造与第二轮相同。基础包里是 `alphaavatar/host/tools/upgrade/`，没有 `tools/setup/upgrade.py`。
 - 按第 6 节的步骤重跑，结果相同：setup A 后 `current` 为 `envs/a4368b9226783a9a`，8 个 runner；`--check --file B` 可升级，`--file A` 输出 `The target is current already`；真实 GitHub 仍为 HTTP 404；SHA-256 错误、改动 1 字节、`--artifacts` 指向 A 的 wheel、C 的配置校验失败，之后 `current`、A 的 `config check`、home 和 prefix 都不变；升级到 B 用时 57 s，`current` 为 `envs/682672ad2be5fa65`，B 的 host 和 router 标记都在，新环境的 upgrade 模块来自 `tools/upgrade/upgrade.py`，两个环境 105 个发行版一致，16 项需求一致，home 18 个文件不变；重复升级直接结束；裸基础包只切换基础包。输出在会话临时目录 `upgrade/accept3/round3.log`。
+
+---
+
+## 第二步（基线 `122128b8`）
+
+依据：用户 2026-11-17 的第二份任务说明。范围：修复第一步审查发现的三处问题；新增独立的 `alphaavatar cleanup` 处理旧环境；用两份 `0.6.9` 构建复验。升级方式不变：为目标准备独立 env，验证通过后再切换 `current`。改动全部留在工作区，未暂存、未提交。
+
+### 1. 审查问题的修复
+
+1. **并发 Setup 校验错 bundle。** 原来 CLI 在取锁前调用 `load_environment()`，读出默认 bundle，并把已存储凭据写进进程环境；取锁前完成的 Setup 改动就看不到了。现在 CLI 只读 `.env`（`init_env()`）。`tools/upgrade` 的 `upgrade()` 拿到 `.install.lock` 后，用一次 `read_stored(paths)` 取默认 bundle 和已存储凭据。目标的 `setup <bundle> --plan` 和 `config check` 用的是同一份快照：bundle 名作为参数传入，凭据放进它们的环境；已设置的环境变量优先，与 start 一致。`Upgraded.bundle` 把这个 bundle 带回 CLI 显示。
+2. **同构建 `--file` 仍复制包。** 取锁后先只读核对：文件的 SHA-256（`_read`），再读包内 manifest 的 build ID。如果是当前构建，就直接成功返回，不复制、不建暂存，也不清理其他运行留下的暂存；版本更旧或机器不满足，也在这一步拒绝。实际升级时照旧复制到暂存，复制件再比对一次 SHA-256，解包用的就是这个复制件；复制件里的 build ID 与只读读到的不一致就拒绝。`--check` 也改用 `_read`，SHA-256 不符时的提示与升级一致。
+3. **中断可能留下新建目录。** 两组操作各自放进 `signals_deferred()`：`os.rename(解包目录, versions/<id>)` 与 `fresh = base`；`install_locked` 里的 `os.rename(stage/env, envs/<plan>)` 与 `created = True`。同一类问题还有一处，一并处理：`mkdtemp` 建暂存目录、写标记、记录到变量，这三步之间如果收到信号，会留下一个没有标记、谁都不会删的暂存目录。upgrade 和 `install_locked` 各有一处，现在也放进 `signals_deferred()`，而且移到 `try` 内，由 `finally` 清理。
+   - 暂存前缀和标记（`INSTALL_STAGE`/`INSTALL_MARK`、`SETUP_STAGE`）移到 `environment.py`，供 upgrade 和 cleanup 共用；`_marked` 改为公开的 `marked(path, mark)`。
+
+### 2. `alphaavatar cleanup`
+
+- **代码位置**：`tools/cleanup/cleanup.py` 中，`survey()` 只读；`cleanup()` 在 `.install.lock` 内重新 `survey()`，再按结果删除。CLI `cli/commands/cleanup.py` 只负责解析参数和输出。`--dry-run` 只调用 `survey()`，不取锁，也不写入。
+- **识别**：
+  - env：有 setup 标记，`plan.json` 可读，其中的 base 是合法 build ID，目录名等于按 setup 方式算出的 plan ID 前 16 位；
+  - 构建：manifest 里的 id 等于目录名，且有 `catalog.json`；
+  - 暂存：带标记的 `.setup-*` 或 `.install-*`。
+- **保留**（并给出原因）：
+  - current 指向的 env 及其基础包，或 current 直接指向的基础包；
+  - 运行本命令的构建和 env（`installation.base`、`sys.prefix`）；
+  - 所有保留 env 所依赖的基础包；
+  - 应用 home 及其缓存所在的目录，或包含它们的目录；
+  - 无法判断的：链接、文件、无标记、`plan.json` 缺失/不可读/越界/与目录名不符、没有 manifest 的目录。
+  - 只要某个保留 env 依赖哪个基础包判断不了（`envs/` 本身是链接也算），任何基础包都不删。
+- **删除**：先删 env，再删基础包。每个目录先在信号延后期间移进一个新的带标记暂存，然后删除内容，最后删标记和暂存。中断时留下的只是带标记的暂存，下一次 cleanup、setup、upgrade 或 install.sh 都会删掉它。某项删除失败就停在那里，不再继续删基础包。
+- **upgrade 结尾提示**：改为「The previous version and its environment stay until `alphaavatar cleanup` removes them.」
+
+### 3. 文档
+
+- 新增 `docs/cli/cleanup.md`：用法、先停止 Host（安装锁只挡安装类操作）、清理范围、保留规则和原因、锁内重新检查、中断行为、示例输出、退出码。
+- `docs/cli/upgrade.md`：同构建只读核对、复制件再校验、默认 bundle 与凭据在锁内读取、目录移入和记录归属同时完成、旧版本由 cleanup 删除。
+- `docs/cli/README.md` 命令表、`docs/DEPLOY.md` 升级段落。
+- `AGENTS.md`、`AGENTS-zh.md`：工作区表、变更路线、文档索引。
+
+### 4. 离线测试
+
+- `tests/upgrade/test_upgrade.py`（14 项 → 20 项），新增：
+  - 同构建与更旧版本：既不调用 `mkdtemp`，也不调用 `copyfile`，事先放好的带标记暂存保持原样；SHA-256 不符时同构建和 `--check` 都拒绝；
+  - 只读核对之后文件被换掉：复制件的 SHA-256 不符，拒绝；
+  - 并发 Setup：拿锁前，同一构建真实跑一次 `environment.install` 加 `create_bundle(new, make_default, 凭据 after)`。目标的 plan 和 check 都记录为 `new:after`；目标拒绝 `new` 时升级失败，`current` 和 prefix 不变；
+  - 信号：在 `versions/` 或 `envs/` 中，暂存目录刚建好时，或基础包、env 刚 `rename` 到位时，立刻收到 SIGTERM。每种情况结束后 prefix 都不变，`current` 仍是 A 且能运行（共 4 种）。
+- `tests/upgrade_samples.py`：替身命令会记录 `UPGRADE_SECRET`；`UPGRADE_REFUSE=<bundle>` 让 check 只拒绝该 bundle。
+- `tests/cleanup/test_cleanup.py`（11 项）：
+  - 先删 env 再删基础包，之后当前 env 仍能运行，home 不变；
+  - survey 不写入（每项的 mtime 和大小不变）；
+  - 三种「保留 env 所依赖的基础包被保留」：运行本命令的 env、名称与 plan 不符、包含应用 home；
+  - 无法判断的目录都保留并阻止删除基础包；
+  - 暂存：带标记的删除，无标记的保留；
+  - 删除被 Ctrl-C 中断：留下带标记的暂存，下一次清理掉；
+  - 锁内重新检查 current：拿锁前 current 被切回 A，删的是 B 的 env；
+  - 锁被占用；
+  - 裸基础包，以及 `envs/` 是链接、current 缺失的情况。
+- `tests/cli/test_cleanup.py`（3 项）：`--dry-run` 的输出，prefix 与 home 的 mtime 不变；真实删除后再跑一次显示 Nothing to remove；锁被占用和不在安装包内时的拒绝信息。
+- `tests/cli/test_entrypoint.py`：命令列表加入 `cleanup`。
+- 变异验证 38/38 被捕获：上一轮 13 项（按新代码调整），三处修复 10 项，cleanup 15 项。第一遍 36/38，剩下的两项是「暂存目录创建时不延后信号」，补上 mkdtemp 的信号测试后被捕获。脚本和日志在会话临时目录 `mutants/run4.py`、`run4.log`、`run4b.log`。
+
+### 5. 真实构建复验（第四轮）
+
+clone 取 `122128b8`，套用工作区改动（不含日志），只把 16 个 `version.py` 改为 0.6.9，逐文件比对与工作区一致。三份构建（B、C 的构造同第三轮）：
+
+| 构建 | build ID |
+|---|---|
+| A | `0.6.9-62c87e3d33de` |
+| B | `0.6.9-f3ffa11c18dd` |
+| C | `0.6.9-924bc15336f1`，router 多一个 bundle 里没有的必填项，不能加载任何 bundle |
+
+每个包都含 `tools/cleanup/` 和 `cli/commands/cleanup.py`。运行环境与第三轮相同：隔离目录，`env -i`，没有任何凭据。依次执行：
+
+1. **准备**：`install.sh` 安装 A，在终端里交互 setup 出 `my-avatar`（105 个包，8 个 runner，4 个占位凭据已存储）；再 `config init new`。
+2. **并发 Setup，目标为 C**：`race.py` 用 current 的 Python 运行 `upgrade --file C`，只是在升级拿锁前插入一次真实的 `alphaavatar setup new`（A 自己的命令，跑完才继续）。结果：
+   - setup 把默认 bundle 改成 `new`；
+   - 升级拿锁后显示 `02 Plan Bundle new`，105 个包装完后报 `The new environment fails check new`，退出码 1；
+   - `current` 仍是 A 的 env，A 的 `config check` 通过（8 个 runner），prefix 与基线一致；home 里只有 `settings.yaml` 变了，是那次 setup 改的。
+3. **并发 Setup，目标为 B**：先 `setup my-avatar` 把默认恢复为 my-avatar，再按同样方式插入 `setup new`，然后升级到 B。用时 61 s，`Bundle new`，`Validate PASS · 8 runners`，`current` 指向 B 的 env；host 和 router 的代码来自 B；home 同样只有 `settings.yaml` 变化。
+4. **同构建重复升级**：
+   - 事先放一个带标记的 `versions/.install-planted`；
+   - `upgrade --file B` 输出 `current already; nothing to do`；
+   - `versions/` 的 mtime 不变，放好的暂存仍在：没有新建，也没有清理；
+   - prefix 和 home 不变；`--check --file B` 输出 `The target is current already`。
+5. **切换前中断**：升级到 C，在 `[47/105]` 时对升级进程发 SIGTERM。
+   - 退出码 143，输出 `Stopped; AlphaAvatar 0.6.9-f3ffa11c18dd stays current`；
+   - C 的 `versions/` 目录、新 env 和暂存都已删除；
+   - 与中断前相比，prefix 只少了第 4 步放的 `.install-planted`：这次已进入真实升级，按设计清理了它；
+   - `current` 仍是 B，`config check` 通过，home 不变。
+6. **预览不写入**：`cleanup --dry-run` 列出 A 的 env（1,816 MB）和 A 的基础包（219 MB），合计 2,034 MB；保留 B 的 env（current）和 B 的基础包（current env 依赖它）。prefix 的 102,240 个条目，类型、大小、mtime 全部不变；home 不变。
+7. **保留 env 依赖的基础包不删**：用 A 的 env 里的命令运行 `cleanup --dry-run` 和 `cleanup`。A 的 env 被保留（runs this command），A 的基础包被保留（`kept environments are over it: envs/7c360b3f811392e7 (runs this command)`），输出 `Nothing to remove`，两者都还在。
+8. **清理**：用 current 运行 `cleanup`，先删 A 的 env，再删 A 的基础包，`Freed 2,034 MB`；prefix 只剩 B（1.9 G），home 不变；再运行一次输出 `Nothing to remove`。
+9. **清理后当前环境仍可启动**：
+   - `--version`、`config check`（new 和 my-avatar 都是 8 个 runner）通过，`doctor --no-metrics` 9 passed、6 skipped，env 里 105 个发行版；
+   - `alphaavatar start`：第一次报 `OSError errno=98`，因为本机 8081 端口被用户自己从源码运行的 Host（`.venv/bin/alphaavatar start examples/agent_configs/roles/demo.yaml`）占着，未触碰它；
+   - 改用 `host.health.port=0` 再启动：health 起在空闲端口，8 个推理 runner 中 VAD、Qwen3 0.6B 寻址、Smart Turn 下载模型后就绪（模型缓存 783 MB）；第 4 个 Memory 向量库用 OpenAI embedding 探测维度时，占位 key 返回 401，Host 停止。用真实凭据启动和通话由用户验收。
+10. **裸基础包**：只装 A 的基础包，升级到 B，`cleanup --dry-run` 显示可删 A 的基础包（218 MB），`cleanup` 删除后只剩 B，`--version` 正常。
+
+完整输出在会话临时目录 `upgrade/accept4/round4.log`，race 脚本是 `accept4/race.py`，启动日志是 `accept4/start2.err`。
+
+### 6. 检查
+
+- `ruff check .`、`ruff format --check .`、`git diff --check`、`uv lock --check`、`check_workspace.py`：通过。
+- 离线全量测试：与三份构建同时运行时，1 failed / 777 passed。失败的是 Router 的 `test_speech_transcription.py::test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_as_a_span[assessment-failed]`，span 实测 199.91 ms，断言要求不少于 200 ms。本轮没有改动 Router；单独重跑 5 次都通过。之后单独重跑全量：778 passed（305 s）。
+
+### 7. 未做与待定
+
+- 实际 LiveKit 通话由用户验收。
+- cleanup 不检测仍在运行的 Host 进程，只在文档和预览的 Next 里要求先停止。
+- 发现但未修改：
+  - `install.sh` 有同类窗口：`mv -T` 把目录移到 `versions/<id>` 之后才 `fresh=`，期间收到信号会留下新目录；
+  - setup、upgrade 和 install.sh 清理旧暂存时直接 `rmtree` / `rm -rf`，中途被打断可能先删掉标记，留下无人清理的残余；
+  - 上面那个 Router 计时断言在有负载时偶发失败，它比较的是两条记录各自的时间。

@@ -64,6 +64,9 @@ exec "$(dirname -- "$(realpath -- "$0")")/python" -I -c \\
 """
 PLAN_FILE = Path("share", "alphaavatar", "plan.json")  # Written last: the environment is whole.
 OWNER = ".alphaavatar-setup"  # In each directory setup makes: only those are ever removed.
+SETUP_STAGE = ".setup-"  # envs/.setup-*: a setup's own directory, marked as setup's.
+# install.sh's stages in versions/ and their mark: what a killed run left, the next removes.
+INSTALL_STAGE, INSTALL_MARK = ".install-", ".alphaavatar-install"
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
@@ -121,7 +124,7 @@ class Installation:
     def reusable(self, plan: Plan) -> bool:
         """The plan's environment is setup's own and holds the plan, checked."""
         environment = self.environment(plan)
-        return self.reached(environment) and _marked(environment) and complete(environment, plan)
+        return self.reached(environment) and marked(environment) and complete(environment, plan)
 
     def installed_requirements(self) -> tuple[str, ...]:
         """What the current setup environment over this base was planned for, if one is current."""
@@ -360,8 +363,9 @@ def signals_deferred() -> Iterator[None]:
             signal.raise_signal(signum)
 
 
-def _marked(path: Path) -> bool:
-    return path.is_dir() and not path.is_symlink() and (path / OWNER).is_file()
+def marked(path: Path, mark: str = OWNER) -> bool:
+    """A directory itself, no link, holding the installer's ``mark``."""
+    return path.is_dir() and not path.is_symlink() and (path / mark).is_file()
 
 
 def megabytes(size: int) -> str:
@@ -431,20 +435,22 @@ def install_locked(
         raise SetupError(f"{prefix / 'envs'} is not this installation's own directory")
     made_envs = not (prefix / "envs").exists()
     (prefix / "envs").mkdir(exist_ok=True)
-    for stale in (prefix / "envs").glob(".setup-*"):
-        if _marked(stale):  # A stage whose run was killed: the lock is ours now.
+    for stale in (prefix / "envs").glob(f"{SETUP_STAGE}*"):
+        if marked(stale):  # A stage whose run was killed: the lock is ours now.
             shutil.rmtree(stale)
-    stage = Path(tempfile.mkdtemp(prefix=".setup-", dir=prefix / "envs"))
-    (stage / OWNER).touch()
+    stage: Path | None = None
     created = enabled = False
     try:
+        with signals_deferred():  # It appears marked, and this run's to remove.
+            stage = Path(tempfile.mkdtemp(prefix=SETUP_STAGE, dir=prefix / "envs"))
+            (stage / OWNER).touch()
         if installation.reusable(plan):
             progress(f"Environment {environment} is already installed; checking it")
         else:
             if environment.exists() or environment.is_symlink():
                 # This plan's own directory, left incomplete by a run that is gone, is
                 # rebuilt; anything else there, a link included, is not setup's to remove.
-                if not _marked(environment) or environment == previous:
+                if not marked(environment) or environment == previous:
                     raise SetupError(f"{environment} exists and is not setup's; left as it is")
                 shutil.rmtree(environment)
             files = []
@@ -454,8 +460,9 @@ def install_locked(
             progress(f"Installing {len(files)} packages into {environment}")
             (stage / "env").mkdir()
             (stage / "env" / OWNER).touch()
-            os.rename(stage / "env", environment)  # It appears with setup's mark.
-            created = True
+            with signals_deferred():  # It appears with setup's mark, and as this run's.
+                os.rename(stage / "env", environment)
+                created = True
             _create(installation, environment, files)
         progress("Checking the environment before switching to it")
         check(environment)
@@ -480,7 +487,8 @@ def install_locked(
                     (prefix / "current").unlink()
             if created and not enabled and installation.current() != environment:
                 shutil.rmtree(environment, ignore_errors=True)
-            shutil.rmtree(stage, ignore_errors=True)
+            if stage is not None:
+                shutil.rmtree(stage, ignore_errors=True)
             if made_envs and not enabled and not any((prefix / "envs").iterdir()):
                 (prefix / "envs").rmdir()
     return environment

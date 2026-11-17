@@ -42,8 +42,9 @@ Next
 ```
 
 A target that is the build current runs is current already: `--check` says so, and `upgrade`
-ends at once, changing nothing. An older version is not an upgrade: `--check` says so and
-`upgrade` refuses it.
+ends at once, changing nothing. A package file is told where it is, by its SHA-256 and the
+manifest inside, so that takes no copy and no stage. An older version is not an upgrade:
+`--check` says so and `upgrade` refuses it.
 
 A release publishes `alphaavatar-linux-x86_64.manifest.json` beside its package, so its build is
 known before the package is downloaded: `--check` reads that file alone, and so does an upgrade
@@ -70,16 +71,16 @@ OK    Upgraded to AlphaAvatar 0.6.9-3ade593c77ca
       Previous     0.6.9-0600b13e01d0
       Current      ~/.local/lib/alphaavatar/envs/73bcf97c85db5e92
       Bundle       my-avatar
-      The previous version and its environment stay; nothing removes them.
+      The previous version and its environment stay until `alphaavatar cleanup` removes them.
 
 Next
   alphaavatar doctor my-avatar
 ```
 
-1. **Package**: the package, downloaded from its release or copied, matches its SHA-256, as
-   for `install.sh`. It is unpacked into `<prefix>/versions/<build>/` and checked as
-   `install.sh` checks one: its command reports its version, its help runs and the native
-   libraries of the base load. `current` is not touched.
+1. **Package**: the package matches its SHA-256, as for `install.sh`: a file where it is,
+   then this run's own copy, or the download, which is what unpacks. It is unpacked into
+   `<prefix>/versions/<build>/` and checked as `install.sh` checks one: its command reports its
+   version, its help runs and the native libraries of the base load. `current` is not touched.
 2. **Plan**: the target plans the environment for the default bundle with its own
    `alphaavatar setup <bundle> --plan`, so its configuration parser reads the bundle's settings
    and its catalog gives the packages. The plan also keeps what the current environment holds,
@@ -93,10 +94,15 @@ Next
 
 Only then does `<prefix>/current` switch, once, and the command is run through it; if it does
 not report the target, `current` goes back. Upgrading takes `<prefix>/.install.lock`, the lock
-`install.sh` and `setup` take: another installation into the prefix is refused while one runs.
+`install.sh`, `setup` and `cleanup` take: another installation into the prefix is refused while
+one runs. The default bundle, and the stored credentials the target's commands read, are read
+once the lock is held, the plan and the check taking the same: a `setup` that finished just
+before is planned and checked as it left them.
 
 A failure or a signal before the switch leaves `current`, the command and the previous version
-and environment as they were, and removes what this run made. The reason goes to stderr:
+and environment as they were, and removes what this run made: each directory it makes is moved
+into place and recorded as its own while signals wait, so none is left whenever one arrives.
+The reason goes to stderr:
 
 ```text
 FAIL  Upgrade failed; AlphaAvatar 0.6.9-0600b13e01d0 stays current
@@ -116,8 +122,9 @@ and too little free space fail the same way.
 
 Nothing in the application home is written: the default bundle and its profiles, the Avatar
 ID, settings, stored credentials, workspaces and the model cache stay as they are. The
-previous version and its environment stay in the prefix; nothing removes them, and there is no
-command to go back to them.
+previous version and its environment stay in the prefix until
+[`alphaavatar cleanup`](cleanup.md) removes them, with the Host stopped; there is no command
+to go back to them.
 
 ## Exit codes
 

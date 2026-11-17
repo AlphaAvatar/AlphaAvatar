@@ -24,13 +24,21 @@ A release publishes its manifest beside its package, so its build is known befor
 downloaded; a file's is read from inside it. The package's SHA-256 is given or the .sha256
 beside it, as for install.sh; each artifact's comes from the target's catalog.
 
+Everything happens under the lock install.sh and setup take. A package file is checked where
+it is first, its SHA-256 and the build it holds: the build current runs already ends the run
+there, copying nothing and making no stage. Otherwise this run's own copy, checked again, is
+what unpacks.
+
 The target plans its environment: its own ``setup <bundle> --plan``, with its configuration
 parser and catalog, for the default bundle, keeping what the current environment holds so
 earlier bundles keep working. Its own commands check it: its command runs the target, its
-native code loads, its ``config check`` accepts the bundle. Only then does current switch,
-once, under the lock install.sh and setup take. Until then a failure or signal leaves current,
-the command, configurations, credentials, workspaces and model caches as they were, and
-removes what this run made. The previous version and environment stay.
+native code loads, its ``config check`` accepts the bundle. The default bundle and the stored
+credentials those commands read come from one read of the settings under the lock, so a setup
+that ran just before is planned and checked as it left them. Only then does current switch,
+once. Until then a failure or signal leaves current, the command, configurations, credentials,
+workspaces and model caches as they were, and removes what this run made: a directory is
+moved in and recorded as this run's while signals wait. The previous version and environment
+stay; ``alphaavatar cleanup`` removes them.
 """
 
 from __future__ import annotations
@@ -47,9 +55,11 @@ import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from alphaavatar.host.tools.setup.environment import (
+    INSTALL_MARK,
+    INSTALL_STAGE,
     RELEASES,
     Installation,
     SetupError,
@@ -60,6 +70,7 @@ from alphaavatar.host.tools.setup.environment import (
     install_locked,
     locked,
     machine_problems,
+    marked,
     megabytes,
     sha256,
     signals_deferred,
@@ -67,11 +78,12 @@ from alphaavatar.host.tools.setup.environment import (
 )
 from alphaavatar.host.tools.setup.plan import PlanError, plan_install
 
+if TYPE_CHECKING:
+    from alphaavatar.host.workspace import ApplicationPaths
+
 LATEST = "https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download"
 MANIFEST = "alphaavatar-linux-x86_64.manifest.json"  # Beside a release's package (build.sh).
 PLATFORM = "linux-x86_64"
-# install.sh's stages and their mark: either removes what the other's killed run left.
-STAGE, STAGE_MARK = ".install-", ".alphaavatar-install"
 FIX = "Fix what it names, then run `alphaavatar upgrade` again"
 _ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]*")
 _INSIDE = re.compile(r"[^/]+/share/alphaavatar/manifest\.json")
@@ -103,6 +115,7 @@ class Upgraded:
     current: str  # The build it runs now: the same if it was the target already.
     path: Path | None = None  # Where current points, if it switched.
     runners: int | None = None  # The inference runners the new environment plans.
+    bundle: str | None = None  # The default bundle, read under the lock, when current is one's.
 
 
 def _checked(text: bytes, version: str | None = None) -> dict[str, Any]:
@@ -189,17 +202,28 @@ def _inside(package: Path) -> tuple[str, bytes]:
     raise SetupError("Not an AlphaAvatar package: no manifest")
 
 
+def _read(package: Path, expected: str) -> dict[str, Any]:
+    """A package file's manifest, read where the file is once it matches its SHA-256."""
+    try:
+        found = sha256(package) if package.is_file() else None
+    except OSError as error:
+        reason = error.strerror or type(error).__name__
+        raise SetupError(f"Cannot read {package}: {reason}") from None
+    if found is None:
+        raise SetupError(f"No package at {package}")
+    if found != expected:
+        raise SetupError(
+            f"{package} does not match its SHA-256: an incomplete download or another file"
+        )
+    return _checked(_inside(package)[1])
+
+
 def inspect(source: Source) -> dict[str, Any]:
     """The target's manifest, changing nothing: a release's as published, a file's from inside
     it once the file matches its SHA-256."""
     if source.manifest is not None:
         return source.manifest
-    package = Path(source.package)
-    if not package.is_file():
-        raise SetupError(f"No package at {package}")
-    if sha256(package) != _expected(source):
-        raise SetupError(f"{package} does not match its SHA-256: another file")
-    return _checked(_inside(package)[1])
+    return _read(Path(source.package), _expected(source))
 
 
 def compare(current: Mapping[str, Any], target: Mapping[str, Any]) -> str:
@@ -226,10 +250,10 @@ def current_manifest(installation: Installation) -> dict[str, Any]:
     return installation.manifest
 
 
-def _package(source: Source, stage: Path, progress: Callable[[str], None]) -> Path:
+def _package(source: Source, expected: str, stage: Path, progress: Callable[[str], None]) -> Path:
     """The package, this run's own copy in the stage, matching its SHA-256: what is checked is
     what unpacks, whatever happens to the source meanwhile."""
-    expected, package = _expected(source), stage / "package.tar.gz"
+    package = stage / "package.tar.gz"
     if isinstance(source.package, Path):
         try:
             shutil.copyfile(source.package, package)
@@ -321,51 +345,68 @@ def upgrade(
     installation: Installation,
     source: Source,
     *,
-    bundle: str | None,
+    paths: ApplicationPaths,
     environ: Mapping[str, str],
     step: Callable[[int, str, str | None], None] = lambda number, name, summary: None,
     progress: Callable[[str], None] = lambda line: None,
 ) -> Upgraded:
     """Upgrade current to the target build, checked whole before current switches to it.
 
-    ``bundle`` is the default bundle, whose environment the target plans when current is a
-    setup environment; ``environ`` is what the target's commands run with. ``step`` hears each
-    step begin (summary None) and end; ``progress`` what goes on within one.
+    Under the lock, one read of the settings of ``paths`` gives the default bundle, whose
+    environment the target plans when current is a setup environment, and the credentials
+    stored for it; the target's commands run with those and ``environ``, whose own values win
+    as they do for start. ``step`` hears each step begin (summary None) and end; ``progress``
+    what goes on within one.
     """
+    from alphaavatar.host.configs.credentials import read_stored
+
     prefix = installation.prefix
     with locked(prefix):
         previous, current = installation.current(), current_manifest(installation)
+        # Read once the lock is ours: a setup that ran meanwhile has enabled what it enables,
+        # and the plan and the check take the same bundle and credentials.
+        settings = read_stored(paths)
+        environ = {**settings.credentials, **environ}
+        bundle = None
+        if previous is not None and previous.parent.name == "envs":
+            bundle = settings.checked().get("default_bundle")
         if source.manifest is not None and compare(current, source.manifest) == "current":
-            return Upgraded(current["id"], current["id"])
+            return Upgraded(current["id"], current["id"], bundle=bundle)
+        step(1, "Package", None)
+        expected = _expected(source)
+        # A file is read where it is: the build current runs already needs no copy, nor a stage.
+        found = source.manifest or _read(Path(source.package), expected)
+        verdict = compare(current, found)
+        if verdict == "current":
+            step(1, "Package", f"AlphaAvatar {found['id']} · current already")
+            return Upgraded(current["id"], current["id"], bundle=bundle)
+        if verdict == "older":
+            raise SetupError(
+                f"AlphaAvatar {found['id']} is older than the current {current['version']}"
+                "; upgrade does not go back"
+            )
+        if problems := machine_problems(found["glibc"], found["cpu"]):
+            raise SetupError(f"AlphaAvatar {found['id']} needs " + "; ".join(problems))
         versions = prefix / "versions"
-        for stale in versions.glob(f"{STAGE}*"):
+        for stale in versions.glob(f"{INSTALL_STAGE}*"):
             # A stage whose run was killed, marked as install.sh's or this: the lock is ours now.
-            if stale.is_dir() and not stale.is_symlink() and (stale / STAGE_MARK).is_file():
+            if marked(stale, INSTALL_MARK):
                 shutil.rmtree(stale)
-        stage = Path(tempfile.mkdtemp(prefix=STAGE, dir=versions))
-        (stage / STAGE_MARK).touch()
+        stage: Path | None = None
         fresh: Path | None = None
         try:
-            step(1, "Package", None)
-            package = _package(source, stage, progress)
+            with signals_deferred():  # It appears marked, and this run's to remove.
+                stage = Path(tempfile.mkdtemp(prefix=INSTALL_STAGE, dir=versions))
+                (stage / INSTALL_MARK).touch()
+            package = _package(source, expected, stage, progress)
             top, text = _inside(package)
-            manifest = _checked(text, source.manifest["version"] if source.manifest else None)
-            if source.manifest is not None and manifest["id"] != source.manifest["id"]:
+            manifest = _checked(text, found["version"])
+            if manifest["id"] != found["id"]:
+                named = "its release's manifest names" if source.manifest else "it held when read"
                 raise SetupError(
-                    f"The release's package holds AlphaAvatar {manifest['id']}, not the "
-                    f"{source.manifest['id']} its manifest names"
+                    f"{source.package} holds AlphaAvatar {manifest['id']}, not the "
+                    f"{found['id']} {named}"
                 )
-            verdict = compare(current, manifest)
-            if verdict == "current":
-                step(1, "Package", f"AlphaAvatar {manifest['id']} · current already")
-                return Upgraded(current["id"], current["id"])
-            if verdict == "older":
-                raise SetupError(
-                    f"AlphaAvatar {manifest['id']} is older than the current {current['version']}"
-                    "; upgrade does not go back"
-                )
-            if problems := machine_problems(manifest["glibc"], manifest["cpu"]):
-                raise SetupError(f"AlphaAvatar {manifest['id']} needs " + "; ".join(problems))
             base = versions / manifest["id"]
             if base.exists() or base.is_symlink():
                 # Unpacked by install.sh or a run that is gone: the same manifest, or not ours.
@@ -378,8 +419,10 @@ def upgrade(
                 progress(f"AlphaAvatar {manifest['id']} is unpacked already; checking it")
             else:
                 progress("Unpacking the package")
-                os.rename(_unpack(package, stage, top), base)
-                fresh = base  # This run's: removed at the end unless current runs it.
+                tree = _unpack(package, stage, top)
+                with signals_deferred():  # In place and this run's at once, whatever arrives.
+                    os.rename(tree, base)
+                    fresh = base  # Removed at the end unless current runs it.
             package.unlink()
             progress(f"Checking AlphaAvatar {manifest['id']}")
             _check_base(base, manifest, environ)
@@ -395,7 +438,7 @@ def upgrade(
                     except BaseException:
                         switch_current(prefix, previous, stage)
                         raise
-                return Upgraded(current["id"], manifest["id"], base)
+                return Upgraded(current["id"], manifest["id"], base, bundle=bundle)
             if bundle is None:
                 raise SetupError(
                     "No default bundle: the environment current runs is for none; "
@@ -440,9 +483,10 @@ def upgrade(
                 replacing=current["id"],
                 progress=progress,
             )
-            return Upgraded(current["id"], manifest["id"], environment, runners[0])
+            return Upgraded(current["id"], manifest["id"], environment, runners[0], bundle)
         finally:
             with signals_deferred():
                 if fresh is not None and installation.current_base() != fresh.name:
                     shutil.rmtree(fresh, ignore_errors=True)
-                shutil.rmtree(stage, ignore_errors=True)
+                if stage is not None:
+                    shutil.rmtree(stage, ignore_errors=True)

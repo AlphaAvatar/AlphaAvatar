@@ -8,6 +8,7 @@ In a source checkout it is the command of the `alpha-avatar-host` package.
 | --- | --- |
 | [`alphaavatar setup`](setup.md) | Install what a bundle needs, check it, then enable it: an existing bundle, or a new one asked from the reference configuration; in the Linux package |
 | [`alphaavatar upgrade`](upgrade.md) | Upgrade the installation to another build, the latest release by default: prepared and checked beside the current one, then switched to once; in the Linux package |
+| [`alphaavatar cleanup`](cleanup.md) | Remove the environments and builds `current` does not use, as upgrades leave them, with the Host stopped; `--dry-run` lists them; in the Linux package |
 | [`alphaavatar config init`](config.md#config-init) | Create the reference bundle and its profiles |
 | [`alphaavatar config check`](config.md#config-check) | Validate a configuration without starting anything |
 | [`alphaavatar doctor`](doctor.md) | Diagnose the installation and a configuration: static checks, then the runtime diagnosis, its spoken scenario in rounds |

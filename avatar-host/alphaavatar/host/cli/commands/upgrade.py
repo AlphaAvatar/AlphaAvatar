@@ -16,9 +16,11 @@
 ``--check`` reads the current build and the target's, and changes nothing. Otherwise the
 target's package is verified and unpacked beside the current version and, when setup made the
 environment current runs, the default bundle's environment is planned by the target, installed
-beside it and checked; current then switches once. A failure or signal before that leaves what
-a person uses as it was, and says what current runs on stderr. Nothing here starts a session,
-runner or model, nor writes to the application home.
+beside it and checked; current then switches once. The default bundle and its credentials are
+read under the installation's lock, not here. A failure or signal before that leaves what a
+person uses as it was, and says what current runs on stderr. Nothing here starts a session,
+runner or model, nor writes to the application home; ``alphaavatar cleanup`` removes what the
+previous build leaves.
 """
 
 from __future__ import annotations
@@ -126,8 +128,8 @@ def upgrade(args: argparse.Namespace) -> int:
 
 
 def _upgrade(args: argparse.Namespace) -> int:
-    from alphaavatar.host.configs import format_failure
-    from alphaavatar.host.configs.credentials import load_environment
+    from alphaavatar.agents.env import init_env
+    from alphaavatar.host.configs import application_paths, format_failure
     from alphaavatar.host.tools.setup.environment import SetupError
     from alphaavatar.host.tools.setup.plan import PlanError
     from alphaavatar.host.tools.upgrade.upgrade import upgrade as upgrading
@@ -136,7 +138,7 @@ def _upgrade(args: argparse.Namespace) -> int:
     out.title("Upgrade")
     out.write()
     started = out.lines
-    installation = before = bundle = None
+    installation = before = None
     failed = "Check failed" if args.check else "Upgrade failed"
 
     def step(number: int, name: str, summary: str | None) -> None:
@@ -154,14 +156,11 @@ def _upgrade(args: argparse.Namespace) -> int:
         before = installation.current_base()
         if args.check:
             return _check(args, installation, out)
-        # What the target's commands read too: the .env file and the stored credentials.
-        settings = load_environment()
-        if (current := installation.current()) is not None and current.parent.name == "envs":
-            bundle = settings.checked().get("default_bundle")
+        init_env()  # The .env file start reads; the stored credentials are read under the lock.
         result = upgrading(
             installation,
             _source(args),
-            bundle=bundle,
+            paths=application_paths(),
             environ=dict(os.environ),
             step=step,
             progress=progress,
@@ -192,6 +191,7 @@ def _upgrade(args: argparse.Namespace) -> int:
         return 0
     out.write()
     out.status("OK", f"Upgraded to AlphaAvatar {result.current}")
+    bundle = result.bundle
     facts = {"Previous": result.previous, "Current": home_relative(result.path)}
     if bundle is not None:
         facts["Bundle"] = bundle
@@ -199,7 +199,8 @@ def _upgrade(args: argparse.Namespace) -> int:
     for key, value in facts.items():
         out.row(key, value, indent=STATUS, column=column)
     kept = "version and its environment stay" if bundle is not None else "version stays"
-    out.note(f"The previous {kept}; nothing removes {'them' if bundle else 'it'}.", indent=STATUS)
+    removed = "them" if bundle is not None else "it"
+    out.note(f"The previous {kept} until `alphaavatar cleanup` removes {removed}.", indent=STATUS)
     out.heading("Next")
     out.command(f"alphaavatar doctor {bundle}" if bundle is not None else "alphaavatar setup")
     out.write()

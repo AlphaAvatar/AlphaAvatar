@@ -96,6 +96,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="DIR|URL",
         help="Where the target build's own wheels are, if neither beside --file nor its release",
     )
+    cleanup = commands.add_parser(
+        "cleanup",
+        help="Remove the environments and builds current does not use, as upgrades leave them; "
+        "with every alphaavatar start of this installation stopped",
+    )
+    cleanup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List what would be removed, the space it takes, and what stays and why; change "
+        "nothing",
+    )
     doctor = commands.add_parser(
         "doctor",
         help="Diagnose the installation and a configuration: static checks, then the runtime "
@@ -141,6 +152,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .commands.upgrade import upgrade as run_upgrade
 
         return run_upgrade(args)
+    if args.command == "cleanup":
+        from .commands.cleanup import cleanup as run_cleanup
+
+        return run_cleanup(args)
     if args.command in ("dev", "start"):
         from .commands.run import run
 

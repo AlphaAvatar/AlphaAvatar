@@ -127,7 +127,9 @@ to see the current build and the target's; `--file <package>` takes a CI build. 
 the target's base and the default bundle's environment beside the current ones, planned by the
 target from the bundle's settings, checks them, and switches `current` once; a failure leaves
 the installation as it was. Running `install.sh` again instead switches to the new base alone,
-leaving the bundle's capabilities to a new `alphaavatar setup <bundle>`.
+leaving the bundle's capabilities to a new `alphaavatar setup <bundle>`. The previous version
+and environment stay; with the service still stopped, [`alphaavatar cleanup`](cli/cleanup.md)
+removes them, `--dry-run` first to see what goes and what stays.
 
 ## Check the configuration in the foreground
 

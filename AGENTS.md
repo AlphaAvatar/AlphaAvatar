@@ -70,7 +70,7 @@ Each distribution owns its runtime dependency metadata and resources.
 | `avatar-app/` | Reserved client/App scope; no installable App is supplied yet. | [App README](avatar-app/README.md). |
 | `examples/` | Complete configuration examples and supporting examples. | [Examples README](examples/README.md). |
 | `tests/fixtures/` | Shared small samples and opt-in large-sample manifest. | `conftest.py` and the sample manifest. |
-| `packaging/linux/` | Linux package construction, installation and capability wheels. | [Setup guide](docs/cli/setup.md), [upgrade guide](docs/cli/upgrade.md). |
+| `packaging/linux/` | Linux package construction, installation and capability wheels. | [Setup guide](docs/cli/setup.md), [upgrade guide](docs/cli/upgrade.md), [cleanup guide](docs/cli/cleanup.md). |
 | `scripts/` | Quality, documentation, maintenance and release utilities. | [Task routing](#21-common-change-routes). |
 | `docs/` | Guides, CLI reference, roadmap, deployment, release history and agent records. | [Documentation index](#22-documentation-index). |
 
@@ -590,7 +590,7 @@ Use this table to avoid starting in a convenient but non-owning module.
 | Doctor metric | Producer trace boundary → Core trace schema → Host measurement → compare script/tests/docs. |
 | New plugin/package | Plugin boundary guide → entry points/factory → metadata/workspace/lock → catalog/tests. |
 | Future App presentation | App design/implementation → Core/RTC delivery contract → frontend checks. |
-| Deployment, install or upgrade | Host `tools/setup`, `tools/upgrade` or packaging → `docs/DEPLOY.md` / setup or upgrade guide → installation validation. |
+| Deployment, install, upgrade or cleanup | Host `tools/setup`, `tools/upgrade`, `tools/cleanup` or packaging → `docs/DEPLOY.md` / setup, upgrade or cleanup guide → installation validation. |
 
 Search with `rg` for a contract's constructors, serializers and consumers before renaming it.
 When changing trace fields, inspect both producers and offline report reconstruction.
@@ -615,6 +615,7 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | [cli/config.md](docs/cli/config.md) | Bundle/profile creation and effective configuration inspection/validation. |
 | [cli/setup.md](docs/cli/setup.md) | Linux installation environment and selectable capability/dependency setup. |
 | [cli/upgrade.md](docs/cli/upgrade.md) | Linux package upgrade between builds: build IDs, preparation beside current, one switch, failures. |
+| [cli/cleanup.md](docs/cli/cleanup.md) | Removing the environments and builds `current` does not use: what is kept and why, the lock, stopping the Host first. |
 | [cli/doctor.md](docs/cli/doctor.md) | Static/runtime diagnosis, external-service controls, reports, evidence and timing metrics. |
 | [cli/dev.md](docs/cli/dev.md) | Development-mode startup, defaults, logging and supported options. |
 | [cli/start.md](docs/cli/start.md) | Service-mode startup, configuration overrides and operating behavior. |
