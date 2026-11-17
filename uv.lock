@@ -217,7 +217,6 @@ dependencies = [
     { name = "jsonschema" },
     { name = "numpy" },
     { name = "pydantic" },
-    { name = "python-dotenv" },
     { name = "python-slugify" },
     { name = "referencing" },
 ]
@@ -241,7 +240,6 @@ requires-dist = [
     { name = "langchain-qdrant", marker = "extra == 'qdrant'" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "pydantic", specifier = ">=2,<3" },
-    { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-slugify" },
     { name = "qdrant-client", marker = "extra == 'qdrant'" },
     { name = "referencing", specifier = ">=0.30,<1" },
@@ -253,11 +251,6 @@ name = "alpha-avatar-core"
 source = { editable = "avatar-core" }
 
 [package.optional-dependencies]
-livekit = [
-    { name = "livekit" },
-    { name = "livekit-api" },
-    { name = "livekit-protocol" },
-]
 video = [
     { name = "numpy" },
     { name = "opencv-python-headless" },
@@ -265,13 +258,10 @@ video = [
 
 [package.metadata]
 requires-dist = [
-    { name = "livekit", marker = "extra == 'livekit'", specifier = ">=1.0.12,<2" },
-    { name = "livekit-api", marker = "extra == 'livekit'", specifier = ">=1.0.4,<2" },
-    { name = "livekit-protocol", marker = "extra == 'livekit'", specifier = "~=1.0" },
     { name = "numpy", marker = "extra == 'video'", specifier = ">=1.26,<3" },
     { name = "opencv-python-headless", marker = "extra == 'video'", specifier = "==4.12.0.88" },
 ]
-provides-extras = ["livekit", "video"]
+provides-extras = ["video"]
 
 [[package]]
 name = "alpha-avatar-host"
@@ -285,6 +275,7 @@ dependencies = [
     { name = "omegaconf" },
     { name = "packaging" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
 
@@ -310,6 +301,7 @@ requires-dist = [
     { name = "omegaconf", specifier = ">=2.3,<3" },
     { name = "packaging", specifier = ">=24,<27" },
     { name = "pydantic", specifier = ">=2,<3" },
+    { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyyaml", specifier = ">=6,<7" },
 ]
 provides-extras = ["livekit"]

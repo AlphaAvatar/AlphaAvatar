@@ -27,7 +27,6 @@ dependencies = [
     "jsonschema>=4.18,<5",
     "numpy>=1.26,<3",
     "pydantic>=2,<3",
-    "python-dotenv>=1.0.1",
     "python-slugify",
     "referencing>=0.30,<1",
 ]

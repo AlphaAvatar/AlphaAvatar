@@ -31,6 +31,7 @@ from alphaavatar.host.configs.bundles import ConfigReferenceError, read_settings
 from alphaavatar.host.configs.credentials import (
     credentials_path,
     load_credentials,
+    load_environment,
     stored_credentials,
 )
 from alphaavatar.host.configs.template import create_bundle
@@ -67,6 +68,24 @@ def test_credentials_are_private_exact_and_never_override_the_environment(tmp_pa
     # Without credentials to store, the stored ones stay as named.
     create_bundle(paths, "gamma", avatar_id="gamma", make_default=True)
     assert stored_credentials(paths) == first | second
+
+
+def test_each_variable_comes_from_the_environment_then_the_env_file_then_those_stored(
+    tmp_path: Path,
+) -> None:
+    # The file ENV_FILE names also chooses the home, whose stored credentials come last.
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    kept = {"A": "stored", "B": "stored", "C": "stored"}
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=kept)
+    env_file = tmp_path / "chosen.env"
+    env_file.write_text(f'ALPHAAVATAR_HOME="{paths.root}"\nA="file"\nB="file"\n')
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(env_file), "A": "environment"}):
+        for name in ("ALPHAAVATAR_HOME", "B", "C"):
+            os.environ.pop(name, None)
+        settings = load_environment()
+        assert settings.values["default_bundle"] == "alpha"
+        found = {name: os.environ[name] for name in "ABC"}
+        assert found == {"A": "environment", "B": "file", "C": "stored"}
 
 
 @pytest.mark.parametrize(

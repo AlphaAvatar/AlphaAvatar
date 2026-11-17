@@ -129,14 +129,20 @@ def load_credentials(paths: ApplicationPaths) -> Settings:
     return settings
 
 
+def load_env_file() -> None:
+    """Set each variable of the .env file ``ENV_FILE`` names (default ``.env``) that the
+    environment lacks; a missing file sets none."""
+    from dotenv import load_dotenv
+
+    load_dotenv(os.environ.get("ENV_FILE", ".env"))
+
+
 def load_environment(overrides: Sequence[str] = ()) -> Settings:
     """The .env file start reads (ENV_FILE), then the credentials stored for the home; the
     settings read, to choose the default bundle from."""
-    from alphaavatar.agents.env import init_env
-
     from .bundles import application_paths
 
-    init_env()  # It may set ALPHAAVATAR_HOME, which chooses the home.
+    load_env_file()  # It may set ALPHAAVATAR_HOME, which chooses the home.
     return load_credentials(application_paths(overrides))
 
 

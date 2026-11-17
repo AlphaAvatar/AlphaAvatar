@@ -10,7 +10,7 @@ do not depend on Host. The App is not required to run the service.
 alphaavatar/host/
 ├── main.py             # Public alphaavatar command.
 ├── version.py
-├── cli/                # Commands (dev/start, config, setup, doctor), arguments and rendering.
+├── cli/                # Commands (dev/start, config, setup, upgrade, cleanup, doctor), arguments and rendering.
 ├── configs/            # Strict Host/Avatar configuration loading.
 ├── workspace/          # Application, config and cache paths; Workspace continuity.
 ├── log/                # Console, JSONL, previews and optional event diagnostics.
@@ -22,7 +22,9 @@ alphaavatar/host/
 │       └── livekit/    # Native dispatch, connections and Character transport.
 └── tools/              # Run on demand, beside the service.
     ├── doctor/         # Static and runtime diagnosis.
-    └── setup/          # Installation planning and environments.
+    ├── setup/          # Installation planning and environments.
+    ├── upgrade/        # Switching an installation to another build once checked.
+    └── cleanup/        # Removing the environments and builds current does not use.
 ```
 
 [Startup overview](../.github/assets/avatar-host/start-up-flow.png) ·

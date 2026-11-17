@@ -100,7 +100,8 @@ cancellation is not proof that a remote write did not commit.
 
 `output_mode: raw` preserves complete result content and echoed arguments.
 `compact` omits echoed arguments and truncates individual result text to 2000
-characters with a note. Structured MCP result content is preserved. A successful
+characters with a note. Structured MCP result content is kept in the result text, so
+compact truncates it too. A successful
 empty result is represented as an empty list, not misclassified as a tool failure.
 Server-reported errors remain errors. Peer successes are not discarded merely
 because another operation in the same batch failed.
@@ -113,9 +114,11 @@ A close failure remains a failure; it does not imply successful remote rollback.
 
 ## Authorization and privacy
 
-Registration, discovery and remote annotations do not approve a call. Foreground
-Loop enforces exact-capability policies and its authorizer. `tool_policies: {}`
-does not bypass approval, and the native Host does not supply an approval UI.
+Remote annotations do not approve a call; enabling the plugin grants its capability
+to each Run. With `tool_policies: {}` every MCP call, writes included, runs without a
+second approval. An exact policy can deny the capability with `enabled: false` or
+require `approval_required: true`; the native Host supplies no authorizer, so it is
+then not offered to the model.
 Do not mark the whole MCP capability read-only because one configured tool is read-only.
 
 Tool implementations return outcomes; they receive neither StatusEmitter nor

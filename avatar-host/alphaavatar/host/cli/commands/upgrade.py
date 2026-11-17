@@ -128,8 +128,8 @@ def upgrade(args: argparse.Namespace) -> int:
 
 
 def _upgrade(args: argparse.Namespace) -> int:
-    from alphaavatar.agents.env import init_env
     from alphaavatar.host.configs import application_paths, format_failure
+    from alphaavatar.host.configs.credentials import load_env_file
     from alphaavatar.host.tools.setup.environment import SetupError
     from alphaavatar.host.tools.setup.plan import PlanError
     from alphaavatar.host.tools.upgrade.upgrade import upgrade as upgrading
@@ -156,7 +156,7 @@ def _upgrade(args: argparse.Namespace) -> int:
         before = installation.current_base()
         if args.check:
             return _check(args, installation, out)
-        init_env()  # The .env file start reads; the stored credentials are read under the lock.
+        load_env_file()  # The one start reads; the stored credentials are read under the lock.
         result = upgrading(
             installation,
             _source(args),

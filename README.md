@@ -57,11 +57,11 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 
 - 🧠 **Memory** for long-term user, assistant, and tool interaction history
 - 🧬 **Persona** for user understanding, identity continuity, and personalization
-- 💡 **Reflection** for self-improvement and long-term behavioral adaptation
-- 📅 **Planning** for task decomposition, reminders, and future-oriented actions
-- ⚙️ **Behavior** for response style, workflow policy, and proactive assistance
+- 💡 **Reflection** for self-improvement and long-term behavioral adaptation *(planned)*
+- 📅 **Planning** for task decomposition, reminders, and future-oriented actions *(planned)*
+- ⚙️ **Behavior** for response style, workflow policy, and proactive assistance *(planned)*
 - 🧰 **Tools** through MCP, RAG, DeepResearch, and external integrations
-- 😊 **Virtual Character** for real-time voice/avatar interaction
+- 😊 **Virtual Character** for real-time voice/avatar interaction *(renderer validation pending)*
 
 ✨ **Self-hostable and privacy-first** — AlphaAvatar can run on your own infrastructure, giving you control over runtime configuration, memory and tools. Selected cloud model, embedding and remote-tool providers still require their own network access and credentials; self-hosting the framework does not make those providers local.
 
@@ -159,7 +159,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 
 ---
 
-<h2>AlphaAvatar Plugins</h2>
+<h2 id="alphaavatar-plugins">AlphaAvatar Plugins</h2>
 
 AlphaAvatar organizes plugins into three layers: shared foundation services, perception and interaction capabilities, and tools for external tasks.
 
@@ -283,7 +283,7 @@ Linux x86_64 with glibc 2.28 or newer:
 ```bash
 curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v0.6.9/install.sh
 bash install.sh --version 0.6.9
-alphaavatar setup    # choose what the Avatar runs with; or config init <bundle>, then setup <bundle>
+alphaavatar setup    # choose what the Avatar runs with; or config init <bundle> --avatar-id <id>, then setup <bundle>
 alphaavatar doctor   # static checks, then the runtime diagnosis in rounds, once you agree to it
 alphaavatar start    # runs the bundle setup enabled
 ```
@@ -304,55 +304,3 @@ See [DEPLOY.md](docs/DEPLOY.md#or-install-the-linux-package-then-choose-capabili
 <h3>💻 Laptop</h3>
 
 <h3>📱 Mobile</h3>
-
----
-
-<h2>Usage 🚀</h2>
-
-AlphaAvatar focuses on first-party realtime interaction. The browser demo provides a client surface; dedicated App and OS experiences remain planned.
-
-External messaging bridges are not included in the current development scope. This does not remove native text chat or tool-based integrations with external services.
-
----
-
-<h3>🌐 Web Access</h3>
-
-<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
-
-AlphaAvatar now provides a browser-based realtime demo interface built on **LiveKit**.
-
-👉 Try the Web Demo: https://www.alphaavatar.ai/demo
-
-The browser client surfaces include (availability depends on the deployed version and configuration):
-
-- 🎙️ Real-time voice interaction
-- 💬 Text chat with the Avatar
-- 📷 Camera preview and video-ready interaction
-- 🔊 Agent audio playback
-- 😊 Optional native AIRI presentation with a separately hosted frontend; renderer/RTC integration must be validated for the deployment
-- 🧠 Configurable Memory, Persona, RAG, MCP and DeepResearch, subject to enabled services and execution policy
-- 🌍 Browser timezone metadata, enabling AlphaAvatar to understand local login time
-
-<p align="center">
-  <img src=".github/assets/web-demo-screenshot.png" alt="AlphaAvatar Web Demo Screenshot" width="100%" />
-</p>
-
-> Screenshots and hosted deployments may reflect another revision. In the current native examples, AIRI-named configurations retain a voice persona, not animated Character transport.
-
----
-
-<h3>📲 Native Mobile App</h3>
-
-<img src="https://img.shields.io/badge/Planned-6c757d?style=flat" />
-
-A dedicated AlphaAvatar mobile application providing:
-
-- 🎙️ Real-time voice communication
-- 😊 Live2D / Virtual character visualization
-- 🧠 Persistent memory & persona
-
----
-
-> 💡 AlphaAvatar is currently developer-first, with a Web Demo available for realtime interaction.
-
-> More user-facing web and mobile experiences are under active development.

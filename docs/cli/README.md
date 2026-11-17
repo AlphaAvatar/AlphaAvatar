@@ -23,9 +23,9 @@ way: see [choosing a configuration](config.md#choosing-a-configuration) and
 
 ## Output
 
-`config init`, `config check`, `setup` and `doctor` print their text reports the same way.
-[cli.html](cli.html), a page that opens offline, shows each one as a terminal shows it, colors
-and all:
+`config init`, `config check`, `setup`, `upgrade`, `cleanup` and `doctor` print their text
+reports the same way. [cli.html](cli.html), a page that opens offline, shows those of all but
+`upgrade` and `cleanup` as a terminal shows them, colors and all:
 
 ```text
 AlphaAvatar / Doctor

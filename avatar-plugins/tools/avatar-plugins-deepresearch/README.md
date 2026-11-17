@@ -1,11 +1,11 @@
 # AlphaAvatar DeepResearch Plugin
 
-A modular deep-research and content acquisition middleware for AlphaAvatar, providing unified access to **web search**, **iterative research**, and **content extraction**.
+A modular deep-research and content acquisition middleware for AlphaAvatar, providing unified access to **web search**, **deeper search**, and **content extraction**.
 
-This plugin enables AlphaAvatar agents to perform **broad information gathering**, **exploratory research**, and **multi-step investigation workflows**, without coupling agent logic to any specific search engine, crawler, or research provider.
+This plugin enables AlphaAvatar agents to perform **broad information gathering** and **exploratory research**, without coupling agent logic to any specific search engine, crawler, or research provider. Multi-step investigation comes from the Loop composing its operations; each call is one request.
 
 DeepResearch focuses on **acquiring and structuring external knowledge**.
-Persistent storage and long-term reuse are handled by downstream tools such as the **RAG plugin**.
+Indexing is left to downstream tools such as the **RAG plugin**, which can index the PDFs `download` saves within the same session.
 
 ---
 
@@ -17,14 +17,14 @@ Persistent storage and long-term reuse are handled by downstream tools such as t
 * **Broad & Exploratory Research**
   Designed for unfamiliar, complex, or open-ended topics that require multiple sources.
 
-* **Multi-step Research Support**
-  Supports iterative workflows such as *search → read → refine → compare → synthesize*.
+* **Composable Operations**
+  The Loop composes the operations into iterative workflows such as *search → read → refine → compare → synthesize*.
 
 * **Source-aware Outputs**
   Returns structured results including titles, URLs, snippets, and extracted content.
 
 * **Downstream-ready Artifacts**
-  Produces Markdown text and PDF files suitable for summarization, analysis, or indexing by RAG.
+  Produces Markdown text for summarization or analysis, and PDF files on the Host that RAG can index.
 
 ---
 
@@ -45,18 +45,18 @@ Use this plugin when the task involves one or more of the following:
 It exposes **four core operations (op)** that can be composed into a research pipeline:
 
 * **search**
-  Perform a lightweight web search for quick discovery.
+  Perform a lightweight web search for quick discovery: one basic-depth Tavily search, five results.
   Use this when fast, broad results are needed with minimal reasoning.
 
 * **research**
-  Perform deep, multi-step research.
-  Use this when the question requires decomposition, iterative searching, cross-source comparison, and reasoning.
+  Perform one deeper web search: advanced-depth Tavily search, five results.
+  Use this when the question needs more thorough sources; decomposition and further searching come from calling the operations again.
 
 * **scrape**
-  Given a list of URLs, fetch and extract the main page contents, then merge them into a single Markdown text suitable for downstream processing (e.g., summarization or indexing).
+  Given up to 20 absolute HTTP(S) URLs, fetch and extract the main page contents, then merge them into a single Markdown text in the tool result (e.g., for summarization).
 
 * **download**
-  Given a list of URLs, fetch pages and convert them into stored PDF artifacts, returning a list of file references for downstream tools or plugins (e.g., building a local RAG index).
+  Given up to 20 absolute HTTP(S) URLs, render the pages into PDF files in the session's `artifacts/deepresearch/tavily/` directory, returning their paths for downstream tools (e.g., RAG indexing in the same session).
 
 ---
 
@@ -67,7 +67,7 @@ It exposes **four core operations (op)** that can be composed into a research pi
 3. **Pass outputs downstream**
 
    * Summarize or analyze directly
-   * Or hand off to the RAG plugin for indexing and long-term retrieval
+   * Or hand saved PDFs to the RAG plugin for indexing in the same session
 
 ---
 
@@ -76,6 +76,11 @@ It exposes **four core operations (op)** that can be composed into a research pi
 ```bash
 pip install alpha-avatar-plugins-deepresearch
 ```
+
+The plugin is enabled unless `tools.deepresearch.plugin: null`. It reads the Tavily key from
+`TAVILY_API_KEY` and fails at startup without it. `tools.deepresearch.init_config.timeout`
+(default 30 s) bounds each Tavily request. Saving pages as PDF uses WeasyPrint, which needs the
+system's Pango library.
 
 ---
 

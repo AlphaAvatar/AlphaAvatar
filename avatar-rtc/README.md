@@ -31,7 +31,7 @@ Selected files and feature directories are shown; ordinary package initializers 
 
 ## Lifecycle and ownership
 
-Media inputs receive a LiveKit room and shared PerceptionRuntime. Text input receives an injected submit callback; Host binds it to Engine admission without introducing an RTC-to-Agents dependency. Output adapters receive a room and shared OutputRuntime.
+Media inputs receive a LiveKit room and shared PerceptionRuntime. Text input receives an injected submit callback; Host binds it to Engine admission without introducing an RTC-to-Agents dependency. Output adapters receive a room and shared OutputRuntime; the user-transcript output instead reads final transcripts from PerceptionRuntime.
 
 Adapters expose `on_start()` and `on_stop()` for Core lifecycle coordination. Each owns its subscriptions, callbacks, tasks and transport resources. It must not close the shared room, PerceptionRuntime or OutputRuntime. Host SessionManager orders attachment outputs, Engine and inputs in the execution child. SessionAttachment releases adapters and its connection; HostExecution separately settles Engine and AvatarRuntime. LiveKitConnection reports transport events and never closes an execution or deletes a room.
 

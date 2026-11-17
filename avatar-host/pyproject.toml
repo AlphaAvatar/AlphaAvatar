@@ -25,6 +25,7 @@ dependencies = [
     "omegaconf>=2.3,<3",
     "packaging>=24,<27",
     "pydantic>=2,<3",
+    "python-dotenv>=1.0.1",
     "PyYAML>=6,<7",
 ]
 

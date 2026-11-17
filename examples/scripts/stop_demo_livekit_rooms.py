@@ -16,9 +16,9 @@ import os
 
 from livekit import api
 
-from alphaavatar.agents.env import init_env
+from alphaavatar.host.configs.credentials import load_env_file
 
-init_env()
+load_env_file()
 
 
 ROOM_PREFIX = "alphaavatar-demo-"

@@ -24,7 +24,6 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-livekit = ["livekit-api>=1.0.4,<2", "livekit-protocol~=1.0", "livekit>=1.0.12,<2"]
 video = ["numpy>=1.26,<3", "opencv-python-headless==4.12.0.88"]
 
 [project.urls]

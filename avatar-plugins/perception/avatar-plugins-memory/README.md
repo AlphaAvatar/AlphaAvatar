@@ -10,7 +10,7 @@ MemoryRuntime
 ├── conversation    Durable conversation extraction and consolidation.
 ├── tool            Useful tool-result memory.
 ├── environment     Perception-driven environment extraction.
-└── MemoryStore     Vector/graph storage and persistence.
+└── MemoryStore     SQLite records, with vector index and Markdown/graph exports.
 ```
 
 Each processor owns its configuration, provider gateway, prompts and lifecycle. MemoryRuntime owns contexts, consumer cursors and store orchestration. It does not require Engine to inject assistant messages directly.
@@ -78,7 +78,7 @@ Text alone does not establish environment evidence. Enabled audio support uses s
 
 Memory records retain text, kind, ownership, scope, context, provenance and graph-related metadata. Supported memory types include Avatar, Conversation, Tools and ENV. Raw SDK objects and media clients are not stored as memory records.
 
-LanceDB and Qdrant adapters provide vector storage. Retrieval owns text/graph lookup and identity-related resolution rather than adding concrete search methods to MemoryBase. Avatar-owned memory and user-owned memory remain separate ownership domains, even when they can be recalled across episodes.
+The SQLite records are authoritative; an outbox feeds their projections: the LanceDB or Qdrant vector index and the Markdown/graph export. Retrieval owns text/graph lookup and identity-related resolution rather than adding concrete search methods to MemoryBase. Avatar-owned memory and user-owned memory remain separate ownership domains, even when they can be recalled across episodes.
 
 ## Lifecycle
 

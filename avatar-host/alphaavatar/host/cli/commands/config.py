@@ -180,16 +180,16 @@ def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int
 
 
 def init(name: str, *, avatar_id: str) -> int:
-    from alphaavatar.agents.env import init_env
     from alphaavatar.host.configs import (
         REQUIRED_ENVIRONMENT,
         application_paths,
         create_bundle,
         format_failure,
     )
+    from alphaavatar.host.configs.credentials import load_env_file
 
     try:
-        init_env()  # ALPHAAVATAR_HOME may come from the same .env that start reads.
+        load_env_file()  # ALPHAAVATAR_HOME may come from the same .env that start reads.
         created = create_bundle(application_paths(), name, avatar_id=avatar_id)
     except FileExistsError as error:
         report = Report(sys.stderr)

@@ -15,19 +15,21 @@ ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tool
 
 `defaults` contains YAML anchors only and is removed after aliases are resolved.
 Unknown runtime sections, including the removed `llm` section, are rejected rather
-than silently ignored. Native history is bounded by `context.init_config.history_*`.
+than silently ignored. Native history is kept whole; the former
+`context.init_config.history_max_*` settings are accepted and ignored.
 Interruption is configured through `router.init_config.turn_taking.interruption`;
 the unused SDK-era `voice.allow_interruptions` setting is removed and rejected.
 
 ## Configuration layout
 
-The checked-in multimodal example is the formatting reference. All configurations use the same five sections in order:
+The checked-in multimodal example is the formatting reference. All configurations use the same sections in order; only the multimodal example has the optional sixth:
 
 1. Avatar Identity & Workspace
 2. Runtime
 3. Foundation Plugins (`loop`, `context`, `voice`, `vision`)
 4. Perception Plugins (`defaults` anchors, `router`, `status`, `character`, `memory`, `persona`)
 5. Tools Plugins (`tools`)
+6. Host & RTC Access (`host`)
 
 Keep two-space indentation, section separators and purposeful blank lines. Preserve folded introduction/voice instructions and YAML anchors; do not replace them with serialized one-line strings.
 
@@ -81,19 +83,18 @@ separately; follow [Character setup](../avatar-plugins/perception/avatar-plugins
 
 ## Tool authorization and external services
 
-Tool registration is not approval. `tool_policies: {}` preserves the Loop's
-`approval_required: true` default. The current LiveKit entrypoint does not provide
-an approval UI or an Engine authorizer. Tool calls requiring approval will be
-declined; model responses and voice delivery remain available. To permit a tool,
-audit its exact capability ID and configure an explicit policy, or inject an
-asynchronous authorizer when assembling the Engine. Do not mark an aggregate MCP
-capability read-only merely because one server is a documentation server.
+Enabled plugins grant their capabilities to each Run. With `tool_policies: {}` they
+run without a second approval: the Loop's `approval_required` defaults to `false`.
+An exact capability policy can deny one with `enabled: false` or require
+`approval_required: true`; the native Host supplies no authorizer, so such a
+capability is not offered to the model. Enable only trusted tools: their operations
+can spend provider credits or change data. Do not mark an aggregate MCP capability
+read-only merely because one server is a documentation server.
 
 Enabled providers, embeddings, MCP servers and inference runners need their
 corresponding dependencies, credentials, network access and model assets.
 The multimodal/demo configurations also retain Google environment extraction and
 Tavily research; the voice-minimal example does not require those two services.
-The existing OpenAI and Voice.ai TTS selections now use native async HTTP/PCM
-providers; their YAML fields and fixed sample rates are unchanged. SDK worker hosting
-remains. Character has a native lifecycle, but real renderer/RTC validation is
-still required. These examples do not imply complete LiveKit Agents dependency removal.
+The OpenAI and Voice.ai TTS selections use native streaming PCM providers with fixed
+sample rates. Character has a native lifecycle, but real renderer/RTC validation is
+still required.
