@@ -23,9 +23,9 @@ to; the build and environment running this; every base a kept environment is ove
 base while a kept environment's cannot be told. So is whatever this cannot tell the installer
 made, reported with why: a link, a file, a directory without the installer's mark, metadata
 that cannot be read, a plan.json naming a base outside versions/ or another plan than the
-environment's name. The application home, with configurations, credentials, workspaces and
-the model cache, is outside envs/ and versions/; ``keep`` names it, and a directory holding it
-or inside it stays too.
+environment's name, whose base is then not told by it. The application home, with
+configurations, credentials, workspaces and the model cache, is outside envs/ and versions/;
+``keep`` names it, and no directory holding it or inside it is removed, a stage included.
 
 Removing takes the lock installations take and surveys again under it, current and what each
 environment is over read as they are then. Each directory is moved into a marked stage first,
@@ -113,10 +113,11 @@ def _plan(environment: Path) -> tuple[str | None, str | None]:
     base = document.get("base") if isinstance(document, dict) else None
     if not (isinstance(base, str) and _BUILD.fullmatch(base)):
         return None, "its plan.json names no base in versions/"
-    # Setup names an environment after its plan's ID: anything else is not that plan's.
+    # Setup names an environment after its plan's ID: anything else is not that plan's, and
+    # the base it names is not told by it.
     text = json.dumps(document, sort_keys=True, separators=(",", ":"))
     if hashlib.sha256(text.encode()).hexdigest()[:16] != environment.name:
-        return base, "its plan.json is not the plan it is named after"
+        return None, "its plan.json is not the plan it is named after"
     return base, None
 
 
@@ -185,6 +186,20 @@ def survey(installation: Installation, *, keep: Iterable[Path] = ()) -> Survey:
 
     removable: list[Entry] = []
     kept: list[Entry] = []
+
+    def admit(
+        path: Path, what: str, first: str | None = None, then: str | None = None
+    ) -> str | None:
+        """Where every directory found goes, stages too: kept for the first reason there is,
+        what runs this or holds what is never removed among them, or removable. The survey and
+        the removal under the lock both decide here; the reason it stays is returned."""
+        reason = first or stays(path) or then
+        if reason is None:
+            removable.append(Entry(path, what, _size(path)))
+        else:
+            kept.append(Entry(path, what, kept=reason))
+        return reason
+
     over: dict[str, list[str]] = {}  # Each base kept environments are over: those, and why.
     untold: list[str] = []  # Kept environments whose base cannot be told.
     if (prefix / "envs").is_symlink():
@@ -192,38 +207,30 @@ def survey(installation: Installation, *, keep: Iterable[Path] = ()) -> Survey:
     for path in _children(prefix / "envs", kept):
         name = f"envs/{path.name}"
         if path.name.startswith(SETUP_STAGE) and marked(path):
-            removable.append(Entry(path, "a stage a stopped setup left", _size(path)))
+            admit(path, "a stage a stopped setup left")
             continue
         foreign = _foreign(path, OWNER)
         base, problem = (None, None) if path.is_symlink() or not path.is_dir() else _plan(path)
         what = f"environment over AlphaAvatar {base}" if base else ""
-        reason = ("current" if path == current else None) or foreign or stays(path) or problem
+        reason = admit(path, what, ("current" if path == current else None) or foreign, problem)
         if reason is None:
-            removable.append(Entry(path, what, _size(path)))
             continue
-        kept.append(Entry(path, what, kept=reason))
         if base is not None:
             over.setdefault(base, []).append(f"{name} ({reason})")
         elif path.is_dir():
             untold.append(name)
     for path in _children(prefix / "versions", kept):
         if path.name.startswith(INSTALL_STAGE) and marked(path, INSTALL_MARK):
-            removable.append(Entry(path, "a stage a stopped installation left", _size(path)))
+            admit(path, "a stage a stopped installation left")
             continue
         build = _build(path)
-        what = f"AlphaAvatar {build}" if build else ""
-        reason = ("current" if path == current else None) or _foreign(path, None)
-        if reason is None and (users := over.get(path.name)):
-            reason = f"kept environments are over it: {', '.join(users)}"
-        reason = reason or stays(path)
-        if reason is None and build is None:
-            reason = "no manifest naming it: not a base package install.sh unpacked"
-        if reason is None and untold:
-            reason = f"the base of {', '.join(untold)} cannot be told: no base is removed"
-        if reason is None:
-            removable.append(Entry(path, what, _size(path)))
-        else:
-            kept.append(Entry(path, what, kept=reason))
+        first = ("current" if path == current else None) or _foreign(path, None)
+        if first is None and (users := over.get(path.name)):
+            first = f"kept environments are over it: {', '.join(users)}"
+        then = None if build else "no manifest naming it: not a base package install.sh unpacked"
+        if then is None and untold:
+            then = f"the base of {', '.join(untold)} cannot be told: no base is removed"
+        admit(path, f"AlphaAvatar {build}" if build else "", first, then)
     return Survey(current, tuple(removable), tuple(kept))
 
 

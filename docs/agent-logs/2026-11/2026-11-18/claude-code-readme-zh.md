@@ -8,7 +8,8 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | 模板 | `.env.template` 按代码实际读取的变量重写 | 2026-11-18 | `9d71447e` | `c044922a`（用户提交） | 已提交 |
-| README 与 `.env` 加载 | 21 个 README 逐句对照源码；`.env` 加载移到 Host；删 RAG `monologue` 和 Core `livekit` extra | 2026-11-18 | `c044922a` | 未提交（用户提交） | 待审查 |
+| README 与 `.env` 加载 | 21 个 README 逐句对照源码；`.env` 加载移到 Host；删 RAG `monologue` 和 Core `livekit` extra | 2026-11-18 | `c044922a` | `174d1632`（用户提交） | 已提交 |
+| 收尾 | cleanup 三处保护缺口；凭据空值统一规则；Router 两项计时测试的测量起点；RAG 能力描述 | 2026-11-18 | `174d1632` | 未提交（用户提交） | 待审查 |
 
 ## 1. `.env.template`
 
@@ -74,3 +75,64 @@
 - 根 README 的 Laptop、Mobile 两个标题下没有内容。
 - `docs/ROADMAP.md` 里 2026-05 的条目仍提到 monologue，是历史记录，未改。
 - Router 的两项计时测试偶发失败，都是测得的等待略短于配置值：一次 199.91 ms 对 200 ms，一次 0.749986 s 对 0.75 s。负载通常只会让等待变长，所以更可能是测量起点或时钟取法的问题，而不是机器慢。未改，等用户决定。
+
+---
+
+## 收尾（基线 `174d1632`）
+
+依据：用户 2026-11-18 的审查要求。`.env` 移到 Host、`python-dotenv` 迁移、删 RAG `monologue` 和 Core `livekit` extra 已被接受。改动全部留在工作区，未暂存、未提交；实际 LiveKit 通话由用户验收。
+
+### 1. cleanup 的三处保护缺口
+
+- **`.env` 指定的 home**：CLI 先调 `load_env_file()`，再用 `application_paths()` 确定保护目录，与 `start` 的取值顺序一致。环境里 `ALPHAAVATAR_HOME` 未设或为空时，取 `ENV_FILE` 文件里的值。
+- **暂存目录**：`survey()` 里新增 `admit()`，env、构建和两类暂存都由它判定去留，预览和锁内删除走同一处。原因顺序不变：current、非安装器所建、被保留 env 依赖，然后是运行中或保护目录，最后是元数据问题。
+- **校验失败的计划**：`_plan()` 在计划哈希与目录名不符时，不再返回其中记录的 base。该 env 保留，其依赖记为无法确定，所有基础包因此保留并写明原因。
+- 先删 env、再删无引用基础包的顺序，以及安装锁和停机维护约定，都不变。
+
+### 2. 凭据空值统一规则
+
+- **规则**：`alphaavatar.agents.utils.credential(name, environ)` 在值未设、为空或全是空白时返回 None，否则原样返回。
+  - Host 的 `fill_credentials()` 用同一规则逐层补齐：环境里已有有效值的保留，无效的让给下一层；下一层的空值不写入。
+  - `load_env_file()`（改用 `dotenv_values`）、`load_credentials()` 和 `upgrade` 在锁内的合并都调用它。
+- **读取方**：以下读取方改用同一判断，缺失时报出变量名、不打印值：
+  - langchain 任务模型与 embedding、Responses 客户端（报错补上变量名）；
+  - OpenAI 与 Voice.ai TTS（缺失时报变量名，原先是通用报错）、两种 STT；
+  - Tavily、RAG、MCP `<NAME>` 占位符、Qdrant、LiveKit（两处）；
+  - setup 判断“已设置”的地方。
+- `write_credentials()` 拒绝全空白值。
+- **开关和路径**：规则只决定由哪一层供值，不改它们的含义。仓库里读取的开关和路径都把空值当作未设。
+- **有意为之的差异**：`.env` 内 `${NAME}` 插值，当文件和环境都定义了 NAME 时，现在取文件里的值。这是 `dotenv_values` 的行为；原先的 `load_dotenv` 取环境里的值。
+- **文档**：`.env.template` 开头说明、`docs/cli/config.md`「Credentials」、`setup.md`、`upgrade.md`、`DEPLOY.md`。
+
+### 3. Router 两项计时测试
+
+原先两项测试都从 HOLD 的 trace 记录时刻起算，而计时器早已开始；HOLD 记录一晚，测得的等待就偏短。现在改为：
+
+- **测量起点**：fixture 记录 Turn Taking 新建的每个 `TranscriptWait`，`waited()` 从它的 deadline 减去硬截止推出起点。第二项测试记录 `_hold` 实际等待的 deadline，断言等待持续到 deadline，并且 deadline 减去 SPAN 落在两个真实事件之间：完成判断是段关闭之后、首个 HOLD 记录之前；寻址是评估结束之后、hold span 开始之前。
+- **日志开销**：`held_late()` 把 HOLD 的 trace 推迟 20 ms，同时阻塞事件循环；两项测试各在推迟与不推迟两种情况下运行。
+- 期限内终稿采用、超期终稿隔离、明确 HOLD 三项回归保留，生产代码未改。
+
+### 4. RAG 能力描述
+
+`service.py` 改为 “Indexing changes this session's index”。
+
+### 5. 验证
+
+- 定向测试：
+  - Host 的 configs、cli、upgrade、cleanup、setup，加 Voice、Provider：306 passed（改读取方之后）。
+  - 新增回归：
+    - cleanup：异常计划两种、暂存目录两种、CLI `.env` home 两种；
+    - 凭据：分层表 1 项、读取方 2 项、空白值拒存 1 项；
+    - upgrade 3 项；setup 1 处；
+    - Router 两项测试各 2 种推迟。
+- 变异测试：22 个全部被抓到（`mutants/run5.py`）。
+  - cleanup 5 个、凭据 13 个、Router 生产代码 2 个；
+  - 另有 2 个把测试改回从 HOLD 起算，在推迟 20 ms 时失败。
+  - 第一轮 setup 的“已设置”判断（K9）没被抓到，给 setup 测试补上空白服务器密钥后抓到。
+- 仓库检查：`ruff check`、`ruff format --check`、`git diff --check`、`uv lock --check`、`check_workspace.py` 通过，改动文档的链接 0 处问题。
+- 离线全量测试：795 passed（304 s），无失败。
+
+### 6. 发现未改
+
+- `config check` 不检查会话传输凭据，LiveKit 凭据缺失要到 `start`，或者 Linux 包里的 `setup <bundle>` 才报。
+- cleanup 不读 bundle，YAML 里的 `application.home` 不影响它的保护目录；只有从别处的 YAML 文件启动时，这才可能与 `start` 不同。

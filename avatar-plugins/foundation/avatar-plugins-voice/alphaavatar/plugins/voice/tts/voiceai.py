@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 import logging
-import os
+
+from alphaavatar.agents.utils import credential
 
 from .codec.pcm import PCMHTTPProvider, PCMPayload, PCMSettings
 
@@ -46,10 +47,13 @@ class VoiceAITTS(PCMHTTPProvider):
 
         self._model, self._speaker, self._language = model, speaker, language
         base = base_url if base_url is not None else "https://dev.voice.ai"
+        key = api_key if api_key is not None else credential(api_key_env)
+        if key is None:
+            raise ValueError(f"{api_key_env} is required for Voice.ai TTS")
         super().__init__(
             provider="voiceai",
             url=f"{base.rstrip('/')}/api/v1/tts/speech/stream",
-            api_key=api_key if api_key is not None else os.getenv(api_key_env, ""),
+            api_key=key,
             sample_rate=32000,
             settings=settings or PCMSettings(),
         )

@@ -17,7 +17,6 @@ import asyncio
 import contextlib
 import io
 import json
-import os
 import re
 import time
 import wave
@@ -38,6 +37,7 @@ from alphaavatar.agents.avatar.voice import (
     TranscriptionEvent,
     TranscriptionEventType,
 )
+from alphaavatar.agents.utils import credential
 from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 
@@ -210,7 +210,7 @@ class OpenAISegmentSTT(STTBase):
         if not source_id:
             raise ValueError("OpenAI STT source_id cannot be empty")
 
-        api_key = self._api_key or os.getenv(self._api_key_env)
+        api_key = self._api_key or credential(self._api_key_env)
         if self._client is None and not api_key:
             raise RuntimeError(f"{self._api_key_env} is required for OpenAI STT")
 

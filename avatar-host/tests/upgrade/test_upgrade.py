@@ -207,6 +207,33 @@ def test_a_setup_just_before_the_lock_is_what_the_target_plans_and_checks(
     assert os.readlink(prefix / "current") == previous and listing(prefix) == before
 
 
+@pytest.mark.parametrize(
+    ("given", "read"),
+    [("", "kept"), (" \t", "kept"), ("mine", "mine")],
+    ids=["empty", "blank", "set"],
+)
+def test_the_target_reads_a_stored_credential_where_the_environment_holds_none(
+    builds, given: str, read: str
+) -> None:
+    """As start does: the environment's own value wins, and an empty or blank one gives way to
+    the credential stored with the default bundle, for the target's plan and its check."""
+    installation, first, second, run, log = builds
+    previous = os.readlink(installation.prefix / "current")
+    credentials = {"UPGRADE_SECRET": "kept"}
+    create_bundle(
+        application_paths(),
+        "avatar",
+        avatar_id="avatar",
+        make_default=True,
+        credentials=credentials,
+    )
+    run(package_file(second.package), UPGRADE_SECRET=given)
+    assert commands(log) == [
+        [f"plan:avatar:{read}", second.id, previous],
+        [f"check:avatar:{read}", second.id, previous],
+    ]
+
+
 class Interrupted(BaseException):
     pass
 

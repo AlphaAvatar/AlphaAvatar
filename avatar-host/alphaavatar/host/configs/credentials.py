@@ -15,7 +15,8 @@
 
 They live in a private file in the application home's settings, the one the settings name
 (``credentials``), read into the environment by the commands that load a configuration,
-after the .env file and never over a variable already set. Storing writes a new file beside
+after the .env file and never over a value already set: an empty or blank one counts as
+unset there, as it does anywhere a credential is read. Storing writes a new file beside
 it, which the settings replacement that makes the bundle the default then names: the
 default and the credentials it reads commit together, and a run killed before that leaves
 the settings, and so every bundle, reading what they read. Values are never printed, logged
@@ -29,7 +30,7 @@ import io
 import os
 import re
 import secrets
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -114,27 +115,38 @@ def stored_credentials(paths: ApplicationPaths) -> dict[str, str]:
     return dict(settings.credentials)
 
 
+def fill_credentials(environ: MutableMapping[str, str], values: Mapping[str, str | None]) -> None:
+    """Set each of ``values`` that holds a value where ``environ`` holds none. Unset, empty or
+    only whitespace is none: it gives way to the next source and never displaces one, and a
+    value is set as it is."""
+    from alphaavatar.agents.utils import credential
+
+    for name in values:
+        if credential(name, environ) is None and (value := credential(name, values)) is not None:
+            environ[name] = value
+
+
 def load_credentials(paths: ApplicationPaths) -> Settings:
-    """Set each stored credential the environment lacks, from one read of the settings, which
-    is returned: the default bundle is chosen from it too.
+    """Set each stored credential the environment holds no value for, from one read of the
+    settings, which is returned: the default bundle is chosen from it too.
 
     Settings that cannot be read name none: a named bundle still loads, as it does without
     them, and Doctor's home check says what to fix. Choosing the default, and setup, refuse
     them.
     """
     settings = read_stored(paths)
-    for name, value in settings.credentials.items():
-        if name not in os.environ:
-            os.environ[name] = value
+    fill_credentials(os.environ, settings.credentials)
     return settings
 
 
 def load_env_file() -> None:
-    """Set each variable of the .env file ``ENV_FILE`` names (default ``.env``) that the
-    environment lacks; a missing file sets none."""
-    from dotenv import load_dotenv
+    """Fill the environment from the .env file ``ENV_FILE`` names (default ``.env``), as
+    ``fill_credentials`` does: a value the environment holds stays, an empty or blank one
+    there takes the file's, and the file's own empty lines set nothing. A missing file fills
+    nothing."""
+    from dotenv import dotenv_values
 
-    load_dotenv(os.environ.get("ENV_FILE", ".env"))
+    fill_credentials(os.environ, dotenv_values(os.environ.get("ENV_FILE", ".env")))
 
 
 def load_environment(overrides: Sequence[str] = ()) -> Settings:
@@ -153,7 +165,7 @@ def write_credentials(paths: ApplicationPaths, values: Mapping[str, str]) -> Pat
     file in the settings replacement, or remove it.
     """
     for name, value in values.items():
-        if not NAME.fullmatch(name) or not isinstance(value, str) or not value:
+        if not NAME.fullmatch(name) or not isinstance(value, str) or not value.strip():
             raise ValueError(f"Invalid credential {name}")
         if any(character in value for character in "\r\n\x00"):
             raise ValueError(f"{name} holds a line break")

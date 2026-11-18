@@ -470,8 +470,10 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
 
     paths = application_paths()
     assert setup("first", a, "key-a", "", "", "", "y", "y") == 0
-    # Another server's key is not this one's: Enter keeps nothing, and the key is missing.
-    assert setup("second", b, "", "", "", "") == 1
+    # Another server's key is not this one's, nor is a blank set for it: Enter keeps nothing,
+    # and the key is missing.
+    with mock.patch.dict(os.environ, {server_key(b): " \t"}):
+        assert setup("second", b, "", "", "", "") == 1
     assert "Enter keeps" not in asked(b)
     assert f"Missing credentials: {server_key(b)}" in capsys.readouterr().err
     assert stored_credentials(paths)[server_key(a)] == "key-a"

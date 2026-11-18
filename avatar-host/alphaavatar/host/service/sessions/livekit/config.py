@@ -21,6 +21,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from alphaavatar.agents.utils import credential
+
 
 class LiveKitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -89,7 +91,7 @@ class LiveKitCredentials:
         checked offline, never contacting the server."""
         env = os.environ if env is None else env
         names = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
-        if missing := [name for name in names if not env.get(name, "").strip()]:
+        if missing := [name for name in names if credential(name, env) is None]:
             listed = (
                 ", ".join(missing[:-1]) + " and " + missing[-1] if len(missing) > 1 else missing[0]
             )

@@ -39,9 +39,13 @@ The environments go first, then the bases. What stays is listed with why:
 - the build and environment running this command;
 - what cleanup cannot tell the installer made: a symbolic link, a file, a directory without
   setup's mark, a `plan.json` that is missing, unreadable, names a base outside `versions/` or
-  another plan than the environment's name, a directory of `versions/` no manifest names. While
-  the base of a kept environment cannot be told, no base is removed;
-- a directory holding the application home or its cache, or inside one.
+  another plan than the environment's name, a directory of `versions/` no manifest names. A
+  `plan.json` that is not its environment's tells no base, whatever base it names. While the
+  base of a kept environment cannot be told, no base is removed;
+- a directory holding the application home or its cache, or inside one, a stage a stopped run
+  left included. The home is the one `start` would use: `ALPHAAVATAR_HOME` from the
+  environment, or from the `.env` file `ENV_FILE` names when the environment's is unset or
+  empty, or the default.
 
 The application home (bundles and profiles, settings, stored credentials, Avatar workspaces and
 the model cache) is outside `envs/` and `versions/` and never changes; neither do `current`,

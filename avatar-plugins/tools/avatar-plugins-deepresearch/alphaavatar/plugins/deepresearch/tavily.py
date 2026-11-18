@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -22,7 +21,7 @@ import httpx
 from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.agents.tools.schemas import ToolError
-from alphaavatar.agents.utils import url_to_filename_id
+from alphaavatar.agents.utils import credential, url_to_filename_id
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .namespace import NAMESPACE
@@ -38,7 +37,7 @@ class TavilyDeepResearchTool:
     def __init__(
         self, *, session_path: SessionPath, tavily_api_key: str | None = None, timeout: float = 30.0
     ) -> None:
-        key = tavily_api_key or os.getenv("TAVILY_API_KEY")
+        key = tavily_api_key or credential("TAVILY_API_KEY")
         if not key:
             raise ValueError("TAVILY_API_KEY is required")
         if not 0 < timeout < float("inf"):

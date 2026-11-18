@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -25,6 +24,7 @@ from typing import Any
 import httpx
 
 from alphaavatar.agents.avatar.provider.errors import ModelRequestError
+from alphaavatar.agents.utils import credential
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .config import OpenAIClientConfig
@@ -85,9 +85,13 @@ class ResponsesClient:
         from openai import AsyncOpenAI
 
         config = self._config
-        key = config.api_key.get_secret_value() if config.api_key else os.getenv(config.api_key_env)
+        key = (
+            config.api_key.get_secret_value() if config.api_key else credential(config.api_key_env)
+        )
         if not key:
-            raise ModelRequestError("OpenAI API key is missing", code="missing_api_key")
+            raise ModelRequestError(
+                f"OpenAI API key is missing: set {config.api_key_env}", code="missing_api_key"
+            )
         identity = [config.base_url, config.organization, config.project, key]
         self._scope = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         self._transport = httpx.AsyncClient(

@@ -67,11 +67,20 @@ profiles:
 
 ## Credentials
 
-`start`, `dev`, `config check` and [`doctor`](doctor.md) take each variable from the first of:
+`start`, `dev`, `config check`, [`doctor`](doctor.md), [`setup`](setup.md) and
+[`upgrade`](upgrade.md) take each variable from the first of these that holds a value, neither
+empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two so, for the home):
 
 1. the environment;
 2. the `.env` file `ENV_FILE` names (default `.env`);
 3. the credentials [`alphaavatar setup`](setup.md) stored, in the file the settings name.
+
+- An empty or blank value counts as unset: it gives way to the next source and never takes
+  another's place, and a value is taken as it is set, spaces and all. The same holds for a
+  bundle's own `api_key_env` variable and the keys of servers of your own.
+- A credential unset, empty or blank everywhere is missing: what reads it refuses to start and
+  names the variable, never its value. A switch or path, such as `ALPHAAVATAR_MODEL_OFFLINE` or
+  `ALPHAAVATAR_HOME`, is read for what it means once a source supplies it.
 
 - The default bundle comes from the same read of the settings as the stored credentials: a
   setup committing meanwhile changes neither.

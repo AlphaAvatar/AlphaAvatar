@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.agents.tools.schemas import ToolError
+from alphaavatar.agents.utils import credential
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .namespace import NAMESPACE
@@ -45,7 +46,7 @@ class RAGAnythingTool:
             raise ValueError("Unknown document parser")
         self.session_path = session_path
         self._parser = doc_parser
-        self._key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        self._key = openai_api_key or credential("OPENAI_API_KEY")
         self._base_url = openai_base_url or os.getenv("OPENAI_BASE_URL")
         self._load_task: asyncio.Task[Any] | None = None
         self._close_task: asyncio.Task[None] | None = None

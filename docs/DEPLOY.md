@@ -26,7 +26,8 @@ chmod 600 .env.demo
 
 The copy step preserves an existing `.env.demo`. Configure LiveKit, model, embedding
 and tool credentials required by the selected YAML. Keep secrets out of version control.
-The launch environment can override settings from the environment file.
+The launch environment can override settings from the environment file; an empty or blank
+value there counts as unset and does not ([credentials](cli/config.md#credentials)).
 
 ```env
 LIVEKIT_URL=wss://your-livekit-host

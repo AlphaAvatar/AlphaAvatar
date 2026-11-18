@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import platform
@@ -133,7 +134,17 @@ def test_a_survey_changes_nothing(upgraded) -> None:
     assert state(now.prefix) == before
 
 
-@pytest.mark.parametrize("why", ["runs this command", "named after another plan", "holds"])
+def spare(environment: Path) -> Path:
+    """Another environment over the same base, as setup names one: its plan's ID."""
+    document = json.loads((environment / PLAN_FILE).read_text()) | {"spare": True}
+    text = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    copy = environment.with_name(hashlib.sha256(text.encode()).hexdigest()[:16])
+    shutil.copytree(environment, copy, symlinks=True)
+    (copy / PLAN_FILE).write_text(json.dumps(document))
+    return copy
+
+
+@pytest.mark.parametrize("why", ["runs this command", "holds"])
 def test_a_base_a_kept_environment_is_over_stays(
     upgraded, monkeypatch: pytest.MonkeyPatch, why: str
 ) -> None:
@@ -141,9 +152,6 @@ def test_a_base_a_kept_environment_is_over_stays(
     prefix, keep = now.prefix, []
     if why == "runs this command":
         monkeypatch.setattr(sys, "prefix", str(old))  # Cleanup run by A's environment.
-    elif why == "named after another plan":
-        old = old.rename(old.with_name("0123456789abcdef"))
-        why = "its plan.json is not the plan it is named after"
     else:
         keep = [old / "home"]  # An application home placed inside A's environment.
         keep[0].mkdir()
@@ -155,6 +163,58 @@ def test_a_base_a_kept_environment_is_over_stays(
         f"kept environments are over it: {env} ({why})"
     )
     assert found.removable == () and old.is_dir() and (prefix / "versions" / first.id).is_dir()
+
+
+@pytest.mark.parametrize("how", ["its base rewritten", "renamed"])
+def test_a_plan_that_is_not_its_environments_tells_no_base(upgraded, how: str) -> None:
+    """A's plan.json names B's base, or A's environment another name: the record does not hold
+    up, so A stays and no base goes on its word, while another old environment still goes."""
+    now, first, second, old, new = upgraded
+    prefix, other = now.prefix, spare(old)
+    if how == "its base rewritten":
+        plan = json.loads((old / PLAN_FILE).read_text())
+        (old / PLAN_FILE).write_text(json.dumps(plan | {"base": second.id}))
+    else:
+        old = old.rename(old.with_name("0123456789abcdef"))
+    kept, env = contents(old), f"envs/{old.name}"
+    expected = {
+        env: "its plan.json is not the plan it is named after",
+        f"envs/{new.name}": "current",
+        f"versions/{first.id}": f"the base of {env} cannot be told: no base is removed",
+        f"versions/{second.id}": f"kept environments are over it: envs/{new.name} (current)",
+    }
+    previewed = cleanup.survey(now)
+    assert reasons(previewed, prefix) == expected
+    assert relative(previewed.removable, prefix) == [f"envs/{other.name}"]
+    found = cleanup.cleanup(now)
+    assert reasons(found, prefix) == expected and found.removable == previewed.removable
+    assert not other.exists() and contents(old) == kept
+    assert sorted(os.listdir(prefix / "versions")) == sorted([first.id, second.id])
+    runs(prefix)
+
+
+@pytest.mark.parametrize(
+    ("stage", "mark"), [("envs/.setup-left", OWNER), ("versions/.install-left", INSTALL_MARK)]
+)
+def test_a_stage_holding_what_is_never_removed_stays(upgraded, stage: str, mark: str) -> None:
+    """An application home inside a stage a stopped run left: the stage stays as an environment
+    holding it would, in the preview and under the lock; what is unused still goes."""
+    now, first, second, old, new = upgraded
+    prefix = now.prefix
+    home = prefix / stage / "app-home"
+    (home / "settings").mkdir(parents=True)
+    (home / "settings" / "credentials-0123456789abcdef.env").write_bytes(b'KEY="kept"\n')
+    (prefix / stage / mark).touch()
+    kept, why = contents(prefix / stage), f"holds {home.resolve()}"
+    unused = [f"envs/{old.name}", f"versions/{first.id}"]
+    previewed = cleanup.survey(now, keep=[home])
+    assert reasons(previewed, prefix)[stage] == why
+    assert relative(previewed.removable, prefix) == unused
+    found = cleanup.cleanup(now, keep=[home])
+    assert reasons(found, prefix)[stage] == why and relative(found.removable, prefix) == unused
+    assert contents(prefix / stage) == kept
+    assert not old.exists() and not (prefix / "versions" / first.id).exists()
+    runs(prefix)
 
 
 def test_what_cannot_be_told_the_installers_stays_and_keeps_every_base(upgraded) -> None:

@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .device_utils import gpu_available
-from .env_utils import resolve_env_placeholders
+from .env_utils import credential, resolve_env_placeholders
 from .hash_utils import sha256_text, short_hash
 from .id_utils import url_to_filename_id
 from .loop_thread import AsyncLoopThread
 
 __all__ = [
+    "credential",
     "gpu_available",
     "resolve_env_placeholders",
     "sha256_text",

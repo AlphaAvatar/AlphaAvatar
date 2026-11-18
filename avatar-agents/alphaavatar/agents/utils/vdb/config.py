@@ -13,11 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.utils.env_utils import check_server_key
+from alphaavatar.agents.utils.env_utils import check_server_key, credential
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime.plugin import AvatarModule
@@ -37,8 +36,8 @@ def snapshot_vdb_config(value: dict[str, Any]) -> dict[str, Any]:
     if not config.get("client_path"):
         # Explicit nulls preserve an absent default when a launch payload is restored later.
         if not config.get("host"):
-            config.setdefault("url", os.getenv("QDRANT_URL"))
-        config.setdefault("api_key", os.getenv("QDRANT_API_KEY"))
+            config.setdefault("url", credential("QDRANT_URL"))
+        config.setdefault("api_key", credential("QDRANT_API_KEY"))
     return config
 
 

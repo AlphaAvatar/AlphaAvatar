@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 import openai
 
+from alphaavatar.agents.utils import credential
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .codec.pcm import (
@@ -108,10 +109,13 @@ class OpenAITTS(PCMHTTPProvider):
         self._speed = float(speed)
         base = base_url if base_url is not None else os.getenv("OPENAI_BASE_URL")
         base = "https://api.openai.com/v1" if base is None else base
+        key = api_key if api_key is not None else credential(api_key_env)
+        if key is None:
+            raise ValueError(f"{api_key_env} is required for OpenAI TTS")
         super().__init__(
             provider="openai",
             url=f"{base.rstrip('/')}/audio/speech",
-            api_key=api_key if api_key is not None else os.getenv(api_key_env, ""),
+            api_key=key,
             sample_rate=24000,
             settings=settings or PCMSettings(),
         )

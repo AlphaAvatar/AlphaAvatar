@@ -19,7 +19,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -52,8 +52,10 @@ from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnNotice
 from alphaavatar.plugins.router.processors.speech import SpeechTranscriptionProcessor
-from alphaavatar.plugins.router.processors.turn_taking import processor as turn_taking
+from alphaavatar.plugins.router.processors.turn_taking import coordinator, processor as turn_taking
 from alphaavatar.plugins.router.processors.turn_taking.config import TurnTakingConfig
+from alphaavatar.plugins.router.processors.turn_taking.coordinator import TurnTakingCoordinator
+from alphaavatar.plugins.router.processors.turn_taking.schemas.state import TranscriptWait
 
 HANG_GUARD = 10
 WAIT, DEADLINE = 0.75, 3.0  # Turn taking's transcript wait and hard deadline, by default
@@ -182,6 +184,8 @@ class TurnTakingModel(TurnTakingModelBase):
 class Listening:
     runtime: AvatarRuntime
     stt: OfflineSTT
+    # Each transcript wait as Turn Taking began it, its timer with it: the deadline it set.
+    waits: list[TranscriptWait] = field(default_factory=list)
 
     def speech(self, generation: int = 1) -> PerceptionSourceRef:
         return PerceptionSourceRef("router:speech:microphone", generation)
@@ -247,6 +251,13 @@ async def listening(
         turn_taking, "create_turn_taking_model", lambda config, inference_executor: model
     )
     runtime, stt = avatar_runtime(tmp_path / "workspace"), OfflineSTT()
+    listening = Listening(runtime, stt)
+
+    def began(*args: object, **kwargs: object) -> TranscriptWait:
+        listening.waits.append(TranscriptWait(*args, **kwargs))
+        return listening.waits[-1]
+
+    monkeypatch.setattr(coordinator, "TranscriptWait", began)
     transcription = SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1)
     # A generous transcript budget unless a test exercises its expiry deliberately.
     settings = {"transcript_wait_sec": HANG_GUARD}
@@ -257,7 +268,7 @@ async def listening(
     )
     for component in (transcription, turns):
         await component.start()
-    yield Listening(runtime, stt)
+    yield listening
     for component in (turns, transcription):
         await component.stop()
     await runtime.aclose()
@@ -341,17 +352,36 @@ async def test_stt_final_joins_segment_input_decision_and_turn_cutoff_evidence(
 
 
 def waited(listening: Listening, record: dict) -> float:
-    """Seconds from the hold that began the input's transcript wait to the record."""
-    (hold,) = (r for r in listening.records("input.decision") if r["action"] == "hold")
-    return (record["recorded_time_ns"] - hold["recorded_time_ns"]) / 1e9
+    """Seconds from when the input's transcript wait began, its timer with it, to the record:
+    the hard deadline set then, less the budget it gave. The HOLD saying so is traced after."""
+    (wait,) = listening.waits
+    return record["recorded_time_ns"] / 1e9 - (wait.deadline - DEADLINE)
 
 
+def held_late(monkeypatch: pytest.MonkeyPatch, lag: float) -> None:
+    """Each HOLD traced ``lag`` seconds late, the loop held meanwhile, as a slow log would: the
+    waits it reports have begun already and run on their own clock."""
+    trace = TurnTakingCoordinator._trace
+
+    def late(self, stage: str, window=None, **fields: object) -> None:
+        if stage == "input.decision" and fields.get("action") == TurnTakingAction.HOLD.value:
+            time.sleep(lag)
+        trace(self, stage, window, **fields)
+
+    monkeypatch.setattr(TurnTakingCoordinator, "_trace", late)
+
+
+LAGS = pytest.mark.parametrize("lag", [0.0, 0.02], ids=["hold-traced-at-once", "hold-traced-late"])
+
+
+@LAGS
 @pytest.mark.parametrize("listening", [{"settings": {"transcript_wait_sec": WAIT}}], indirect=True)
 async def test_a_final_later_than_the_transcript_wait_still_commits_before_the_deadline(
-    listening: Listening,
+    listening: Listening, monkeypatch: pytest.MonkeyPatch, lag: float
 ) -> None:
     # KD-17: the wait is a point of observation, not a cutoff. Real segment STT finals came
     # 0.9-1.1 s after it began; the input must keep waiting and commit with them.
+    held_late(monkeypatch, lag)
     defaults = TurnTakingConfig()
     assert (defaults.transcript_wait_sec, defaults.transcript_timeout_sec) == (WAIT, DEADLINE)
     listening.utter(listening.speech(), "segment-a")
@@ -482,13 +512,27 @@ def terminal(listening: Listening) -> dict:
     indirect=["listening"],
     ids=["hold", "assessment-failed", "addressing"],
 )
+@LAGS
 async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_as_a_span(
-    listening: Listening, assessed_outcome: str, uncertain: str
+    listening: Listening,
+    assessed_outcome: str,
+    uncertain: str,
+    monkeypatch: pytest.MonkeyPatch,
+    lag: float,
 ) -> None:
     # O-16: the speech completion assessment, queued when the transcript came, then the wait
     # its uncertainty led to, each with its span, all before the decision that says so.
     # Completion's wait counts from the input's first wait, for its words; addressing's from
     # the hold it led to.
+    held_late(monkeypatch, lag)
+    deadlines: list[tuple[float | None, float | None]] = []  # Completion's, addressing's.
+    hold = TurnTakingCoordinator._hold
+
+    async def holding(self, window, evidence, assessment) -> None:
+        await hold(self, window, evidence, assessment)
+        deadlines.append((window.speech_completion_deadline, window.addressing_deadline))
+
+    monkeypatch.setattr(TurnTakingCoordinator, "_hold", holding)
     stage = "input.hold"
     listening.utter(listening.speech(), "segment-a")
     await wait_until(lambda: listening.stt.streams, "the source never opened")
@@ -507,13 +551,20 @@ async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_a
     assert accepted["recorded_time_ns"] <= assessed["event_time_ns"]
     assert assessed["start_time_ns"] - assessed["event_time_ns"] >= LAG * 1e9
     assert assessed["end_time_ns"] <= waited["start_time_ns"]
+    # The hold lasts until the deadline Turn Taking set as the wait began, SPAN before it:
+    # completion's once the closed input first waited for its words, before the HOLD saying
+    # so was traced; addressing's once its assessment ended, before the hold's span began.
+    ((completion, addressing),) = deadlines
+    deadline = addressing if uncertain == "router.addressing_uncertain" else completion
+    (closed,) = listening.records("speech.close")
     first = next(r for r in listening.records("input.decision") if r["action"] == "hold")
-    since = (
-        waited["start_time_ns"]
+    after, before = (
+        (assessed["end_time_ns"], waited["start_time_ns"])
         if uncertain == "router.addressing_uncertain"
-        else first["recorded_time_ns"]
+        else (closed["recorded_time_ns"], first["recorded_time_ns"])
     )
-    assert waited["end_time_ns"] - since >= SPAN * 1e9
+    assert after / 1e9 <= deadline - SPAN <= before / 1e9
+    assert waited["end_time_ns"] / 1e9 >= deadline
     assert waited["end_time_ns"] <= terminal(listening)["recorded_time_ns"]
     assert assessed["outcome"] == assessed_outcome
     assert (waited["outcome"], waited.get("reason")) == ("done", "awaiting_uncertain_decision")

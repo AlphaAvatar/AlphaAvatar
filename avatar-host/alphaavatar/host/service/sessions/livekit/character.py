@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import Callable
 from datetime import timedelta
 from urllib.parse import urlsplit
@@ -24,6 +23,7 @@ from uuid import uuid4
 from livekit import api, rtc
 
 from alphaavatar.agents.character import CharacterConnection, CharacterTransport
+from alphaavatar.agents.utils import credential
 from alphaavatar.core.env.schemas import DeviceId
 
 
@@ -40,10 +40,10 @@ class LiveKitCharacterTransport(CharacterTransport):
         api_secret: str | None = None,
     ) -> None:
         self._room, self._agent_device_id = room, agent_device_id
-        self._url = livekit_url if livekit_url is not None else os.getenv("LIVEKIT_URL", "")
-        self._api_key = api_key if api_key is not None else os.getenv("LIVEKIT_API_KEY", "")
+        self._url = livekit_url if livekit_url is not None else credential("LIVEKIT_URL") or ""
+        self._api_key = api_key if api_key is not None else credential("LIVEKIT_API_KEY") or ""
         self._api_secret = (
-            api_secret if api_secret is not None else os.getenv("LIVEKIT_API_SECRET", "")
+            api_secret if api_secret is not None else credential("LIVEKIT_API_SECRET") or ""
         )
         parsed = urlsplit(self._url)
         if (

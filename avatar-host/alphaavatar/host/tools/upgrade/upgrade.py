@@ -354,11 +354,12 @@ def upgrade(
 
     Under the lock, one read of the settings of ``paths`` gives the default bundle, whose
     environment the target plans when current is a setup environment, and the credentials
-    stored for it; the target's commands run with those and ``environ``, whose own values win
-    as they do for start. ``step`` hears each step begin (summary None) and end; ``progress``
+    stored for it; the target's commands run with ``environ`` filled from those as start fills
+    its own: a value ``environ`` holds wins, an empty or blank one gives way to the stored
+    credential. ``step`` hears each step begin (summary None) and end; ``progress``
     what goes on within one.
     """
-    from alphaavatar.host.configs.credentials import read_stored
+    from alphaavatar.host.configs.credentials import fill_credentials, read_stored
 
     prefix = installation.prefix
     with locked(prefix):
@@ -366,7 +367,8 @@ def upgrade(
         # Read once the lock is ours: a setup that ran meanwhile has enabled what it enables,
         # and the plan and the check take the same bundle and credentials.
         settings = read_stored(paths)
-        environ = {**settings.credentials, **environ}
+        environ = dict(environ)
+        fill_credentials(environ, settings.credentials)
         bundle = None
         if previous is not None and previous.parent.name == "envs":
             bundle = settings.checked().get("default_bundle")

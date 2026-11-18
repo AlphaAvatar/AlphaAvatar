@@ -20,11 +20,12 @@ from __future__ import annotations
 import fcntl
 import os
 import platform
+import subprocess
 from pathlib import Path
 from unittest import mock
 
 import pytest
-from upgrade_samples import build, installed
+from upgrade_samples import VERSION, build, installed
 
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import application_paths
@@ -66,6 +67,10 @@ def state(root: Path) -> dict[str, tuple[int, int]]:
         str(path.relative_to(root)): (path.lstat().st_mtime_ns, path.lstat().st_size)
         for path in (root, *root.rglob("*"))
     }
+
+
+def contents(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
 def line(shown: str, start: str) -> str:
@@ -113,6 +118,32 @@ def test_cleanup_removes_it_then_finds_nothing(upgraded, capsys: pytest.CaptureF
     shown = capsys.readouterr().out
     assert "OK    Nothing to remove\n" in shown and "02  Remove" not in shown
     assert state(home) == settings
+
+
+@pytest.mark.parametrize("environment", [{}, {"ALPHAAVATAR_HOME": ""}], ids=["unset", "empty"])
+def test_the_home_the_env_file_names_stays_with_what_holds_it(
+    upgraded, tmp_path: Path, capsys: pytest.CaptureFixture, environment: dict[str, str]
+) -> None:
+    """The .env file ENV_FILE names puts the application home inside A's environment, the
+    process's own ALPHAAVATAR_HOME unset or empty, as start would then read it: A's
+    environment and its base stay, in the preview and when removing, byte for byte."""
+    now, first, second, old, new, home = upgraded
+    inside = old / "app-home"
+    (inside / "settings").mkdir(parents=True)
+    (inside / "settings" / "settings.yaml").write_text("default_bundle: avatar\n")
+    (tmp_path / "chosen.env").write_text(f'ALPHAAVATAR_HOME="{inside}"\n')
+    kept, base = contents(old), contents(now.prefix / "versions" / first.id)
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env"), **environment}):
+        for argv in (["cleanup", "--dry-run"], ["cleanup"]):
+            assert main(argv) == 0
+            shown = " ".join(capsys.readouterr().out.split())
+            assert f"envs/{old.name} holds {inside.resolve()}" in shown
+            assert f"versions/{first.id} kept environments are over it: envs/{old.name}" in shown
+            assert "OK Nothing to remove" in shown
+    assert contents(old) == kept and contents(now.prefix / "versions" / first.id) == base
+    command = now.prefix / "current" / "bin" / "alphaavatar"
+    ran = subprocess.run([command, "--version"], cwd="/", capture_output=True, text=True)
+    assert ran.stdout == f"AlphaAvatar {VERSION}\n", ran.stderr
 
 
 def test_a_refusal_says_nothing_was_removed(upgraded, capsys: pytest.CaptureFixture) -> None:

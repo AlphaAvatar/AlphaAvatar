@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Stored credentials: private, exact, never over the environment, and committed with the
-default bundle by one settings replacement."""
+default bundle by one settings replacement. A credential empty or blank where it is set is no
+credential: the next source's value takes its place, and every reader names it missing."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import stat
@@ -27,6 +29,8 @@ from unittest import mock
 
 import pytest
 
+from alphaavatar.agents.utils import credential, resolve_env_placeholders
+from alphaavatar.agents.utils.env_utils import server_key
 from alphaavatar.host.configs.bundles import ConfigReferenceError, read_settings
 from alphaavatar.host.configs.credentials import (
     credentials_path,
@@ -35,6 +39,7 @@ from alphaavatar.host.configs.credentials import (
     stored_credentials,
 )
 from alphaavatar.host.configs.template import create_bundle
+from alphaavatar.host.service.sessions.livekit.config import LiveKitCredentials
 from alphaavatar.host.workspace import ApplicationPaths
 
 # Quotes, backslashes, dollar interpolation and spaces survive as written.
@@ -70,26 +75,107 @@ def test_credentials_are_private_exact_and_never_override_the_environment(tmp_pa
     assert stored_credentials(paths) == first | second
 
 
-def test_each_variable_comes_from_the_environment_then_the_env_file_then_those_stored(
-    tmp_path: Path,
-) -> None:
+SERVER = server_key("https://gpu.invalid:8000/v1")  # A server of one's own's key variable.
+# Each variable as the environment, the .env file and the stored credentials hold it (None:
+# not there), and what loading leaves: the first neither empty nor blank, as it is set.
+LAYERS = {
+    "OPENAI_API_KEY": ("environment", "file", "stored", "environment"),
+    "LIVEKIT_URL": ("", "file", "stored", "file"),
+    "LIVEKIT_API_KEY": (" \t", "", "stored", "stored"),
+    "MY_TTS_KEY": (None, " ", "stored", "stored"),  # A bundle's own api_key_env.
+    SERVER: ("", None, "stored", "stored"),
+    "TAVILY_API_KEY": (None, " spaced  ", "stored", " spaced  "),
+    "QDRANT_API_KEY": (None, None, "  ", None),  # Stored blank by hand: none.
+    "LIVEKIT_API_SECRET": ("", " ", None, None),  # None anywhere: missing.
+}
+
+
+def test_each_variable_takes_the_first_value_neither_empty_nor_blank(tmp_path: Path) -> None:
     # The file ENV_FILE names also chooses the home, whose stored credentials come last.
     paths = ApplicationPaths.from_root(tmp_path / "home")
-    kept = {"A": "stored", "B": "stored", "C": "stored"}
+    kept = {name: layer[2] for name, layer in LAYERS.items() if layer[2] and layer[2].strip()}
     create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=kept)
-    env_file = tmp_path / "chosen.env"
-    env_file.write_text(f'ALPHAAVATAR_HOME="{paths.root}"\nA="file"\nB="file"\n')
-    with mock.patch.dict(os.environ, {"ENV_FILE": str(env_file), "A": "environment"}):
-        for name in ("ALPHAAVATAR_HOME", "B", "C"):
-            os.environ.pop(name, None)
+    with credentials_path(paths).open("a") as stored:  # One no setup would store.
+        stored.write('QDRANT_API_KEY="  "\n')
+    lines = [f'{name}="{layer[1]}"' for name, layer in LAYERS.items() if layer[1] is not None]
+    (tmp_path / "chosen.env").write_text("\n".join([f"ALPHAAVATAR_HOME={paths.root}", *lines]))
+    environment = {name: layer[0] for name, layer in LAYERS.items() if layer[0] is not None}
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env")} | environment):
+        for name in (*LAYERS, "ALPHAAVATAR_HOME"):
+            if name not in environment:
+                os.environ.pop(name, None)
         settings = load_environment()
         assert settings.values["default_bundle"] == "alpha"
-        found = {name: os.environ[name] for name in "ABC"}
-        assert found == {"A": "environment", "B": "file", "C": "stored"}
+        assert {name: credential(name) for name in LAYERS} == {
+            name: layer[3] for name, layer in LAYERS.items()
+        }
+        # What none holds is not set from a blank line: only an empty one already there stays.
+        assert "QDRANT_API_KEY" not in os.environ and os.environ["LIVEKIT_API_SECRET"] == ""
+        with pytest.raises(ValueError, match=r"^LIVEKIT_API_SECRET is required$"):
+            LiveKitCredentials.from_env()
+
+
+def _readers(name: str):
+    """Each reader of a credential, with ``name`` for its variable where it takes one."""
+    from alphaavatar.agents.avatar.provider.factory import create_embedding_model, create_llm_model
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+    from alphaavatar.plugins.deepresearch.tavily import TavilyDeepResearchTool
+    from alphaavatar.plugins.provider.openai.llms.client import ResponsesClient
+    from alphaavatar.plugins.provider.openai.llms.config import OpenAIClientConfig
+    from alphaavatar.plugins.voice.stt.openai_realtime import OpenAIRealtimeSTT
+    from alphaavatar.plugins.voice.stt.openai_segment import OpenAISegmentSTT
+    from alphaavatar.plugins.voice.tts.openai import OpenAITTS
+    from alphaavatar.plugins.voice.tts.voiceai import VoiceAITTS
+
+    async def first_use(client) -> None:  # Each client takes its key when first used.
+        try:
+            await (client.get() if isinstance(client, ResponsesClient) else client._model())
+        finally:
+            await client.aclose()
+
+    task = {"model": "tasks", "extra": {"api_key_env": name}}
+    own = {"api_key_env": SERVER, "base_url": "https://gpu.invalid:8000/v1"}
+    return {
+        name: [
+            lambda: asyncio.run(first_use(create_llm_model(ProviderTaskConfig(**task)))),
+            lambda: asyncio.run(
+                first_use(ResponsesClient(OpenAIClientConfig(api_key_env=name), timeout=1))
+            ),
+            lambda: OpenAITTS(model="speak", speaker="voice", api_key_env=name),
+            lambda: VoiceAITTS(model="speak", api_key_env=name),
+            lambda: OpenAISegmentSTT(model="transcribe", api_key_env=name).stream(source_id="s"),
+            lambda: OpenAIRealtimeSTT(api_key_env=name).stream(source_id="s"),
+            lambda: resolve_env_placeholders({"Authorization": f"Bearer <{name}>"}),
+        ],
+        SERVER: [
+            lambda: create_embedding_model(
+                ProviderTaskConfig.model_validate({"kind": "embedding", "model": "e", "extra": own})
+            )
+        ],
+        "TAVILY_API_KEY": [lambda: TavilyDeepResearchTool(session_path=None)],
+    }
+
+
+@pytest.mark.parametrize("blank", ["", "  \t"], ids=["empty", "blank"])
+def test_a_credential_empty_or_blank_is_missing_to_every_reader_by_its_name(blank: str) -> None:
+    # A bundle's own api_key_env, a server of one's own's and a plugin's fixed one: each
+    # reader refuses to start without it and names the variable, never sending a blank key.
+    readers = _readers("MY_KEY")
+    with mock.patch.dict(os.environ, dict.fromkeys(readers, blank)):
+        for name, made in readers.items():
+            for make in made:
+                with pytest.raises(Exception, match=name):
+                    make()
 
 
 @pytest.mark.parametrize(
-    "values", [{"lower_case": "x"}, {"OPENAI_API_KEY": ""}, {"OPENAI_API_KEY": "a\nB=c"}]
+    "values",
+    [
+        {"lower_case": "x"},
+        {"OPENAI_API_KEY": ""},
+        {"OPENAI_API_KEY": " \t"},
+        {"OPENAI_API_KEY": "a\nB=c"},
+    ],
 )
 def test_unsafe_credentials_are_refused_before_anything_changes(
     tmp_path: Path, values: dict[str, str]
@@ -108,6 +194,7 @@ def test_unsafe_credentials_are_refused_before_anything_changes(
 KILLED = """
 import os, signal, sys
 from alphaavatar.host.configs.template import create_bundle
+from alphaavatar.host.service.sessions.livekit.config import LiveKitCredentials
 from alphaavatar.host.workspace import ApplicationPaths
 
 replace = os.replace
@@ -254,6 +341,7 @@ import sys
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import application_paths, credentials
 from alphaavatar.host.configs.template import create_bundle
+from alphaavatar.host.service.sessions.livekit.config import LiveKitCredentials
 
 load = credentials.load_environment
 

@@ -14,11 +14,19 @@
 import hashlib
 import os
 import re
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
 ENV_PATTERN = re.compile(r"<([A-Z0-9_]+)>")
 SERVER_KEY = "ALPHAAVATAR_SERVER_KEY_"
+
+
+def credential(name: str, environ: Mapping[str, str | None] = os.environ) -> str | None:
+    """The value ``name`` holds, as it is set; None when it is unset, empty or only whitespace,
+    which is no credential."""
+    value = environ.get(name)
+    return value if value is not None and value.strip() else None
 
 
 def resolve_env_placeholders(value: Any) -> Any:
@@ -30,7 +38,7 @@ def resolve_env_placeholders(value: Any) -> Any:
 
         def replacer(match: re.Match) -> str:
             var_name = match.group(1)
-            env_value = os.getenv(var_name)
+            env_value = credential(var_name)
             if env_value is None:
                 raise ValueError(
                     f"Environment variable '{var_name}' is not set but is required in config"

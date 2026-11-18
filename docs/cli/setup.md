@@ -91,7 +91,9 @@ there too, and nothing is enabled.
   the variable against the `base_url` in effect, overrides applied: a bundle whose `base_url`
   was moved to another server, or removed, fails [`config check`](config.md#config-check) and
   `start`. A variable you name yourself may point anywhere.
-- A value already set, in the environment, `.env` or the stored credentials, is kept with Enter.
+- A value already set, in the environment, `.env` or the stored credentials, is kept with Enter;
+  an empty or blank one is not set, and is asked for. See
+  [config's credentials](config.md#credentials) for which source wins.
 - Typed values are stored only on a yes, in `<home>/settings/credentials-<id>.env`, readable only
   by you; a stored value, which other bundles may read, is replaced only on a second yes. Values
   are never printed or written elsewhere.

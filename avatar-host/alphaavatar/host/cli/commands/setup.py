@@ -184,13 +184,14 @@ def _credentials(selection, paths, out: Report, rtc) -> tuple[dict[str, str], di
     values that take effect, typed or set already, are checked before either."""
     import getpass
 
+    from alphaavatar.agents.utils import credential as configured
     from alphaavatar.host.configs.credentials import stored_credentials
     from alphaavatar.host.tools.setup.choices import credentials
     from alphaavatar.host.tools.setup.environment import SetupError
 
     values, missing = {}, []
     for credential in credentials(selection):
-        present = os.environ.get(credential.name)
+        present = configured(credential.name)
         keep = " (set; Enter keeps it)" if present else ""
         question = f"{credential.name}, for {credential.purpose}{keep}: "
         answer = getpass.getpass(out.prompt(question)) if credential.secret else out.ask(question)

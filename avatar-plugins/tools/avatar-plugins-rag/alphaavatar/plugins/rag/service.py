@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 DESCRIPTION = """Retrieve and index user-provided or locally stored documents.
 Use op=query with query to retrieve grounded results from an existing knowledge base.
 Use op=indexing with file_paths_or_dir only when the user has authorized storing those documents.
-Indexing changes the persistent index; a lookup request alone does not authorize indexing.
+Indexing changes this session's index; a lookup request alone does not authorize indexing.
 The current backend supports data_source=all only; named corpora are not yet implemented.
 Use public-web search for public information not contained in the user's documents.
 """.strip()

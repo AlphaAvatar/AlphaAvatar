@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+from alphaavatar.agents.utils import credential
 
 from ..resources import ModelResources
 
@@ -51,7 +52,7 @@ def _build_common_kwargs(config: ProviderTaskConfig) -> dict[str, Any]:
 
 def _api_key(kwargs: dict[str, Any], default_env: str, *, required: bool = True) -> str | None:
     env_name = kwargs.pop("api_key_env", default_env)
-    key = kwargs.pop("api_key", None) or os.getenv(env_name)
+    key = kwargs.pop("api_key", None) or credential(env_name)
     if required and not key:
         raise RuntimeError(f"Environment variable {env_name!r} is required")
     return key

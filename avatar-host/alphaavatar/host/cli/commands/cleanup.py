@@ -75,6 +75,7 @@ def cleanup(args: argparse.Namespace) -> int:
 
 def _cleanup(args: argparse.Namespace) -> int:
     from alphaavatar.host.configs import application_paths, format_failure
+    from alphaavatar.host.configs.credentials import load_env_file
     from alphaavatar.host.tools.cleanup.cleanup import Entry, Survey, cleanup, survey
     from alphaavatar.host.tools.setup.environment import SetupError, megabytes
 
@@ -104,6 +105,7 @@ def _cleanup(args: argparse.Namespace) -> int:
 
     try:
         installation = _installation()
+        load_env_file()  # The home start would use: ALPHAAVATAR_HOME may come from the .env.
         paths = application_paths()
         keep = (paths.root, paths.cache.root)  # Never removed, nor anything around them.
         out.begin(1, "Survey")
