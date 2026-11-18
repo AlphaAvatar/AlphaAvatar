@@ -116,36 +116,89 @@ def test_each_variable_takes_the_first_value_neither_empty_nor_blank(tmp_path: P
 
 
 # The .env file's lines, the environment's value of each name (None: unset) and the one loading
-# leaves. Any other variable keeps what the environment sets, empty too, and ${NAME} reads it
-# there first; only a credential or an AlphaAvatar variable empty or blank takes the file's.
+# leaves. The file loads as python-dotenv loads it: what the environment sets stays, empty too,
+# and ${NAME} reads it there first; then a credential empty or blank takes the file's value.
 ORDINARY = {
     "CUDA_VISIBLE_DEVICES": ("0", "", ""),  # Empty: no GPU, whatever the file says.
     "HTTPS_PROXY": ("http://proxy.invalid:3128", "", ""),
+    "ALPHAAVATAR_MODEL_OFFLINE": ("1", "", ""),  # Empty: downloads on.
     "API_HOST": ("dev.example", "prod.example", "prod.example"),
     "OPENAI_BASE_URL": ("https://${API_HOST}/v1", None, "https://prod.example/v1"),
     "NO_PROXY": ("", None, ""),  # Its empty line sets it empty.
     "OPENAI_API_KEY": ("from-file", " \t", "from-file"),
-    "MODEL_HEADER": ("Bearer ${OPENAI_API_KEY}", None, "Bearer from-file"),
-    "ALPHAAVATAR_HOME": ("/srv/from-file", "", "/srv/from-file"),
-    "LIVEKIT_API_SECRET": ("", None, None),  # A credential's empty line sets none.
+    "MODEL_HEADER": ("Bearer ${OPENAI_API_KEY}", None, "Bearer  \t"),  # The environment's.
+    "ALPHAAVATAR_HOME": ("/srv/from-file", "", "/srv/from-file"),  # Empty: unset, as it was.
+    "LIVEKIT_API_SECRET": ("", None, ""),  # Empty, a credential none holds.
 }
 
 
-def test_any_other_variable_keeps_what_the_environment_sets_even_empty(tmp_path: Path) -> None:
+def test_the_file_loads_as_python_dotenv_loads_it_and_only_credentials_take_its_values(
+    tmp_path: Path,
+) -> None:
     from alphaavatar.agents.utils import gpu_available
-    from alphaavatar.host.configs.credentials import load_env_file
+    from alphaavatar.agents.utils.files.model.model_files import models_offline
 
     lines = [f'{name}="{line}"' for name, (line, _, _) in ORDINARY.items()]
     (tmp_path / "chosen.env").write_text("\n".join(lines))
     environment = {name: set_ for name, (_, set_, _) in ORDINARY.items() if set_ is not None}
     with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env")} | environment):
-        for name in ORDINARY.keys() - environment.keys():
-            os.environ.pop(name, None)
-        load_env_file()
+        for name in [*(ORDINARY.keys() - environment.keys()), "HF_HUB_OFFLINE"]:
+            os.environ.pop(name, None)  # The sandbox's offline switch, the other one read.
+        load_environment()
         assert {name: os.environ.get(name) for name in ORDINARY} == {
             name: left for name, (_, _, left) in ORDINARY.items()
         }
-        assert gpu_available() is False
+        assert gpu_available() is False and models_offline() is False
+
+
+# A variable a bundle names for its key, MODEL_AUTH, as the environment, the .env file and the
+# stored credentials hold it, and what loading the bundle leaves: no name says it is one.
+NAMED = [
+    ("", "from-file", None, "from-file"),
+    (" \t", "from-file", "stored-old", "from-file"),  # Neither passes over the file's.
+    ("", " ", "stored", "stored"),
+    ("set", "from-file", "stored-old", "set"),
+    ("", None, None, None),
+]
+
+
+@pytest.mark.parametrize(
+    ("environment", "file", "stored", "left"),
+    NAMED,
+    ids=["file", "file-before-stored", "stored", "environment", "missing"],
+)
+def test_a_variable_a_bundle_names_takes_the_first_value_neither_empty_nor_blank(
+    tmp_path: Path, environment: str, file: str | None, stored: str | None, left: str | None
+) -> None:
+    from alphaavatar.host.configs import load_application, select_configuration
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    kept = {"MODEL_AUTH": stored} if stored else None
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=kept)
+    lines = [f"ALPHAAVATAR_HOME={paths.root}", "MCP_PAT=pat-from-file"]
+    lines += [] if file is None else [f'MODEL_AUTH="{file}"']
+    (tmp_path / "chosen.env").write_text("\n".join(lines))
+    overrides = [  # Its speech's key, and an MCP server's: names of its own choosing.
+        "voice.tts.api_key_env=MODEL_AUTH",
+        "tools.mcp.plugin=default",
+        "tools.mcp.enabled=true",
+        "tools.mcp.servers.docs.url=https://mcp.invalid/",
+        "tools.mcp.servers.docs.headers.Authorization=Bearer <MCP_PAT>",
+    ]
+    variables = {"ENV_FILE": str(tmp_path / "chosen.env"), "MODEL_AUTH": environment}
+    with mock.patch.dict(os.environ, variables | {"MCP_PAT": ""}):
+        os.environ.pop("ALPHAAVATAR_HOME", None)
+        settings = load_environment()
+        config = load_application(
+            select_configuration(None, overrides, settings), overrides, settings
+        )
+        assert credential("MODEL_AUTH") == left
+        (server,) = config.avatar.tools.mcp.servers.values()
+        assert server["headers"] == {"Authorization": "Bearer pat-from-file"}
+        # Without the read loading made, a configuration fills nothing.
+        os.environ["MODEL_AUTH"] = ""
+        load_application(select_configuration(None, overrides, settings), overrides)
+        assert os.environ["MODEL_AUTH"] == ""
 
 
 def _readers(name: str):
@@ -196,6 +249,57 @@ def test_a_credential_empty_or_blank_is_missing_to_every_reader_by_its_name(blan
     readers = _readers("MY_KEY")
     with mock.patch.dict(os.environ, dict.fromkeys(readers, blank)):
         for name, made in readers.items():
+            for make in made:
+                with pytest.raises(Exception, match=name):
+                    make()
+
+
+def test_what_each_reader_reads_when_none_is_named_is_a_default_credential(tmp_path: Path) -> None:
+    # Filled as the variables a configuration names are: each reader's own, none of a name.
+    from types import SimpleNamespace
+
+    from alphaavatar.agents.avatar.provider.factory import create_embedding_model, create_llm_model
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+    from alphaavatar.host.configs.credentials import DEFAULT_CREDENTIALS
+    from alphaavatar.plugins.deepresearch.tavily import TavilyDeepResearchTool
+    from alphaavatar.plugins.provider.openai.llms.client import ResponsesClient
+    from alphaavatar.plugins.provider.openai.llms.config import OpenAIClientConfig
+    from alphaavatar.plugins.rag.rag_anything import RAGAnythingTool
+    from alphaavatar.plugins.voice.stt.openai_realtime import OpenAIRealtimeSTT
+    from alphaavatar.plugins.voice.stt.openai_segment import OpenAISegmentSTT
+    from alphaavatar.plugins.voice.tts.openai import OpenAITTS
+    from alphaavatar.plugins.voice.tts.voiceai import VoiceAITTS
+
+    async def first_use(client) -> None:
+        try:
+            await (client.get() if isinstance(client, ResponsesClient) else client._model())
+        finally:
+            await client.aclose()
+
+    def task(provider: str, kind: str = "llm") -> ProviderTaskConfig:
+        return ProviderTaskConfig(kind=kind, provider=provider, model="m")
+
+    readers = {
+        "OPENAI_API_KEY": [
+            lambda: asyncio.run(first_use(create_llm_model(task("openai")))),
+            lambda: create_embedding_model(task("openai", "embedding")),
+            lambda: asyncio.run(first_use(ResponsesClient(OpenAIClientConfig(), timeout=1))),
+            lambda: OpenAITTS(model="speak", speaker="voice"),
+            lambda: OpenAISegmentSTT(model="transcribe").stream(source_id="s"),
+            lambda: OpenAIRealtimeSTT().stream(source_id="s"),
+            lambda: asyncio.run(RAGAnythingTool(session_path=SimpleNamespace())._load()),
+        ],
+        "OPENROUTER_API_KEY": [
+            lambda: asyncio.run(first_use(create_llm_model(task("openrouter"))))
+        ],
+        "ANTHROPIC_API_KEY": [lambda: asyncio.run(first_use(create_llm_model(task("anthropic"))))],
+        "VOICEAI_API_KEY": [lambda: VoiceAITTS(model="speak")],
+        "TAVILY_API_KEY": [lambda: TavilyDeepResearchTool(session_path=None)],
+        "LIVEKIT_URL": [LiveKitCredentials.from_env],
+    }
+    with mock.patch.dict(os.environ, dict.fromkeys(DEFAULT_CREDENTIALS, "")):
+        for name, made in readers.items():
+            assert name in DEFAULT_CREDENTIALS
             for make in made:
                 with pytest.raises(Exception, match=name):
                     make()

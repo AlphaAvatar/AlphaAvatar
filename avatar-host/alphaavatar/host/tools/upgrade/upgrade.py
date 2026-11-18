@@ -347,6 +347,7 @@ def upgrade(
     *,
     paths: ApplicationPaths,
     environ: Mapping[str, str],
+    file: Mapping[str, str] | None = None,
     step: Callable[[int, str, str | None], None] = lambda number, name, summary: None,
     progress: Callable[[str], None] = lambda line: None,
 ) -> Upgraded:
@@ -354,12 +355,17 @@ def upgrade(
 
     Under the lock, one read of the settings of ``paths`` gives the default bundle, whose
     environment the target plans when current is a setup environment, and the credentials
-    stored for it; the target's commands run with ``environ`` filled from those as start fills
-    its own: a value ``environ`` holds wins, an empty or blank one gives way to the stored
-    credential. ``step`` hears each step begin (summary None) and end; ``progress``
-    what goes on within one.
+    stored for it; the target's commands run with ``environ`` filled as start fills it, the
+    default credentials and the stored ones: a value ``environ`` holds wins, an empty or blank
+    one gives way to the .env file's (``file``, as ``load_env_file`` loaded it), then to the
+    stored one. Those its bundle names the target fills as it loads it. ``step`` hears each step
+    begin (summary None) and end; ``progress`` what goes on within one.
     """
-    from alphaavatar.host.configs.credentials import fill_credentials, read_stored
+    from alphaavatar.host.configs.credentials import (
+        DEFAULT_CREDENTIALS,
+        fill_credentials,
+        read_stored,
+    )
 
     prefix = installation.prefix
     with locked(prefix):
@@ -367,8 +373,8 @@ def upgrade(
         # Read once the lock is ours: a setup that ran meanwhile has enabled what it enables,
         # and the plan and the check take the same bundle and credentials.
         settings = read_stored(paths)
-        environ = dict(environ)
-        fill_credentials(environ, settings.credentials)
+        environ, stored = dict(environ), settings.credentials
+        fill_credentials(environ, (*DEFAULT_CREDENTIALS, *stored), file or {}, stored)
         bundle = None
         if previous is not None and previous.parent.name == "envs":
             bundle = settings.checked().get("default_bundle")

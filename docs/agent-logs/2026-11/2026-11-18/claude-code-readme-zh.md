@@ -10,7 +10,8 @@
 | 模板 | `.env.template` 按代码实际读取的变量重写 | 2026-11-18 | `9d71447e` | `c044922a`（用户提交） | 已提交 |
 | README 与 `.env` 加载 | 21 个 README 逐句对照源码；`.env` 加载移到 Host；删 RAG `monologue` 和 Core `livekit` extra | 2026-11-18 | `c044922a` | `174d1632`（用户提交） | 已提交 |
 | 收尾 | cleanup 三处保护缺口；凭据空值统一规则；Router 两项计时测试的测量起点；RAG 能力描述 | 2026-11-18 | `174d1632` | `cde30675`（用户提交） | 已提交 |
-| 收尾二 | `.env` 凭据与普通变量分开、插值恢复进程值优先；RAG 缺失密钥检查；Router 偶发定位与测试同步 | 2026-11-18 | `cde30675` | 未提交（用户提交） | 待审查 |
+| 收尾二 | `.env` 凭据与普通变量分开、插值恢复进程值优先；RAG 缺失密钥检查；Router 偶发定位与测试同步 | 2026-11-18 | `cde30675` | `0e0c7b3a`（用户提交） | 已提交 |
+| 收尾三 | 凭据按实际声明补齐，删除按名称猜测；日志脱敏覆盖配置声明的密钥和自建服务器密钥 | 2026-11-18 | `0e0c7b3a` | 未提交（用户提交） | 待审查 |
 
 ## 1. `.env.template`
 
@@ -210,3 +211,63 @@
 
 - **日志脱敏漏掉自建服务器的密钥**：Core 日志脱敏按变量名挑出要按值遮盖的环境变量（`_SECRET_KEY`：token、secret、password、api_key 等），其中不含 `ALPHAAVATAR_SERVER_KEY_*`。离线核对：同一行里 `OPENAI_API_KEY` 的值被遮，自建服务器密钥的值原样输出；后者只有在 `Authorization` 头这类模式里才被遮。
 - **两个自有变量不把空值当作未设**：`ALPHAAVATAR_MAX_SESSION_SECONDS` 和 `ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS` 的读取方直接 `int()`。各层都没有有效值、只剩空值时会报解析错误，而不是按未设处理。这是原有行为，本轮加载规则没有改变它。
+
+## 收尾三（基线 `0e0c7b3a`）
+
+上一轮 RAG 在共享惰性加载入口检查凭据、Router 的延迟注入与等待路径同步都已接受。本轮两项。
+
+### 1. 凭据按实际声明补齐
+
+- **问题**（审查复现）：上一轮按名称里的词和 `ALPHAAVATAR_*` 前缀判断凭据。
+  - 漏判：`api_key_env: MODEL_AUTH` 在进程里为空时，挡住了 `.env` 的值；Setup 存有旧值时，又越过 `.env` 取了旧值。
+  - 误判：进程里 `ALPHAAVATAR_MODEL_OFFLINE=""`，被 `.env` 的 `1` 覆盖，离线开关从 False 变成 True。
+- **现在的流程**：
+  1. `load_env_file()` 按 python-dotenv 原样加载，进程已设置的值（含空值）保留，`${NAME}` 先读进程。它返回文件里的值，留给后面补齐凭据。
+     - `ALPHAAVATAR_HOME` 保留已确认的规则：进程里为空或空白时取文件值，用来选 home。
+  2. `load_credentials()` 读已存凭据后，补齐两类名字，顺序都是有效进程值 → `.env` → 已存值：
+     - 组件在配置不指定时读的默认变量名，即 `DEFAULT_CREDENTIALS`；
+     - Setup 存过的名字。
+  3. 配置组装后、校验前，`load_application()`/`load_selections()` 拿到 `load_environment()` 返回的读取结果（`settings`），按配置里实际声明的名字补齐，顺序相同：
+     - 每个 `api_key_env`，名字不限；
+     - MCP servers 里的 `<NAME>` 占位符。
+     - 补齐发生在占位符解析之前。
+- **默认变量名**：`DEFAULT_CREDENTIALS` 列出组件在配置未指定时读取的确切名字，不按关键词匹配。新增测试逐个构造读取方，不传变量名，用空环境验证它报出的变量名都在这份清单里。
+- **调用点**：start/dev、`config check`、Doctor、setup（已有 bundle 的规划，以及新 bundle 的凭据询问前）都传入 `settings`；`upgrade` 锁内对目标环境按“默认 + 已存”名字、`.env` → 已存值的顺序补齐，目标构建加载自己的 bundle 时再按声明补齐。
+- **插值**：`.env` 里的 `${NAME}` 回到 python-dotenv 的规则：先读进程值，进程里的空值也读进来。所以引用一个进程里为空的凭据会读到空值；上一轮这种引用读的是文件值。被引用的凭据本身照常补齐。
+- **文档**：`.env.template` 开头说明、`docs/cli/config.md`「Credentials」、`DEPLOY.md`、`upgrade.md`，删去上一轮写进去的命名限制。
+
+### 2. 日志脱敏
+
+- **Core**：新增 `hide_variables(names)`。上层传入变量名，Core 只负责隐藏这些变量的值，不依赖 Agents 或 Host。
+  - 名单写在 `ALPHAAVATAR_LOG_HIDDEN`（只存变量名），每个 `Redactor` 刷新时读取，所以由这个进程启动的子进程也会隐藏这些值。
+- **Host**：传入两类名字：
+  - 配置声明的凭据名，即 `api_key_env` 和 MCP 的 `<NAME>`；
+  - 环境里所有 `ALPHAAVATAR_SERVER_KEY_*`。
+  - 名字本身已经表明是凭据的（`*_API_KEY` 等）照旧由 Core 按名称识别。start 在加载配置后刷新 Host 日志的脱敏名单。
+- **`config check` 的变化**：会写入 `ALPHAAVATAR_LOG_HIDDEN`，只含变量名。原有“不写任何变量”的测试改为排除这一项，并断言它只含 `MCP_DOCS_TOKEN` 这个名字、不含值。
+- **两点核对**：
+  - 日志客户端把异常对象作为参数时只输出 `<RuntimeError>`；`format_error` 只输出异常类型和位置。所以异常消息只有在代码自己把 `str(error)` 拼进日志正文时才会带出密钥值，测试按这种写法覆盖。
+  - URL 不进名单，日志里仍保留服务器地址。
+
+### 3. 验证
+
+- **新回归**：
+  - `MODEL_AUTH` 分层 5 种：文件值；文件先于旧的已存值；文件为空白时取已存值；进程有效值；全部缺失。同一用例验证 MCP 的 `<MCP_PAT>` 从 `.env` 补上后占位符正常解析，并验证不传 `settings` 时不补齐。
+  - 普通变量表：`CUDA_VISIBLE_DEVICES`、`HTTPS_PROXY`、`ALPHAAVATAR_MODEL_OFFLINE` 的空值保留，`gpu_available()` 和 `models_offline()` 都是 False；同名插值读进程值。
+  - 默认变量名清单对照各读取方的实际默认值。
+  - upgrade：模块测试新增“文件先于已存值”和“默认凭据”两种；CLI 测试新增 `.env` 先于已存值。setup：`.env` 里有、环境里为空白的服务器密钥，按回车保留。
+  - 脱敏：Core 测试覆盖普通文本、异常文本、结构化字段，以及子进程继承；Host 测试从加载配置一直走到 Host 日志的真实输出，确认四个虚构密钥值都没有出现，服务器地址、失败信息、异常类型和其他字段保留。
+- **变异测试**：18 个全部被抓到（`mutants/run7.py`）。第一轮 upgrade CLI 不传 `.env` 值的那个变异没被抓到，补了 CLI 测试后抓到。
+  - 没有测试覆盖：start 在加载配置后刷新 Host 日志脱敏名单的那一行（`run.py`）。子进程会自己读名单，不受影响。
+- **仓库检查**：`ruff check`、`ruff format --check`、`git diff --check`、`uv lock --check`、`check_workspace.py` 通过，改动文档的链接 0 处问题。
+- **离线全量**：814 passed（306 s），无失败；之后只改了 `.env.template` 的注释措辞。
+- **未验证**：
+  - 该 SHA 的 CI 没有查看；
+  - 真实安装包没有复验；
+  - 没有调用计费服务；
+  - LiveKit 通话由用户验收。
+
+### 4. 记录，未改
+
+- `ALPHAAVATAR_MAX_SESSION_SECONDS`、`ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS` 遇空值报解析错误，按要求本批不处理。
+- 配置里用 `${oc.env:NAME}` 引用的变量按普通变量读取：组装时直接取环境值，进程里为空时不会被 `.env` 补上。setup 写的 `${oc.env:QDRANT_URL}` 不受影响，因为 `QDRANT_*` 在默认清单里。

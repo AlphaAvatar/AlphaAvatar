@@ -36,6 +36,8 @@ from .paths import platform_application_root, resolve_application_paths
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
 
+    from .bundles import Settings
+
 
 def _mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
@@ -204,28 +206,45 @@ def _composed(
     return data, paths
 
 
+def _credentials(data: Mapping[str, Any], settings: Settings | None) -> None:
+    if settings is not None:
+        from .credentials import fill_configured
+
+        fill_configured(data, settings)
+
+
 def load_selections(
-    source: str | Path | ConfigSource, overrides: Sequence[str] = ()
+    source: str | Path | ConfigSource,
+    overrides: Sequence[str] = (),
+    settings: Settings | None = None,
 ) -> tuple[HostConfig, AvatarConfig]:
     """A configuration's Host and Avatar settings, validated without resolving its plugins:
-    what setup plans a bundle's packages from before any of them is installed."""
+    what setup plans a bundle's packages from before any of them is installed. With the
+    ``settings`` loading read, the credentials it names are filled as ``load_application``
+    fills them."""
     from alphaavatar.agents.configs import AvatarConfig
 
     data, _ = _composed(source, overrides)
+    _credentials(data, settings)
     data.pop("application", None)
     host = HostConfig.model_validate(data.pop("host", {}))
     return host, AvatarConfig.model_validate(data)
 
 
 def load_application(
-    source: str | Path | ConfigSource, overrides: Sequence[str] = ()
+    source: str | Path | ConfigSource,
+    overrides: Sequence[str] = (),
+    settings: Settings | None = None,
 ) -> ApplicationConfig:
     """Load a file, composing the profiles it references; overrides apply to the result.
 
     ``profiles.<section>=<name>`` overrides choose references; every other override applies
-    after composition, as to a single file.
+    after composition, as to a single file. With the ``settings`` ``load_environment`` read,
+    the credentials the composed file names (``api_key_env``, MCP ``<NAME>`` placeholders) are
+    filled first from the .env file, then the stored ones, and hidden from logs.
     """
     data, paths = _composed(source, overrides)
+    _credentials(data, settings)
     duration = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS")
     if duration is not None:
         host = _mapping(data.get("host", {}))

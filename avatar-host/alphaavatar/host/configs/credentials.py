@@ -16,7 +16,9 @@
 They live in a private file in the application home's settings, the one the settings name
 (``credentials``), read into the environment by the commands that load a configuration,
 after the .env file and never over a value already set: an empty or blank one counts as
-unset there, as it does anywhere a credential is read. Storing writes a new file beside
+unset there, as it does anywhere a credential is read. Which variables are credentials the
+configuration says (``configured_credentials``), with the ones components read when it names
+none (``DEFAULT_CREDENTIALS``) and those stored. Storing writes a new file beside
 it, which the settings replacement that makes the bundle the default then names: the
 default and the credentials it reads commit together, and a run killed before that leaves
 the settings, and so every bundle, reading what they read. Values are never printed, logged
@@ -30,7 +32,8 @@ import io
 import os
 import re
 import secrets
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -41,7 +44,21 @@ if TYPE_CHECKING:
 
 NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 FILE = re.compile(r"credentials-[0-9a-f]{16}\.env")
-CREDENTIAL_WORDS = frozenset({"KEY", "APIKEY", "SECRET", "TOKEN", "PASSWORD", "PAT", "URL"})
+# What components read a credential from when the configuration names no variable of its own
+# for it, as .env.template lists them.
+DEFAULT_CREDENTIALS = (
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "VOICEAI_API_KEY",
+    "TAVILY_API_KEY",
+    "QDRANT_URL",
+    "QDRANT_API_KEY",
+    "LIVEKIT_URL",
+    "LIVEKIT_API_KEY",
+    "LIVEKIT_API_SECRET",
+)
 
 
 def _quoted(value: str) -> str:
@@ -116,71 +133,107 @@ def stored_credentials(paths: ApplicationPaths) -> dict[str, str]:
     return dict(settings.credentials)
 
 
-def fill_credentials(environ: MutableMapping[str, str], values: Mapping[str, str | None]) -> None:
-    """Set each of ``values`` that holds a value where ``environ`` holds none. Unset, empty or
-    only whitespace is none: it gives way to the next source and never displaces one, and a
-    value is set as it is."""
+def fill_credentials(
+    environ: MutableMapping[str, str], names: Iterable[str], *sources: Mapping[str, str | None]
+) -> None:
+    """Set each of ``names`` that ``environ`` holds no value for to the first value of
+    ``sources`` that holds one. Unset, empty or only whitespace is none, there as in each
+    source: it gives way to the next and never displaces one, and a value is set as it is."""
     from alphaavatar.agents.utils import credential
 
-    for name in values:
-        if credential(name, environ) is None and (value := credential(name, values)) is not None:
-            environ[name] = value
+    for name in names:
+        if credential(name, environ) is None:
+            for source in sources:
+                if (value := credential(name, source)) is not None:
+                    environ[name] = value
+                    break
 
 
-def load_credentials(paths: ApplicationPaths) -> Settings:
-    """Set each stored credential the environment holds no value for, from one read of the
-    settings, which is returned: the default bundle is chosen from it too.
+def _hide(names: Iterable[str]) -> None:
+    from alphaavatar.agents.utils.env_utils import SERVER_KEY
+    from alphaavatar.core.log.records import hide_variables
+
+    # Their names need not say they hold one: a server's key, one a configuration names.
+    hide_variables({*names, *(name for name in os.environ if name.startswith(SERVER_KEY))})
+
+
+def load_credentials(paths: ApplicationPaths, file: Mapping[str, str] | None = None) -> Settings:
+    """Fill the default credentials and the stored ones the environment holds no value for,
+    from the .env file's values (``file``), then from one read of the stored ones. The read is
+    returned with the file's values: the default bundle is chosen from it, and the credentials
+    a configuration names are filled from both (``fill_configured``).
 
     Settings that cannot be read name none: a named bundle still loads, as it does without
     them, and Doctor's home check says what to fix. Choosing the default, and setup, refuse
     them.
     """
-    settings = read_stored(paths)
-    fill_credentials(os.environ, settings.credentials)
+    settings = replace(read_stored(paths), file=dict(file or {}))
+    names = (*DEFAULT_CREDENTIALS, *settings.credentials)
+    fill_credentials(os.environ, names, settings.file, settings.credentials)
+    _hide(())
     return settings
 
 
-def _credential_name(name: str) -> bool:
-    # A credential's name, or its server URL's, by its words, or one of AlphaAvatar's own.
-    words = name.upper().split("_")
-    return words[0] == "ALPHAAVATAR" or not CREDENTIAL_WORDS.isdisjoint(words)
+def configured_credentials(data: Mapping[str, Any]) -> set[str]:
+    """The variables a composed configuration reads credentials from by name: each
+    ``api_key_env`` it holds, wherever, and the ``<NAME>`` placeholders of its MCP servers."""
+    from alphaavatar.agents.utils.env_utils import ENV_PATTERN
+
+    names: set[str] = set()
+
+    def walk(value: Any, servers: bool) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if key == "api_key_env" and isinstance(item, str):
+                    names.add(item)
+                walk(item, servers)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, servers)
+        elif servers and isinstance(value, str):
+            names.update(ENV_PATTERN.findall(value))
+
+    walk(data, False)
+    tools = data.get("tools")
+    mcp = tools.get("mcp") if isinstance(tools, Mapping) else None
+    walk(mcp.get("servers") if isinstance(mcp, Mapping) else None, True)
+    return names
 
 
-def load_env_file() -> None:
+def fill_configured(data: Mapping[str, Any], settings: Settings) -> None:
+    """Fill the credentials a composed configuration names that the environment holds no
+    value for, from the .env file, then the stored ones, as ``load_credentials`` read them;
+    and hide their values from logs. Before it is validated: its placeholders resolve then."""
+    names = configured_credentials(data)
+    fill_credentials(os.environ, names, settings.file, settings.credentials)
+    _hide(names)
+
+
+def load_env_file() -> dict[str, str]:
     """Load the .env file ``ENV_FILE`` names (default ``.env``) as python-dotenv does: a
     variable the environment sets stays, empty too, and ``${NAME}`` reads the environment
-    first. But a credential or an AlphaAvatar variable set empty or blank holds nothing: the
-    file's value stands in for it, in references too, and an empty line sets none of them.
+    first. Its values are returned, for credentials to be filled from; ALPHAAVATAR_HOME, which
+    chooses the home that stores them, is filled here: an empty or blank one takes the file's.
     A missing file sets nothing."""
     from dotenv import load_dotenv
+    from dotenv.main import DotEnv
 
-    from alphaavatar.agents.utils import credential
-
-    blank = {
-        name: value
-        for name, value in os.environ.items()
-        if _credential_name(name) and credential(name) is None
-    }
-    for name in blank:  # Unset while the file loads, as python-dotenv then reads them.
-        del os.environ[name]
-    before = set(os.environ)
-    try:
-        load_dotenv(os.environ.get("ENV_FILE", ".env"))
-    finally:
-        for name in set(os.environ) - before:
-            if _credential_name(name) and credential(name) is None:
-                del os.environ[name]
-        for name, value in blank.items():
-            os.environ.setdefault(name, value)
+    path = os.environ.get("ENV_FILE", ".env")
+    values = {}
+    if load_dotenv(path):  # Read again as it loaded: the environment first.
+        loaded = DotEnv(path, encoding="utf-8", override=False).dict()
+        values = {name: value for name, value in loaded.items() if value is not None}
+    fill_credentials(os.environ, ("ALPHAAVATAR_HOME",), values)
+    return values
 
 
 def load_environment(overrides: Sequence[str] = ()) -> Settings:
     """The .env file start reads (ENV_FILE), then the credentials stored for the home; the
-    settings read, to choose the default bundle from."""
+    settings read, to choose the default bundle from, with the file's values."""
     from .bundles import application_paths
 
-    load_env_file()  # It may set ALPHAAVATAR_HOME, which chooses the home.
-    return load_credentials(application_paths(overrides))
+    file = load_env_file()  # It may set ALPHAAVATAR_HOME, which chooses the home.
+    return load_credentials(application_paths(overrides), file)
 
 
 def write_credentials(paths: ApplicationPaths, values: Mapping[str, str]) -> Path:

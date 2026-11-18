@@ -327,7 +327,7 @@ def _setup(args: argparse.Namespace) -> int:
         else:
             name = check_bundle_name(existing)
             # Planned from the bundle's own settings, with no plugin installed yet.
-            host, avatar = load_selections(select_configuration(name, (), settings))
+            host, avatar = load_selections(select_configuration(name, (), settings), (), settings)
             found, unserved = choices.bundle_requirements(host, avatar, catalog.get("plugins", {}))
             if unserved:
                 raise SetupError(
@@ -350,7 +350,7 @@ def _setup(args: argparse.Namespace) -> int:
             out.begin(2, "Credentials")
             with tempfile.TemporaryDirectory() as scratch:
                 _single_file(texts, name, paths.root, Path(scratch) / f"{name}.yaml")
-                host, _ = load_selections(Path(scratch) / f"{name}.yaml")
+                host, _ = load_selections(Path(scratch) / f"{name}.yaml", (), settings)
             values, saved = _credentials(selection, paths, out, host.rtc)
             out.step(2, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
         else:

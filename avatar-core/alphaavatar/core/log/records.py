@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
@@ -25,6 +26,7 @@ from .events import LABELS, MAX_CONTENT_CHARS, validate_fields
 MAX_PACKET_BYTES = 60_000
 MAX_TEXT_CHARS = 8192
 LOG_CLIENT_ENV = "ALPHAAVATAR_LOG_CLIENT"
+HIDDEN_ENV = "ALPHAAVATAR_LOG_HIDDEN"  # Names of variables whose values logs hide, by comma.
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 _ANSI = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])")
@@ -46,6 +48,7 @@ _SESSION = re.compile(
     r"(?i)((?<![\w-])session[-_ ]?id[\"']?[ \t]*[:=][ \t]*)"
     r"(?:\[redacted\]|\"[^\"\r\n]*\"?|'[^'\r\n]*'?|[^\s,;]+)"
 )
+_VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def clean(value: str, limit: int | None = MAX_TEXT_CHARS) -> str:
@@ -62,6 +65,16 @@ def _redact_url(match: re.Match[str]) -> str:
         return "[redacted URL]"
 
 
+def hide_variables(names: Iterable[str]) -> None:
+    """Hide the values of these environment variables too, beside those named as secrets: the
+    keys a configuration keeps in variables of its own naming. Each Redactor reads them when
+    it refreshes, in this process and in those started from it."""
+    hidden = {*os.environ.get(HIDDEN_ENV, "").split(","), *names}
+    value = ",".join(sorted(name for name in hidden if _VARIABLE.fullmatch(name)))
+    if value != os.environ.get(HIDDEN_ENV, ""):
+        os.environ[HIDDEN_ENV] = value
+
+
 class Redactor:
     """Best-effort credential filtering, not a guarantee that opted-in text is free of PII."""
 
@@ -69,10 +82,11 @@ class Redactor:
         self.refresh()
 
     def refresh(self) -> None:
+        hidden = set(os.environ.get(HIDDEN_ENV, "").split(","))
         values = {
             value
             for key, value in os.environ.items()
-            if _SECRET_KEY.search(key) and 4 <= len(value) <= 4096
+            if (key in hidden or _SECRET_KEY.search(key)) and 4 <= len(value) <= 4096
         }
         self._secrets = tuple(sorted(values, key=len, reverse=True))
 

@@ -107,3 +107,21 @@ def test_an_upgrade_reports_its_steps_and_a_failure_what_stays_current(
         assert main(["upgrade", "--file", str(second.package)]) == 0
     assert f"AlphaAvatar {second.id} is current already; nothing to do" in capsys.readouterr().out
     assert contents(home) == settings
+
+
+def test_the_target_takes_a_credential_from_the_env_file_before_the_stored_one(
+    builds, tmp_path: Path
+) -> None:
+    """Empty in the environment, a credential comes from the .env file start reads, before the
+    one stored with the default bundle, for the target's plan and its check."""
+    from alphaavatar.host.configs.template import create_bundle
+
+    stored = {"UPGRADE_SECRET": "kept"}
+    paths = application_paths()
+    create_bundle(paths, "avatar", avatar_id="avatar", make_default=True, credentials=stored)
+    dotenv = tmp_path / "chosen.env"
+    dotenv.write_text("UPGRADE_SECRET=from-file\n")
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(dotenv), "UPGRADE_SECRET": ""}):
+        assert main(["upgrade", "--file", str(builds[2].package)]) == 0
+    ran = [line.split()[0] for line in (tmp_path / "commands.log").read_text().splitlines()]
+    assert ran[-2:] == ["plan:avatar:from-file", "check:avatar:from-file"]

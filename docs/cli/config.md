@@ -75,22 +75,24 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
 2. the `.env` file `ENV_FILE` names (default `.env`);
 3. the credentials [`alphaavatar setup`](setup.md) stored, in the file the settings name.
 
-- A credential is a variable with `KEY`, `APIKEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PAT` or
-  `URL` as a word of its name, between underscores: `OPENAI_API_KEY`, `LIVEKIT_URL`,
-  `GITHUB_PAT`. AlphaAvatar's own `ALPHAAVATAR_*` variables are taken the same way, the keys of
-  servers of your own and `ALPHAAVATAR_HOME` among them. A bundle's own `api_key_env` variable
-  is one when its name is, such as `MY_PROVIDER_API_KEY`.
+- The credentials are the variables the configuration names for them, under any name: each
+  `api_key_env` (a bundle's own, a server of your own's `ALPHAAVATAR_SERVER_KEY_<hash>`) and
+  each `<NAME>` placeholder of its MCP servers; those components read when it names none
+  (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
+  `VOICEAI_API_KEY`, `TAVILY_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY` and the three
+  `LIVEKIT_*`); and those setup stored.
 - An empty or blank credential counts as unset: it gives way to the next source and never takes
-  another's place, and a value is taken as it is set, spaces and all. Its empty line in `.env`
-  sets none.
-- Any other variable loads from `.env` as python-dotenv loads it: one the environment sets
-  stays, empty too, so an empty `CUDA_VISIBLE_DEVICES` still hides every GPU, and an empty line
-  sets it empty. An `api_key_env` variable named otherwise is one: set empty in the
-  environment, it hides the file's value, and what reads it names it missing.
-- `${NAME}` in `.env` reads `NAME` as it loads: the environment's value first, then the file's
-  earlier lines.
+  another's place, and a value is taken as it is set, spaces and all.
+- `.env` itself loads as python-dotenv loads it: a variable the environment sets stays, empty
+  too, so an empty `CUDA_VISIBLE_DEVICES` still hides every GPU and an empty
+  `ALPHAAVATAR_MODEL_OFFLINE` still allows downloads; an empty line sets its variable empty.
+  `${NAME}` reads the environment's value first, then the file's earlier lines; it reads a
+  credential as the environment holds it, before the credentials are filled.
+- `ALPHAAVATAR_HOME`, which chooses the home that stores credentials, counts empty or blank as
+  unset too: the file's value then chooses it.
 - A credential unset, empty or blank everywhere is missing: what reads it refuses to start and
-  names the variable, never its value.
+  names the variable, never its value. Logs hide the values of the credentials the
+  configuration names and of servers' keys, as they hide those whose names say they are one.
 
 - The default bundle comes from the same read of the settings as the stored credentials: a
   setup committing meanwhile changes neither.

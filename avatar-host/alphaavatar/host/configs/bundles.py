@@ -144,11 +144,13 @@ def application_paths(overrides: Sequence[str] = ()) -> ApplicationPaths:
 @dataclass(frozen=True, slots=True)
 class Settings:
     """One read of the settings and the stored credentials they name, consistent with each
-    other; or why the settings could not be read."""
+    other; or why the settings could not be read. ``file`` holds the .env file's values loading
+    found with it, which credentials a configuration names are filled from before the stored."""
 
     values: Mapping[str, Any] = field(default_factory=dict)
     credentials: Mapping[str, str] = field(default_factory=dict, repr=False)  # Never shown.
     error: ConfigReferenceError | None = None
+    file: Mapping[str, str] = field(default_factory=dict, repr=False)
 
     def checked(self) -> Mapping[str, Any]:
         if self.error is not None:

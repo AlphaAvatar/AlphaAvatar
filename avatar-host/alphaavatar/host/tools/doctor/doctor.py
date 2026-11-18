@@ -440,7 +440,7 @@ def _configuration(
                     "or pass a bundle name or a configuration file",
                 )
         source = select_configuration(target, overrides, settings)
-        config = load_application(source, overrides)
+        config = load_application(source, overrides, settings)
         check_application_paths(config)
         validate_plugin_settings(config)  # The steps config check and start take, in order.
     except Exception as error:

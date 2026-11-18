@@ -91,7 +91,8 @@ Next
 4. **Validate**: the new environment's command reports the target's version, its native
    libraries load, and its `config check` accepts the default bundle, with the credentials of
    the environment, `.env` and those stored, each the first that holds a value as `start`
-   takes it: an empty or blank one in the environment gives way to the stored one.
+   takes it: an empty or blank one in the environment gives way to the file's, then to the
+   stored one.
 
 Only then does `<prefix>/current` switch, once, and the command is run through it; if it does
 not report the target, `current` goes back. Upgrading takes `<prefix>/.install.lock`, the lock

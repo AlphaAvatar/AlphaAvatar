@@ -33,6 +33,7 @@ from config_samples import CONFIG, LAYOUT, LOOP, SECRETS, SECTIONS, files, write
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import plan_inference_runners
+from alphaavatar.core.log.records import HIDDEN_ENV
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.cli.render import home_relative
 from alphaavatar.host.configs import (
@@ -524,7 +525,10 @@ def test_checking_a_bundle_reads_only_and_hides_profile_credentials(
         assert main(["config", "check", *argv]) == 0
         output = capsys.readouterr().out
         assert [name for name, secret in SECRETS.items() if secret in output] == []
-    # Nothing created (no cache or workspace), no variable written, no client constructed.
+    # Nothing created (no cache or workspace), no client constructed, no variable written but
+    # the names of those the configuration keeps its keys in, whose values logs hide.
+    hidden = os.environ.pop(HIDDEN_ENV)
+    assert hidden == "MCP_DOCS_TOKEN" and SECRETS["MCP_DOCS_TOKEN"] not in hidden
     assert (contents(tmp_path), dict(os.environ), sandbox) == (before, environment, [])
     payload = json.loads(load_application(select_configuration("alpha")).payload)
     assert payload["memory"]["vdb_config"]["api_key"] == SECRETS["vdb"]

@@ -477,6 +477,12 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
     assert "Enter keeps" not in asked(b)
     assert f"Missing credentials: {server_key(b)}" in capsys.readouterr().err
     assert stored_credentials(paths)[server_key(a)] == "key-a"
+    # Blank in the environment but in the .env file start reads, the bundle's key is set.
+    dotenv = Path("b.env")
+    dotenv.write_text(f"{server_key(b)}=key-b-file\n")
+    with mock.patch.dict(os.environ, {server_key(b): " \t", "ENV_FILE": str(dotenv.resolve())}):
+        assert setup("from-file", b, "", "", "", "", "n", "y") == 0  # Not stored; enabled.
+    assert "Enter keeps it" in asked(b) and server_key(b) not in stored_credentials(paths)
     # Storing the other server's key leaves the first server's, which the first bundle reads.
     assert setup("third", b, "key-b", "", "", "", "y", "y") == 0
     stored = stored_credentials(paths)

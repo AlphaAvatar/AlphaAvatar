@@ -63,8 +63,10 @@ def builds(tmp_path: Path):
     paths.settings_dir.mkdir(parents=True)
     paths.settings_file.write_text("default_bundle: avatar\n")
 
-    def run(source: Source, **extra: str) -> upgrade.Upgraded:
-        return upgrade.upgrade(installation, source, paths=paths, environ=environ | extra)
+    def run(source: Source, file: dict[str, str] | None = None, **extra: str) -> upgrade.Upgraded:
+        return upgrade.upgrade(
+            installation, source, paths=paths, environ=environ | extra, file=file
+        )
 
     return installation, first, second, run, log
 
@@ -208,15 +210,21 @@ def test_a_setup_just_before_the_lock_is_what_the_target_plans_and_checks(
 
 
 @pytest.mark.parametrize(
-    ("given", "read"),
-    [("", "kept"), (" \t", "kept"), ("mine", "mine")],
-    ids=["empty", "blank", "set"],
+    ("given", "file", "read"),
+    [
+        ("", None, "kept"),
+        (" \t", " ", "kept"),
+        ("mine", "from-file", "mine"),
+        ("", "from-file", "from-file"),
+    ],
+    ids=["empty", "blank", "set", "the-file-before-the-stored"],
 )
 def test_the_target_reads_a_stored_credential_where_the_environment_holds_none(
-    builds, given: str, read: str
+    builds, given: str, file: str | None, read: str
 ) -> None:
     """As start does: the environment's own value wins, and an empty or blank one gives way to
-    the credential stored with the default bundle, for the target's plan and its check."""
+    the .env file's, then to the credential stored with the default bundle, for the target's
+    plan and its check."""
     installation, first, second, run, log = builds
     previous = os.readlink(installation.prefix / "current")
     credentials = {"UPGRADE_SECRET": "kept"}
@@ -227,10 +235,28 @@ def test_the_target_reads_a_stored_credential_where_the_environment_holds_none(
         make_default=True,
         credentials=credentials,
     )
-    run(package_file(second.package), UPGRADE_SECRET=given)
+    values = {} if file is None else {"UPGRADE_SECRET": file}
+    run(package_file(second.package), values, UPGRADE_SECRET=given)
     assert commands(log) == [
         [f"plan:avatar:{read}", second.id, previous],
         [f"check:avatar:{read}", second.id, previous],
+    ]
+
+
+def test_the_target_reads_a_default_credential_as_start_does(
+    builds, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One no bundle names and none stored, empty in the environment: the .env file's."""
+    from alphaavatar.host.configs import credentials
+
+    installation, first, second, run, log = builds
+    previous = os.readlink(installation.prefix / "current")
+    monkeypatch.setattr(credentials, "DEFAULT_CREDENTIALS", ("UPGRADE_SECRET",))
+    create_bundle(application_paths(), "avatar", avatar_id="avatar", make_default=True)
+    run(package_file(second.package), {"UPGRADE_SECRET": "from-file"}, UPGRADE_SECRET="")
+    assert commands(log) == [
+        ["plan:avatar:from-file", second.id, previous],
+        ["check:avatar:from-file", second.id, previous],
     ]
 
 

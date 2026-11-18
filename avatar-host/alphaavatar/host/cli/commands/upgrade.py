@@ -156,12 +156,13 @@ def _upgrade(args: argparse.Namespace) -> int:
         before = installation.current_base()
         if args.check:
             return _check(args, installation, out)
-        load_env_file()  # The one start reads; the stored credentials are read under the lock.
+        file = load_env_file()  # The one start reads; the stored ones are read under the lock.
         result = upgrading(
             installation,
             _source(args),
             paths=application_paths(),
             environ=dict(os.environ),
+            file=file,
             step=step,
             progress=progress,
         )

@@ -51,7 +51,8 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
         stage = "select application configuration"
         source = select_configuration(target, overrides, settings)  # The same read's default.
         stage = "load application configuration"
-        config = load_application(source, overrides)
+        config = load_application(source, overrides, settings)  # And the credentials it names.
+        logs.refresh_secrets()
         stage = "validate plugin settings"
         validate_plugin_settings(config)
         stage = "check the installed capabilities"
