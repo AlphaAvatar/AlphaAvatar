@@ -68,19 +68,29 @@ profiles:
 ## Credentials
 
 `start`, `dev`, `config check`, [`doctor`](doctor.md), [`setup`](setup.md) and
-[`upgrade`](upgrade.md) take each variable from the first of these that holds a value, neither
-empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two so, for the home):
+[`upgrade`](upgrade.md) take each credential from the first of these that holds a value,
+neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two so, for the home):
 
 1. the environment;
 2. the `.env` file `ENV_FILE` names (default `.env`);
 3. the credentials [`alphaavatar setup`](setup.md) stored, in the file the settings name.
 
-- An empty or blank value counts as unset: it gives way to the next source and never takes
-  another's place, and a value is taken as it is set, spaces and all. The same holds for a
-  bundle's own `api_key_env` variable and the keys of servers of your own.
+- A credential is a variable with `KEY`, `APIKEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PAT` or
+  `URL` as a word of its name, between underscores: `OPENAI_API_KEY`, `LIVEKIT_URL`,
+  `GITHUB_PAT`. AlphaAvatar's own `ALPHAAVATAR_*` variables are taken the same way, the keys of
+  servers of your own and `ALPHAAVATAR_HOME` among them. A bundle's own `api_key_env` variable
+  is one when its name is, such as `MY_PROVIDER_API_KEY`.
+- An empty or blank credential counts as unset: it gives way to the next source and never takes
+  another's place, and a value is taken as it is set, spaces and all. Its empty line in `.env`
+  sets none.
+- Any other variable loads from `.env` as python-dotenv loads it: one the environment sets
+  stays, empty too, so an empty `CUDA_VISIBLE_DEVICES` still hides every GPU, and an empty line
+  sets it empty. An `api_key_env` variable named otherwise is one: set empty in the
+  environment, it hides the file's value, and what reads it names it missing.
+- `${NAME}` in `.env` reads `NAME` as it loads: the environment's value first, then the file's
+  earlier lines.
 - A credential unset, empty or blank everywhere is missing: what reads it refuses to start and
-  names the variable, never its value. A switch or path, such as `ALPHAAVATAR_MODEL_OFFLINE` or
-  `ALPHAAVATAR_HOME`, is read for what it means once a source supplies it.
+  names the variable, never its value.
 
 - The default bundle comes from the same read of the settings as the stored credentials: a
   setup committing meanwhile changes neither.

@@ -115,6 +115,39 @@ def test_each_variable_takes_the_first_value_neither_empty_nor_blank(tmp_path: P
             LiveKitCredentials.from_env()
 
 
+# The .env file's lines, the environment's value of each name (None: unset) and the one loading
+# leaves. Any other variable keeps what the environment sets, empty too, and ${NAME} reads it
+# there first; only a credential or an AlphaAvatar variable empty or blank takes the file's.
+ORDINARY = {
+    "CUDA_VISIBLE_DEVICES": ("0", "", ""),  # Empty: no GPU, whatever the file says.
+    "HTTPS_PROXY": ("http://proxy.invalid:3128", "", ""),
+    "API_HOST": ("dev.example", "prod.example", "prod.example"),
+    "OPENAI_BASE_URL": ("https://${API_HOST}/v1", None, "https://prod.example/v1"),
+    "NO_PROXY": ("", None, ""),  # Its empty line sets it empty.
+    "OPENAI_API_KEY": ("from-file", " \t", "from-file"),
+    "MODEL_HEADER": ("Bearer ${OPENAI_API_KEY}", None, "Bearer from-file"),
+    "ALPHAAVATAR_HOME": ("/srv/from-file", "", "/srv/from-file"),
+    "LIVEKIT_API_SECRET": ("", None, None),  # A credential's empty line sets none.
+}
+
+
+def test_any_other_variable_keeps_what_the_environment_sets_even_empty(tmp_path: Path) -> None:
+    from alphaavatar.agents.utils import gpu_available
+    from alphaavatar.host.configs.credentials import load_env_file
+
+    lines = [f'{name}="{line}"' for name, (line, _, _) in ORDINARY.items()]
+    (tmp_path / "chosen.env").write_text("\n".join(lines))
+    environment = {name: set_ for name, (_, set_, _) in ORDINARY.items() if set_ is not None}
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env")} | environment):
+        for name in ORDINARY.keys() - environment.keys():
+            os.environ.pop(name, None)
+        load_env_file()
+        assert {name: os.environ.get(name) for name in ORDINARY} == {
+            name: left for name, (_, _, left) in ORDINARY.items()
+        }
+        assert gpu_available() is False
+
+
 def _readers(name: str):
     """Each reader of a credential, with ``name`` for its variable where it takes one."""
     from alphaavatar.agents.avatar.provider.factory import create_embedding_model, create_llm_model

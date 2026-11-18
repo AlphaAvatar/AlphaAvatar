@@ -89,6 +89,8 @@ class RAGAnythingTool:
         return root, index, artifacts
 
     async def _load(self):
+        if self._key is None:  # Else its libraries read OPENAI_API_KEY, blank as it may be.
+            raise ValueError("OPENAI_API_KEY is required for RAG")
         (
             LightRAG,
             initialize_pipeline_status,

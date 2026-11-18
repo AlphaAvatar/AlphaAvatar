@@ -9,7 +9,8 @@
 |---|---|---|---|---|---|
 | 模板 | `.env.template` 按代码实际读取的变量重写 | 2026-11-18 | `9d71447e` | `c044922a`（用户提交） | 已提交 |
 | README 与 `.env` 加载 | 21 个 README 逐句对照源码；`.env` 加载移到 Host；删 RAG `monologue` 和 Core `livekit` extra | 2026-11-18 | `c044922a` | `174d1632`（用户提交） | 已提交 |
-| 收尾 | cleanup 三处保护缺口；凭据空值统一规则；Router 两项计时测试的测量起点；RAG 能力描述 | 2026-11-18 | `174d1632` | 未提交（用户提交） | 待审查 |
+| 收尾 | cleanup 三处保护缺口；凭据空值统一规则；Router 两项计时测试的测量起点；RAG 能力描述 | 2026-11-18 | `174d1632` | `cde30675`（用户提交） | 已提交 |
+| 收尾二 | `.env` 凭据与普通变量分开、插值恢复进程值优先；RAG 缺失密钥检查；Router 偶发定位与测试同步 | 2026-11-18 | `cde30675` | 未提交（用户提交） | 待审查 |
 
 ## 1. `.env.template`
 
@@ -136,3 +137,76 @@
 
 - `config check` 不检查会话传输凭据，LiveKit 凭据缺失要到 `start`，或者 Linux 包里的 `setup <bundle>` 才报。
 - cleanup 不读 bundle，YAML 里的 `application.home` 不影响它的保护目录；只有从别处的 YAML 文件启动时，这才可能与 `start` 不同。
+
+## 收尾二（基线 `cde30675`）
+
+上一轮的 cleanup 三处保护、Router 按真实 deadline 计时、RAG 能力描述已接受。本轮四项。
+
+### 1. `.env`：凭据与普通变量分开
+
+- **更正**：上一轮“开关和路径都把空值当作未设，规则不改变行为”的判断不成立。进程里 `CUDA_VISIBLE_DEVICES=""` 表示不用 GPU，却被文件里的 `0` 覆盖，`gpu_available()` 因此可能从 False 变成 True。
+- **普通变量**：`load_env_file()` 改回用 python-dotenv 的 `load_dotenv` 加载。进程已设置的变量保留，空值也保留；`${NAME}` 先读进程值。
+- **凭据和 `ALPHAAVATAR_*` 自有变量**：空值或全空白算未设，依次由文件、setup 存的值补上。
+  - 实现：加载期间先把这类空值移出环境，让文件值补上；加载后删去文件写入的空值，再放回进程原有的空值。
+- **怎样算凭据**：按名字判断。以下划线分隔的词里含 `KEY`、`APIKEY`、`SECRET`、`TOKEN`、`PASSWORD`、`PAT` 或 `URL` 的变量算凭据。
+  - 只能按名字：加载 `.env` 时还没读配置，插件又在子进程里按需读取，加载器无从知道配置会读哪些变量。
+  - 自建服务器的密钥（`ALPHAAVATAR_SERVER_KEY_*`）和 `ALPHAAVATAR_HOME` 属于自有变量。
+  - 自定义 `api_key_env` 名字符合即按凭据处理，例如 `MY_PROVIDER_API_KEY`。不符合的按普通变量处理：进程里设成空值会挡住文件值，读取方按变量名报缺失。
+- **未改的部分**：setup 存的凭据和 `upgrade` 锁内的合并照旧用 `fill_credentials()`；setup 只存凭据。
+- **文档**：`.env.template` 开头说明、`docs/cli/config.md`「Credentials」、`DEPLOY.md`、RAG README。
+
+### 2. 插值恢复为进程值优先
+
+- 上一轮改用 `dotenv_values()` 后，`${NAME}` 先读文件值。
+- 随第 1 项回到 `load_dotenv` 后，`${NAME}` 先读进程值。
+- 进程里为空白的凭据在加载期间不在环境里，所以引用读到的是它最终加载成的值。
+
+### 3. RAG 缺失密钥
+
+- **检查位置**：`_load()` 是 query 和 indexing 共用的惰性加载入口，现在一开始就检查密钥。
+- **缺失时**：报 `OPENAI_API_KEY is required for RAG`，不导入依赖，也不建模型和 embedding 回调。
+- **惰性不变**：构造工具时仍不加载。失败的加载任务会被缓存，再次调用报同样的错。
+
+### 4. Router 偶发
+
+**定位**：用临时 probe 记录每次决策时的 loop 时间和完成判断的 deadline，脚本在 scratch，不入库。
+
+- 正常运行时，决策只比 deadline 早 49 ms；日志推迟 20 ms 的对照下只早 29 ms。
+- 200 ms 的预算有 150 ms 被吃掉。deadline 在输入关闭、开始等转写时就已设下；此后 fake model 每读一次 `capabilities` 都同步阻塞 50 ms，一次评估要读三次。
+- 在决策前注入 60 ms 停顿就复现了同一失败：决策晚于 deadline 12 ms，直接 `commit`（`uncertainty_timeout`），没有 hold，测试等满 10 s 仍没有 `input.hold`。
+
+**调整**（只改测试，生产代码未动）：
+
+- fake model 的延迟移到 `supports()`，每次评估开始时阻塞一次。
+- 测试先等到“输入开始等转写”的 HOLD 决策出现，再发终稿，固定等待路径。
+- SPAN 从 0.2 s 改为 0.5 s，margin 变为 449/429 ms。
+- 先等 commit，再断言 hold。失败时列出每个决策的动作、原因和距段关闭的毫秒数，不再空等 10 s。
+
+**复验**：
+
+- 注入 60 ms、300 ms 停顿都通过；注入 600 ms 时在 0.8 s 内失败，并报出 `('commit', 'uncertainty_timeout', 701)`。
+- 16 个 CPU 全部占满时，转写测试文件连跑 8 轮全部通过。
+
+**新增用例**：`test_words_later_than_an_uncertain_completions_wait_commit_it_unheld`。deadline 过后才到的终稿仍会被评估，然后直接 `commit`，带 `router.speech_completion_uncertain`，没有 hold。
+
+20 ms 日志延迟对照，以及期限内终稿采用、超期终稿隔离、明确 HOLD 的回归都保留。
+
+### 5. 验证
+
+- **新回归**：
+  - 普通变量 1 项：覆盖 CUDA 和代理的空值、同名插值、引用空白凭据、`ALPHAAVATAR_HOME`、凭据的空行。用 `cde30675` 的加载器跑，它在 CUDA、代理、插值三处失败。
+  - RAG 6 项：query 和 indexing 各配空串、全空白，再加有密钥的对照。
+  - Router 1 项。
+- **变异测试**：14 个全部被抓到（`mutants/run6.py`）。其中 `.env` 8 个、RAG 2 个、Router 生产代码 2 个，另沿用上轮 2 个：R2 让 hold 提前结束，R4 把测试改回从 HOLD 起算。
+- **仓库检查**：`ruff check`、`ruff format --check`、`git diff --check`、`uv lock --check`、`check_workspace.py` 通过，改动文档的链接 0 处问题。
+- **离线全量**：803 passed（306 s），无失败；之后改了一个测试名和两处注释，受影响的 3 个测试文件重跑通过。
+- **未验证**：
+  - 该 SHA 的 CI 没有查看；
+  - 真实安装包没有复验；
+  - 没有调用计费服务；
+  - LiveKit 通话由用户验收。
+
+### 6. 发现未改
+
+- **日志脱敏漏掉自建服务器的密钥**：Core 日志脱敏按变量名挑出要按值遮盖的环境变量（`_SECRET_KEY`：token、secret、password、api_key 等），其中不含 `ALPHAAVATAR_SERVER_KEY_*`。离线核对：同一行里 `OPENAI_API_KEY` 的值被遮，自建服务器密钥的值原样输出；后者只有在 `Authorization` 头这类模式里才被遮。
+- **两个自有变量不把空值当作未设**：`ALPHAAVATAR_MAX_SESSION_SECONDS` 和 `ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS` 的读取方直接 `int()`。各层都没有有效值、只剩空值时会报解析错误，而不是按未设处理。这是原有行为，本轮加载规则没有改变它。

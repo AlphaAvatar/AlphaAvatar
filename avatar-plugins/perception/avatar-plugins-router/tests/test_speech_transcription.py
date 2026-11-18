@@ -141,10 +141,22 @@ class OfflineSTT(STTBase):
         return self.streams[-1]
 
 
+@dataclass(frozen=True, slots=True)
+class LateCapabilities(TurnTakingModelCapabilities):
+    """Asked whether it supports an input's mode, as each assessment begins, it holds the
+    loop ``lag`` seconds: once an assessment, not at each look at what it can do."""
+
+    lag: float = 0.0
+
+    def supports(self, mode: TurnTakingMode) -> bool:
+        time.sleep(self.lag)
+        return mode in self.modes
+
+
 class TurnTakingModel(TurnTakingModelBase):
     """Offline turn-taking model: every complete, transcribed input's speech is judged
-    ``completion``; or it ``fails``, or assesses without the ``transcript``. Asked what it can
-    do, it holds the loop ``lag`` seconds: an assessment that starts late."""
+    ``completion``; or it ``fails``, or assesses without the ``transcript``. Each assessment
+    starts ``lag`` seconds late (``LateCapabilities``)."""
 
     def __init__(
         self,
@@ -163,9 +175,10 @@ class TurnTakingModel(TurnTakingModelBase):
 
     @property
     def capabilities(self) -> TurnTakingModelCapabilities:
-        time.sleep(self.lag)
-        return TurnTakingModelCapabilities(
-            modes=frozenset({TurnTakingMode.AUDIO_ONLY}), uses_transcript=self.transcript
+        return LateCapabilities(
+            modes=frozenset({TurnTakingMode.AUDIO_ONLY}),
+            uses_transcript=self.transcript,
+            lag=self.lag,
         )
 
     async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
@@ -469,7 +482,9 @@ async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_sta
     assert actions.count(TurnTakingAction.CANCEL) == 1
 
 
-SPAN, LAG = 0.2, 0.05  # An uncertainty's wait short enough for a test; a late start
+# An uncertainty's wait, which its words and their late assessment come well within; a late
+# start. Completion's counts from the input's first wait for its words.
+SPAN, LAG = 0.5, 0.05
 UNKNOWN = AssessmentLabel.UNKNOWN
 
 
@@ -478,6 +493,24 @@ def terminal(listening: Listening) -> dict:
         r for r in listening.records("input.decision") if r["action"] in ("commit", "cancel")
     )
     return record
+
+
+async def speak_once_awaited(listening: Listening) -> OfflineSTTStream:
+    """The input closes and waits for its words, the HOLD saying so traced: its stream."""
+    listening.utter(listening.speech(), "segment-a")
+    await wait_until(
+        lambda: any(
+            d.reason == "awaiting_transcript_for_assessment" for _, d in listening.decisions()
+        ),
+        "the input never waited for its words",
+    )
+    (stream,) = listening.stt.streams
+    return stream
+
+
+def committed(listening: Listening) -> TurnTakingDecision:
+    (commit,) = (d for _, d in listening.decisions() if d.action == TurnTakingAction.COMMIT)
+    return commit
 
 
 @pytest.mark.parametrize(
@@ -534,11 +567,8 @@ async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_a
 
     monkeypatch.setattr(TurnTakingCoordinator, "_hold", holding)
     stage = "input.hold"
-    listening.utter(listening.speech(), "segment-a")
-    await wait_until(lambda: listening.stt.streams, "the source never opened")
-    (stream,) = listening.stt.streams
+    stream = await speak_once_awaited(listening)
     stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "words")
-    await wait_until(lambda: listening.records(stage), "the wait was never traced")
     await wait_until(
         lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
         "the input never committed",
@@ -546,6 +576,15 @@ async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_a
 
     (accepted,) = listening.records("input.transcript")
     (assessed,) = listening.records("input.assessment")
+    (closed,) = listening.records("speech.close")
+    decided = [
+        (d.action.value, d.reason, (r["recorded_time_ns"] - closed["recorded_time_ns"]) // 10**6)
+        for (_, d), r in zip(
+            listening.decisions(), listening.records("input.decision"), strict=False
+        )
+    ]
+    # Its words and their assessment came within the wait, which it then held for.
+    assert listening.records(stage), f"no hold; each decision and its ms since the close: {decided}"
     (waited,) = listening.records(stage)
     # Queued as its transcript came, it started once the loop let it.
     assert accepted["recorded_time_ns"] <= assessed["event_time_ns"]
@@ -556,7 +595,6 @@ async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_a
     # so was traced; addressing's once its assessment ended, before the hold's span began.
     ((completion, addressing),) = deadlines
     deadline = addressing if uncertain == "router.addressing_uncertain" else completion
-    (closed,) = listening.records("speech.close")
     first = next(r for r in listening.records("input.decision") if r["action"] == "hold")
     after, before = (
         (assessed["end_time_ns"], waited["start_time_ns"])
@@ -568,8 +606,32 @@ async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_a
     assert waited["end_time_ns"] <= terminal(listening)["recorded_time_ns"]
     assert assessed["outcome"] == assessed_outcome
     assert (waited["outcome"], waited.get("reason")) == ("done", "awaiting_uncertain_decision")
-    (_, commit), *_ = [item for item in listening.decisions() if item[1].action == "commit"]
-    assert commit.system_notices == (TurnNotice(uncertain),)
+    assert committed(listening).system_notices == (TurnNotice(uncertain),)
+
+
+@pytest.mark.parametrize(
+    "listening",
+    [{"model": TurnTakingModel(UNKNOWN), "settings": {"speech_completion_wait_sec": SPAN}}],
+    indirect=True,
+)
+async def test_words_later_than_an_uncertain_completions_wait_commit_it_unheld(
+    listening: Listening,
+) -> None:
+    # The wait began as the input first waited for its words, before the HOLD saying so: words
+    # after it are still assessed, but their uncertainty is waited for no longer.
+    stream = await speak_once_awaited(listening)
+    await asyncio.sleep(SPAN)
+    stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "words")
+    await wait_until(
+        lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
+        "the input never committed",
+    )
+    (assessed,) = listening.records("input.assessment")
+    assert assessed["outcome"] == "done" and not listening.records("input.hold")
+    commit = committed(listening)
+    assert commit.reason == "uncertainty_timeout"
+    assert commit.system_notices == (TurnNotice("router.speech_completion_uncertain"),)
+    assert terminal(listening)["recorded_time_ns"] >= assessed["end_time_ns"]
 
 
 @pytest.mark.parametrize(

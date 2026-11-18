@@ -80,6 +80,8 @@ It exposes **two core operations (op)** that can be composed into an agent workf
 
 Indexing and queries send document content to an OpenAI-compatible service, with the key
 from `OPENAI_API_KEY` and the API root from `OPENAI_BASE_URL` (OpenAI's when unset).
+Without the key, unset, empty or blank, the first query or indexing fails and names it,
+loading nothing.
 This version uses `gpt-4o-mini` for text, `gpt-4o` for images and `text-embedding-3-large`
 for embeddings.
 

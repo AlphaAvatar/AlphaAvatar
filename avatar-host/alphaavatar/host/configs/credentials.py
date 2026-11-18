@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
 NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 FILE = re.compile(r"credentials-[0-9a-f]{16}\.env")
+CREDENTIAL_WORDS = frozenset({"KEY", "APIKEY", "SECRET", "TOKEN", "PASSWORD", "PAT", "URL"})
 
 
 def _quoted(value: str) -> str:
@@ -139,14 +140,38 @@ def load_credentials(paths: ApplicationPaths) -> Settings:
     return settings
 
 
-def load_env_file() -> None:
-    """Fill the environment from the .env file ``ENV_FILE`` names (default ``.env``), as
-    ``fill_credentials`` does: a value the environment holds stays, an empty or blank one
-    there takes the file's, and the file's own empty lines set nothing. A missing file fills
-    nothing."""
-    from dotenv import dotenv_values
+def _credential_name(name: str) -> bool:
+    # A credential's name, or its server URL's, by its words, or one of AlphaAvatar's own.
+    words = name.upper().split("_")
+    return words[0] == "ALPHAAVATAR" or not CREDENTIAL_WORDS.isdisjoint(words)
 
-    fill_credentials(os.environ, dotenv_values(os.environ.get("ENV_FILE", ".env")))
+
+def load_env_file() -> None:
+    """Load the .env file ``ENV_FILE`` names (default ``.env``) as python-dotenv does: a
+    variable the environment sets stays, empty too, and ``${NAME}`` reads the environment
+    first. But a credential or an AlphaAvatar variable set empty or blank holds nothing: the
+    file's value stands in for it, in references too, and an empty line sets none of them.
+    A missing file sets nothing."""
+    from dotenv import load_dotenv
+
+    from alphaavatar.agents.utils import credential
+
+    blank = {
+        name: value
+        for name, value in os.environ.items()
+        if _credential_name(name) and credential(name) is None
+    }
+    for name in blank:  # Unset while the file loads, as python-dotenv then reads them.
+        del os.environ[name]
+    before = set(os.environ)
+    try:
+        load_dotenv(os.environ.get("ENV_FILE", ".env"))
+    finally:
+        for name in set(os.environ) - before:
+            if _credential_name(name) and credential(name) is None:
+                del os.environ[name]
+        for name, value in blank.items():
+            os.environ.setdefault(name, value)
 
 
 def load_environment(overrides: Sequence[str] = ()) -> Settings:
