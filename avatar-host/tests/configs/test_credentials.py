@@ -151,6 +151,26 @@ def test_the_file_loads_as_python_dotenv_loads_it_and_only_credentials_take_its_
         assert gpu_available() is False and models_offline() is False
 
 
+def test_the_file_is_parsed_once_against_the_environment_it_loads_into(tmp_path: Path) -> None:
+    """A reference's default, and a variable the file sets after it: read again once loaded,
+    the reference would read what the first read set, and the credential would take that.
+    PYTHON_DOTENV_DISABLED disables loading, as python-dotenv's own does."""
+    (tmp_path / "chosen.env").write_text(
+        "OPENAI_API_KEY=${SHARED_KEY:-file-default}\nSHARED_KEY=file-secondary\n"
+    )
+    variables = {"ENV_FILE": str(tmp_path / "chosen.env"), "OPENAI_API_KEY": ""}
+    with mock.patch.dict(os.environ, variables):
+        os.environ.pop("SHARED_KEY", None)
+        settings = load_environment()
+        assert settings.file == {"OPENAI_API_KEY": "file-default", "SHARED_KEY": "file-secondary"}
+        assert credential("OPENAI_API_KEY") == "file-default"
+        assert os.environ["SHARED_KEY"] == "file-secondary"
+    with mock.patch.dict(os.environ, variables | {"PYTHON_DOTENV_DISABLED": "1"}):
+        os.environ.pop("SHARED_KEY", None)
+        assert load_environment().file == {} and "SHARED_KEY" not in os.environ
+        assert os.environ["OPENAI_API_KEY"] == ""
+
+
 # A variable a bundle names for its key, MODEL_AUTH, as the environment, the .env file and the
 # stored credentials hold it, and what loading the bundle leaves: no name says it is one.
 NAMED = [
@@ -175,26 +195,31 @@ def test_a_variable_a_bundle_names_takes_the_first_value_neither_empty_nor_blank
     paths = ApplicationPaths.from_root(tmp_path / "home")
     kept = {"MODEL_AUTH": stored} if stored else None
     create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=kept)
-    lines = [f"ALPHAAVATAR_HOME={paths.root}", "MCP_PAT=pat-from-file"]
+    lines = [f"ALPHAAVATAR_HOME={paths.root}", "MCP_PAT=pat-from-file", "GITHUB_PAT=gh-file"]
     lines += [] if file is None else [f'MODEL_AUTH="{file}"']
     (tmp_path / "chosen.env").write_text("\n".join(lines))
-    overrides = [  # Its speech's key, and an MCP server's: names of its own choosing.
+    overrides = [  # Its speech's key, and two MCP servers': names of its own choosing.
         "voice.tts.api_key_env=MODEL_AUTH",
         "tools.mcp.plugin=default",
         "tools.mcp.enabled=true",
         "tools.mcp.servers.docs.url=https://mcp.invalid/",
         "tools.mcp.servers.docs.headers.Authorization=Bearer <MCP_PAT>",
+        "tools.mcp.servers.code.url=https://code.invalid/",
+        "tools.mcp.servers.code.headers.Authorization=Bearer ${oc.env:GITHUB_PAT}",
     ]
     variables = {"ENV_FILE": str(tmp_path / "chosen.env"), "MODEL_AUTH": environment}
-    with mock.patch.dict(os.environ, variables | {"MCP_PAT": ""}):
+    with mock.patch.dict(os.environ, variables | {"MCP_PAT": "", "GITHUB_PAT": ""}):
         os.environ.pop("ALPHAAVATAR_HOME", None)
         settings = load_environment()
         config = load_application(
             select_configuration(None, overrides, settings), overrides, settings
         )
         assert credential("MODEL_AUTH") == left
-        (server,) = config.avatar.tools.mcp.servers.values()
-        assert server["headers"] == {"Authorization": "Bearer pat-from-file"}
+        servers = config.avatar.tools.mcp.servers
+        assert {key: server["headers"] for key, server in servers.items()} == {
+            "docs": {"Authorization": "Bearer pat-from-file"},
+            "code": {"Authorization": "Bearer gh-file"},  # Filled before it is interpolated.
+        }
         # Without the read loading made, a configuration fills nothing.
         os.environ["MODEL_AUTH"] = ""
         load_application(select_configuration(None, overrides, settings), overrides)

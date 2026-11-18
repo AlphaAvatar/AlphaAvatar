@@ -125,3 +125,64 @@ def test_the_target_takes_a_credential_from_the_env_file_before_the_stored_one(
         assert main(["upgrade", "--file", str(builds[2].package)]) == 0
     ran = [line.split()[0] for line in (tmp_path / "commands.log").read_text().splitlines()]
     assert ran[-2:] == ["plan:avatar:from-file", "check:avatar:from-file"]
+
+
+# How the target's plan and check load the bundle, in their place: as start loads it, from /,
+# printing the credential an MCP server names; then the .env file changes, as it may meanwhile.
+LOAD = """\
+import os, sys
+from pathlib import Path
+
+from alphaavatar.agents.utils import credential
+from alphaavatar.host.configs import load_application, select_configuration
+from alphaavatar.host.configs.credentials import load_environment
+
+settings = load_environment()
+load_application(select_configuration(sys.argv[1], (), settings), (), settings)
+print(credential("MODEL_AUTH"))
+Path(os.environ["UPGRADE_DOTENV"]).write_text("MODEL_AUTH=changed\\n")
+"""
+
+
+def test_the_target_loads_its_bundle_with_the_env_file_this_command_read(
+    builds, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Run in a project with a relative ENV_FILE: a credential only the bundle names, empty in
+    the environment and stored by no setup, is the file's as this command read it, for the
+    target's plan and its check alike, though they run from / and the file changes meanwhile;
+    never in a command line, nor in what the upgrade shows."""
+    import subprocess
+    import sys
+
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = application_paths()
+    create_bundle(paths, "avatar", avatar_id="avatar", make_default=True)
+    (paths.configs.profiles_dir / "avatar/plugins/tools/tools.yaml").write_text(
+        "mcp:\n  plugin: default\n  enabled: true\n  servers:\n    docs:\n"
+        "      url: https://mcp.invalid/\n"
+        "      headers:\n        Authorization: Bearer <MODEL_AUTH>\n"
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".env.dev").write_text("MODEL_AUTH=auth-from-file\n")
+    monkeypatch.chdir(project)
+    lines, run = [], subprocess.run
+
+    def recorded(command, *args, **kwargs):
+        lines.append(" ".join(map(str, command)))
+        return run(command, *args, **kwargs)
+
+    variables = {
+        "ENV_FILE": ".env.dev",
+        "MODEL_AUTH": "",
+        "UPGRADE_PYTHON": sys.executable,
+        "UPGRADE_LOAD": LOAD,
+        "UPGRADE_DOTENV": str(project / ".env.dev"),
+    }
+    with mock.patch.dict(os.environ, variables), mock.patch.object(subprocess, "run", recorded):
+        assert main(["upgrade", "--file", str(builds[2].package)]) == 0
+    ran = [line.split()[0] for line in (tmp_path / "commands.log").read_text().splitlines()]
+    assert ran[-2:] == ["plan:avatar:auth-from-file", "check:avatar:auth-from-file"]
+    shown = capsys.readouterr()
+    assert not [text for text in [*lines, shown.out, shown.err] if "auth-from-file" in text]

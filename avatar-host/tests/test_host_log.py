@@ -88,7 +88,7 @@ def test_the_keys_a_configuration_names_never_reach_the_log_output(
     tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     # Fictional values; only the first's name says it holds a secret. The bundle names the next
-    # two, a server's key is called after it: the Host names them all for logs to hide.
+    # three, a server's key is called after it: the Host names them all for logs to hide.
     from alphaavatar.agents.utils.env_utils import server_key
     from alphaavatar.core.log.events import log_event
     from alphaavatar.host.configs import load_application, select_configuration
@@ -100,19 +100,27 @@ def test_the_keys_a_configuration_names_never_reach_the_log_output(
         "OPENAI_API_KEY": "sk-openai-fictional-0042",
         "MODEL_AUTH": "auth-fictional-0042",
         "MCP_PAT": "pat-fictional-0042",
+        "GITHUB_PAT": "gh-fictional-0042",
         server_key("https://gpu.invalid:8000/v1"): "sk-own-fictional-0042",
     }
     paths = ApplicationPaths.from_root(tmp_path / "home")
     create_bundle(paths, "alpha", avatar_id="alpha", make_default=True)
-    overrides = [
-        "voice.tts.api_key_env=MODEL_AUTH",
-        "tools.mcp.plugin=default",
-        "tools.mcp.enabled=true",
-        "tools.mcp.servers.docs.url=https://mcp.invalid/",
-        "tools.mcp.servers.docs.headers.Authorization=Bearer <MCP_PAT>",
-    ]
+    # MCP servers as a profile writes them: a placeholder, and an interpolation that reads its
+    # variable as the file loads. The introduction's reads an ordinary one, which stays shown.
+    (paths.configs.profiles_dir / "alpha/plugins/tools/tools.yaml").write_text(
+        "mcp:\n  plugin: default\n  enabled: true\n  servers:\n"
+        "    docs:\n      url: https://mcp.invalid/\n"
+        "      headers:\n        Authorization: Bearer <MCP_PAT>\n"
+        "    code:\n      url: https://code.invalid/\n"
+        "      headers:\n        Authorization: Bearer ${oc.env:GITHUB_PAT}\n"
+    )
+    overrides = ["voice.tts.api_key_env=MODEL_AUTH", "avatar.introduction=In ${oc.env:REGION}."]
     stream = io.StringIO()
-    variables = values | {"ALPHAAVATAR_HOME": str(paths.root), "ENV_FILE": str(tmp_path / "none")}
+    variables = values | {
+        "REGION": "region-west-0042",
+        "ALPHAAVATAR_HOME": str(paths.root),
+        "ENV_FILE": str(tmp_path / "none"),
+    }
     with mock.patch.dict(os.environ, variables):
         settings = load_environment()
         load_application(select_configuration(None, overrides, settings), overrides, settings)
@@ -124,6 +132,7 @@ def test_the_keys_a_configuration_names_never_reach_the_log_output(
             logger = logging.getLogger("alphaavatar.test")
             held = " ".join(values.values())
             logger.error("request to https://gpu.invalid:8000/v1 with %s failed", held)
+            logger.warning("MCP server https://code.invalid/ in region-west-0042 refused %s", held)
             try:
                 raise RuntimeError(f"upstream refused {held}")
             except RuntimeError as error:  # Its text, as code that quotes it logs it.
@@ -134,6 +143,11 @@ def test_the_keys_a_configuration_names_never_reach_the_log_output(
     output = stream.getvalue()
     assert [name for name, value in values.items() if value in output] == []
     # What says what happened stays: the server, the failure, its type, the other field.
-    for kept in ("https://gpu.invalid:8000/v1", "failed", "tool call failed: upstream refused"):
+    for kept in (
+        "https://gpu.invalid:8000/v1",
+        "failed",
+        "tool call failed: upstream refused",
+        "https://code.invalid/ in region-west-0042 refused",
+    ):
         assert kept in output
     assert "RuntimeError" in output and 'model="gpt-test"' in output

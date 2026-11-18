@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import re
 import secrets
@@ -44,6 +45,10 @@ if TYPE_CHECKING:
 
 NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 FILE = re.compile(r"credentials-[0-9a-f]{16}\.env")
+# The .env file's values a command read, as JSON, for the commands it runs to read instead of a
+# file: upgrade's target runs from /, where a relative ENV_FILE names another or none.
+FILE_VALUES = "ALPHAAVATAR_ENV_FILE_VALUES"
+_OC_ENV = re.compile(r"\$\{oc\.env:\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
 # What components read a credential from when the configuration names no variable of its own
 # for it, as .env.template lists them.
 DEFAULT_CREDENTIALS = (
@@ -175,8 +180,10 @@ def load_credentials(paths: ApplicationPaths, file: Mapping[str, str] | None = N
 
 
 def configured_credentials(data: Mapping[str, Any]) -> set[str]:
-    """The variables a composed configuration reads credentials from by name: each
-    ``api_key_env`` it holds, wherever, and the ``<NAME>`` placeholders of its MCP servers."""
+    """The variables a composed configuration, as written, reads credentials from by name: each
+    ``api_key_env`` it holds, wherever, and in its MCP servers the ``<NAME>`` placeholders and
+    the ``${oc.env:NAME}`` interpolations, which once resolved no longer say where they read.
+    An interpolation anywhere else reads an ordinary variable."""
     from alphaavatar.agents.utils.env_utils import ENV_PATTERN
 
     names: set[str] = set()
@@ -191,7 +198,7 @@ def configured_credentials(data: Mapping[str, Any]) -> set[str]:
             for item in value:
                 walk(item, servers)
         elif servers and isinstance(value, str):
-            names.update(ENV_PATTERN.findall(value))
+            names.update(ENV_PATTERN.findall(value), _OC_ENV.findall(value))
 
     walk(data, False)
     tools = data.get("tools")
@@ -203,26 +210,31 @@ def configured_credentials(data: Mapping[str, Any]) -> set[str]:
 def fill_configured(data: Mapping[str, Any], settings: Settings) -> None:
     """Fill the credentials a composed configuration names that the environment holds no
     value for, from the .env file, then the stored ones, as ``load_credentials`` read them;
-    and hide their values from logs. Before it is validated: its placeholders resolve then."""
+    and hide their values from logs. Before it is interpolated: ``${oc.env:NAME}`` then reads
+    the value filled, as its placeholders do when it is validated."""
     names = configured_credentials(data)
     fill_credentials(os.environ, names, settings.file, settings.credentials)
     _hide(names)
 
 
 def load_env_file() -> dict[str, str]:
-    """Load the .env file ``ENV_FILE`` names (default ``.env``) as python-dotenv does: a
-    variable the environment sets stays, empty too, and ``${NAME}`` reads the environment
-    first. Its values are returned, for credentials to be filled from; ALPHAAVATAR_HOME, which
-    chooses the home that stores them, is filled here: an empty or blank one takes the file's.
-    A missing file sets nothing."""
-    from dotenv import load_dotenv
-    from dotenv.main import DotEnv
+    """Load the .env file ``ENV_FILE`` names (default ``.env``) as python-dotenv loads it, parsed
+    once: a variable the environment sets stays, empty too, and ``${NAME}`` reads the
+    environment as it was first. Its values are returned, for credentials to be filled from;
+    ALPHAAVATAR_HOME, which chooses the home that stores them, is filled here: an empty or blank
+    one takes the file's. A missing file sets nothing. Given the values another command read
+    (``FILE_VALUES``), they load in its place, and no file is read."""
+    from dotenv.main import DotEnv, _load_dotenv_disabled
 
-    path = os.environ.get("ENV_FILE", ".env")
-    values = {}
-    if load_dotenv(path):  # Read again as it loaded: the environment first.
-        loaded = DotEnv(path, encoding="utf-8", override=False).dict()
-        values = {name: value for name, value in loaded.items() if value is not None}
+    if (given := os.environ.get(FILE_VALUES)) is not None:
+        values = json.loads(given)
+    elif _load_dotenv_disabled():  # PYTHON_DOTENV_DISABLED, as load_dotenv reads it.
+        values = {}
+    else:
+        dotenv = DotEnv(os.environ.get("ENV_FILE", ".env"), encoding="utf-8", override=False)
+        values = {name: value for name, value in dotenv.dict().items() if value is not None}
+    for name, value in values.items():
+        os.environ.setdefault(name, value)  # As load_dotenv sets them: one set stays, empty too.
     fill_credentials(os.environ, ("ALPHAAVATAR_HOME",), values)
     return values
 

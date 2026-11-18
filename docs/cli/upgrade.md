@@ -99,7 +99,8 @@ not report the target, `current` goes back. Upgrading takes `<prefix>/.install.l
 `install.sh`, `setup` and `cleanup` take: another installation into the prefix is refused while
 one runs. The default bundle, and the stored credentials the target's commands read, are read
 once the lock is held, the plan and the check taking the same: a `setup` that finished just
-before is planned and checked as it left them.
+before is planned and checked as it left them. Those commands run from `/`: they read `.env`
+as `upgrade` read it when it started, never the file again, even under a relative `ENV_FILE`.
 
 A failure or a signal before the switch leaves `current`, the command and the previous version
 and environment as they were, and removes what this run made: each directory it makes is moved

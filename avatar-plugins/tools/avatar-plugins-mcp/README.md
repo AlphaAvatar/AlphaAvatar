@@ -66,8 +66,11 @@ headers:
   Authorization: "Bearer <GITHUB_PAT>"
 ```
 
-Provide `GITHUB_PAT` through the environment, never as a committed token. The
-configuration above is a fragment; see [complete examples](../../../examples/README.md).
+Provide `GITHUB_PAT` through the environment, never as a committed token.
+`Bearer ${oc.env:GITHUB_PAT}` reads it too. Either way it is a credential: an empty one takes
+the `.env` file's or the stored value, and logs hide it
+([credentials](../../../docs/cli/config.md#credentials)). The configuration above is a
+fragment; see [complete examples](../../../examples/README.md).
 Restart Host after changing configured servers, transport settings or credentials.
 
 ## Discovery and refresh

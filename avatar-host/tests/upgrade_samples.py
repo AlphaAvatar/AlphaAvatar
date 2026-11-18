@@ -19,6 +19,8 @@ what ran and where current pointed: the base's answers ``--version``, ``--help``
 ``setup <bundle> --plan`` with the requirements the build plans; the environment's, from the
 ``host`` wheel each build makes, ``--version``, setup's probe and ``config check``; each
 records ``UPGRADE_SECRET`` too when it is set, as a credential the target reads.
+``UPGRADE_LOAD``, Python code ``UPGRADE_PYTHON`` runs with the bundle's name, stands in for how
+the plan and the check load the bundle: they record what it prints as the credential read.
 ``UPGRADE_PLAN=refuse`` and ``UPGRADE_CHECK=refuse`` make the plan and the check refuse;
 ``UPGRADE_REFUSE=<bundle>`` makes the check refuse that bundle alone.
 """
@@ -46,6 +48,7 @@ case "$1" in
   --version) echo "AlphaAvatar {shown}" ;;
   --help) echo "usage: alphaavatar" ;;
   setup)
+    [ -z "$UPGRADE_LOAD" ] || UPGRADE_SECRET=$("$UPGRADE_PYTHON" -c "$UPGRADE_LOAD" "$2") || exit 2
     log "plan:$2${{UPGRADE_SECRET:+:$UPGRADE_SECRET}}"
     if [ "$UPGRADE_PLAN" = refuse ]; then
       printf '%s\\n' '{{"error": {{"diagnostic": "  error: ValidationError\\n    voice.stt.model: Field required"}}}}'
@@ -64,6 +67,10 @@ def main():
         return print("AlphaAvatar {version}")
     current = os.readlink(os.environ["UPGRADE_PREFIX"] + "/current")
     secret = os.environ.get("UPGRADE_SECRET")
+    if os.environ.get("UPGRADE_LOAD"):
+        import subprocess
+        load = [os.environ["UPGRADE_PYTHON"], "-c", os.environ["UPGRADE_LOAD"], args[2]]
+        secret = subprocess.run(load, capture_output=True, text=True, check=True).stdout.strip()
     with open(os.environ["UPGRADE_LOG"], "a") as log:
         log.write(f"check:{{args[2]}}{{':' + secret if secret else ''}} {id} {{current}}\\n")
     if os.environ.get("UPGRADE_CHECK") == "refuse" or args[2] == os.environ.get("UPGRADE_REFUSE"):

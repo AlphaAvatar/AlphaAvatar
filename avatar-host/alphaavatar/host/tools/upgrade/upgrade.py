@@ -34,11 +34,12 @@ parser and catalog, for the default bundle, keeping what the current environment
 earlier bundles keep working. Its own commands check it: its command runs the target, its
 native code loads, its ``config check`` accepts the bundle. The default bundle and the stored
 credentials those commands read come from one read of the settings under the lock, so a setup
-that ran just before is planned and checked as it left them. Only then does current switch,
-once. Until then a failure or signal leaves current, the command, configurations, credentials,
-workspaces and model caches as they were, and removes what this run made: a directory is
-moved in and recorded as this run's while signals wait. The previous version and environment
-stay; ``alphaavatar cleanup`` removes them.
+that ran just before is planned and checked as it left them; the .env file's values from this
+command's own read of it, as they run from / and read no file again. Only then does current
+switch, once. Until then a failure or signal leaves current, the command, configurations,
+credentials, workspaces and model caches as they were, and removes what this run made: a
+directory is moved in and recorded as this run's while signals wait. The previous version and
+environment stay; ``alphaavatar cleanup`` removes them.
 """
 
 from __future__ import annotations
@@ -358,11 +359,13 @@ def upgrade(
     stored for it; the target's commands run with ``environ`` filled as start fills it, the
     default credentials and the stored ones: a value ``environ`` holds wins, an empty or blank
     one gives way to the .env file's (``file``, as ``load_env_file`` loaded it), then to the
-    stored one. Those its bundle names the target fills as it loads it. ``step`` hears each step
-    begin (summary None) and end; ``progress`` what goes on within one.
+    stored one. Those its bundle names the target fills as it loads it, from the same ``file``,
+    given to its commands to read in place of one. ``step`` hears each step begin (summary
+    None) and end; ``progress`` what goes on within one.
     """
     from alphaavatar.host.configs.credentials import (
         DEFAULT_CREDENTIALS,
+        FILE_VALUES,
         fill_credentials,
         read_stored,
     )
@@ -375,6 +378,7 @@ def upgrade(
         settings = read_stored(paths)
         environ, stored = dict(environ), settings.credentials
         fill_credentials(environ, (*DEFAULT_CREDENTIALS, *stored), file or {}, stored)
+        environ[FILE_VALUES] = json.dumps(dict(file or {}))  # In the environment, not argv.
         bundle = None
         if previous is not None and previous.parent.name == "envs":
             bundle = settings.checked().get("default_bundle")

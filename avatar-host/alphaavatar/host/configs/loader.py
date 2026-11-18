@@ -161,10 +161,11 @@ def validate_plugin_settings(config: ApplicationConfig) -> dict[str, Any]:
 
 
 def _composed(
-    source: str | Path | ConfigSource, overrides: Sequence[str]
+    source: str | Path | ConfigSource, overrides: Sequence[str], settings: Settings | None
 ) -> tuple[dict[str, Any], ApplicationPaths]:
     """The file with its profiles in place and the overrides applied, interpolated; and the
-    home it belongs to."""
+    home it belongs to. With the ``settings`` loading read, the credentials it names are filled
+    before it is interpolated, and hidden from logs."""
     import yaml
     from omegaconf import OmegaConf
     from omegaconf.errors import OmegaConfBaseException
@@ -200,17 +201,15 @@ def _composed(
     )
     data = compose_profiles(data, paths, source.origin)
     try:
-        data = _mapping(OmegaConf.to_container(OmegaConf.merge(data, changes), resolve=True))
+        merged = OmegaConf.merge(data, changes)
+        if settings is not None:  # Before interpolation: a value still says what it reads.
+            from .credentials import fill_configured
+
+            fill_configured(OmegaConf.to_container(merged), settings)
+        data = _mapping(OmegaConf.to_container(merged, resolve=True))
     except OmegaConfBaseException:
         raise ValueError("Invalid YAML, configuration override, or interpolation") from None
     return data, paths
-
-
-def _credentials(data: Mapping[str, Any], settings: Settings | None) -> None:
-    if settings is not None:
-        from .credentials import fill_configured
-
-        fill_configured(data, settings)
 
 
 def load_selections(
@@ -224,8 +223,7 @@ def load_selections(
     fills them."""
     from alphaavatar.agents.configs import AvatarConfig
 
-    data, _ = _composed(source, overrides)
-    _credentials(data, settings)
+    data, _ = _composed(source, overrides, settings)
     data.pop("application", None)
     host = HostConfig.model_validate(data.pop("host", {}))
     return host, AvatarConfig.model_validate(data)
@@ -240,11 +238,11 @@ def load_application(
 
     ``profiles.<section>=<name>`` overrides choose references; every other override applies
     after composition, as to a single file. With the ``settings`` ``load_environment`` read,
-    the credentials the composed file names (``api_key_env``, MCP ``<NAME>`` placeholders) are
-    filled first from the .env file, then the stored ones, and hidden from logs.
+    the credentials the composed file names (``api_key_env``; in MCP servers, ``<NAME>``
+    placeholders and ``${oc.env:NAME}``) are filled first from the .env file, then the stored
+    ones, and hidden from logs.
     """
-    data, paths = _composed(source, overrides)
-    _credentials(data, settings)
+    data, paths = _composed(source, overrides, settings)
     duration = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS")
     if duration is not None:
         host = _mapping(data.get("host", {}))
