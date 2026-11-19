@@ -78,7 +78,8 @@ def test_an_installed_package_says_which_missing_plugins_setup_installs(
     (base / "share" / "alphaavatar").mkdir(parents=True)
     plugins = {
         "loop": {"nowhere": "alpha-avatar-plugins-loop"},  # Offered by a setup choice.
-        "tools.deepresearch": {"elsewhere": "alpha-avatar-plugins-deepresearch"},  # Not offered.
+        # No choice of an asked setup selects it; `setup <bundle>` installs it all the same.
+        "tools.deepresearch": {"elsewhere": "alpha-avatar-plugins-deepresearch"},
     }
     (base / "share/alphaavatar/catalog.json").write_text(json.dumps({"plugins": plugins}))
     assert main(["config", "init", "alpha", "--avatar-id", "alpha"]) == 0
@@ -89,12 +90,24 @@ def test_an_installed_package_says_which_missing_plugins_setup_installs(
             capsys, "loop.plugin=nowhere", "tools.deepresearch.plugin=elsewhere", "router.plugin=x"
         )
     assert code == 2
-    assert (
-        "loop.plugin: no installed package provides loop 'nowhere'; "
-        "`alphaavatar setup` installs it (alpha-avatar-plugins-loop)" in output
-    )
-    for location, name in (("tools.deepresearch", "elsewhere"), ("router", "x")):
+    for location, name, package in (
+        ("loop", "nowhere", "alpha-avatar-plugins-loop"),
+        ("tools.deepresearch", "elsewhere", "alpha-avatar-plugins-deepresearch"),
+    ):
         assert (
             f"{location}.plugin: no installed package provides {location} {name!r}; "
-            "this release's `alphaavatar setup` does not offer it" in output
+            f"`alphaavatar setup` installs it ({package})" in output
         )
+    assert (
+        "router.plugin: no installed package provides router 'x'; "
+        "this release's `alphaavatar setup` does not offer it" in output
+    )
+    # What the check says setup installs, `setup <bundle>` plans from the same catalog.
+    from alphaavatar.host.configs import load_selections, select_configuration
+    from alphaavatar.host.tools.setup.choices import bundle_requirements
+
+    selected = ["tools.deepresearch.plugin=elsewhere"]
+    host, avatar = load_selections(select_configuration("alpha", selected), selected)
+    found, unserved = bundle_requirements(host, avatar, plugins)
+    assert found["alpha-avatar-plugins-deepresearch"] == "tools.deepresearch.plugin"
+    assert not [item for item in unserved if item.startswith("tools.deepresearch")]

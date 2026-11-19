@@ -139,19 +139,15 @@ def with_extra(distribution: str, name: str) -> str:
 def offered() -> dict[str, dict[str, str]] | None:
     """By capability type and name, the requirement `alphaavatar setup` installs for each
     implementation it offers here; None outside an installed package, where it installs none.
+    Its catalog's, which `setup <bundle>` plans a bundle's selections from: MCP's too, though no
+    question of an asked setup selects it.
     """
-    from alphaavatar.host.tools.setup.choices import requirements_offered
     from alphaavatar.host.tools.setup.environment import Installation, SetupError
 
     try:
-        catalog = Installation.running().catalog
+        return Installation.running().catalog.get("plugins", {})
     except SetupError:
         return None
-    reachable = requirements_offered()
-    return {
-        module: {name: needed for name, needed in names.items() if needed in reachable}
-        for module, names in catalog.get("plugins", {}).items()
-    }
 
 
 def unavailable(error: UnavailablePlugins) -> MissingCapabilities:
