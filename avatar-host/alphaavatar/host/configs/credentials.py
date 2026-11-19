@@ -49,6 +49,7 @@ FILE = re.compile(r"credentials-[0-9a-f]{16}\.env")
 # file: upgrade's target runs from /, where a relative ENV_FILE names another or none.
 FILE_VALUES = "ALPHAAVATAR_ENV_FILE_VALUES"
 _OC_ENV = re.compile(r"\$\{oc\.env:\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
+_DISABLED = {"1", "true", "t", "yes", "y"}  # PYTHON_DOTENV_DISABLED, as python-dotenv reads it.
 # What components read a credential from when the configuration names no variable of its own
 # for it, as .env.template lists them.
 DEFAULT_CREDENTIALS = (
@@ -179,11 +180,30 @@ def load_credentials(paths: ApplicationPaths, file: Mapping[str, str] | None = N
     return settings
 
 
+def _servers(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    tools = data.get("tools")
+    mcp = tools.get("mcp") if isinstance(tools, Mapping) else None
+    servers = mcp.get("servers") if isinstance(mcp, Mapping) else None
+    return servers if isinstance(servers, Mapping) else {}
+
+
+def interpolated_credentials(data: Mapping[str, Any]) -> set[str]:
+    """The variables a composed configuration, as written, interpolates as credentials: each
+    ``${oc.env:NAME}`` of an MCP server's ``Authorization`` header, which once interpolated no
+    longer says what it read. Any other interpolation reads an ordinary variable."""
+    names: set[str] = set()
+    for server in _servers(data).values():
+        headers = server.get("headers") if isinstance(server, Mapping) else None
+        for header, value in headers.items() if isinstance(headers, Mapping) else ():
+            if str(header).casefold() == "authorization" and isinstance(value, str):
+                names.update(_OC_ENV.findall(value))
+    return names
+
+
 def configured_credentials(data: Mapping[str, Any]) -> set[str]:
-    """The variables a composed configuration, as written, reads credentials from by name: each
-    ``api_key_env`` it holds, wherever, and in its MCP servers the ``<NAME>`` placeholders and
-    the ``${oc.env:NAME}`` interpolations, which once resolved no longer say where they read.
-    An interpolation anywhere else reads an ordinary variable."""
+    """The variables a composed, interpolated configuration reads credentials from by name:
+    each ``api_key_env`` it holds, wherever, and the ``<NAME>`` placeholders of its MCP servers,
+    which resolve as credentials when it is validated."""
     from alphaavatar.agents.utils.env_utils import ENV_PATTERN
 
     names: set[str] = set()
@@ -198,21 +218,19 @@ def configured_credentials(data: Mapping[str, Any]) -> set[str]:
             for item in value:
                 walk(item, servers)
         elif servers and isinstance(value, str):
-            names.update(ENV_PATTERN.findall(value), _OC_ENV.findall(value))
+            names.update(ENV_PATTERN.findall(value))
 
     walk(data, False)
-    tools = data.get("tools")
-    mcp = tools.get("mcp") if isinstance(tools, Mapping) else None
-    walk(mcp.get("servers") if isinstance(mcp, Mapping) else None, True)
+    walk(_servers(data), True)
     return names
 
 
-def fill_configured(data: Mapping[str, Any], settings: Settings) -> None:
-    """Fill the credentials a composed configuration names that the environment holds no
-    value for, from the .env file, then the stored ones, as ``load_credentials`` read them;
-    and hide their values from logs. Before it is interpolated: ``${oc.env:NAME}`` then reads
-    the value filled, as its placeholders do when it is validated."""
-    names = configured_credentials(data)
+def fill_configured(names: Iterable[str], settings: Settings) -> None:
+    """Fill the credentials a configuration names (``interpolated_credentials`` before it is
+    interpolated, ``configured_credentials`` after) that the environment holds no value for,
+    from the .env file, then the stored ones, as ``load_credentials`` read them; and hide
+    their values from logs."""
+    names = set(names)
     fill_credentials(os.environ, names, settings.file, settings.credentials)
     _hide(names)
 
@@ -224,11 +242,11 @@ def load_env_file() -> dict[str, str]:
     ALPHAAVATAR_HOME, which chooses the home that stores them, is filled here: an empty or blank
     one takes the file's. A missing file sets nothing. Given the values another command read
     (``FILE_VALUES``), they load in its place, and no file is read."""
-    from dotenv.main import DotEnv, _load_dotenv_disabled
+    from dotenv.main import DotEnv
 
     if (given := os.environ.get(FILE_VALUES)) is not None:
         values = json.loads(given)
-    elif _load_dotenv_disabled():  # PYTHON_DOTENV_DISABLED, as load_dotenv reads it.
+    elif os.environ.get("PYTHON_DOTENV_DISABLED", "").casefold() in _DISABLED:
         values = {}
     else:
         dotenv = DotEnv(os.environ.get("ENV_FILE", ".env"), encoding="utf-8", override=False)

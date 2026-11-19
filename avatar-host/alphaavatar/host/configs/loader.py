@@ -165,10 +165,12 @@ def _composed(
 ) -> tuple[dict[str, Any], ApplicationPaths]:
     """The file with its profiles in place and the overrides applied, interpolated; and the
     home it belongs to. With the ``settings`` loading read, the credentials it names are filled
-    before it is interpolated, and hidden from logs."""
+    and hidden from logs: those it interpolates before, the others once it is interpolated."""
     import yaml
     from omegaconf import OmegaConf
     from omegaconf.errors import OmegaConfBaseException
+
+    from .credentials import configured_credentials, fill_configured, interpolated_credentials
 
     if not isinstance(source, ConfigSource):
         source = ConfigSource(Path(source))
@@ -203,12 +205,12 @@ def _composed(
     try:
         merged = OmegaConf.merge(data, changes)
         if settings is not None:  # Before interpolation: a value still says what it reads.
-            from .credentials import fill_configured
-
-            fill_configured(OmegaConf.to_container(merged), settings)
+            fill_configured(interpolated_credentials(OmegaConf.to_container(merged)), settings)
         data = _mapping(OmegaConf.to_container(merged, resolve=True))
     except OmegaConfBaseException:
         raise ValueError("Invalid YAML, configuration override, or interpolation") from None
+    if settings is not None:  # And after: an api_key_env may itself be interpolated.
+        fill_configured(configured_credentials(data), settings)
     return data, paths
 
 
@@ -238,9 +240,9 @@ def load_application(
 
     ``profiles.<section>=<name>`` overrides choose references; every other override applies
     after composition, as to a single file. With the ``settings`` ``load_environment`` read,
-    the credentials the composed file names (``api_key_env``; in MCP servers, ``<NAME>``
-    placeholders and ``${oc.env:NAME}``) are filled first from the .env file, then the stored
-    ones, and hidden from logs.
+    the credentials the composed file names (each ``api_key_env``, as interpolated; in MCP
+    servers, ``<NAME>`` placeholders and ``${oc.env:NAME}`` in ``Authorization``) are filled
+    first from the .env file, then the stored ones, and hidden from logs.
     """
     data, paths = _composed(source, overrides, settings)
     duration = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS")

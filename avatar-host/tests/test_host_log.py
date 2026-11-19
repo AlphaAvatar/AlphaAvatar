@@ -88,7 +88,8 @@ def test_the_keys_a_configuration_names_never_reach_the_log_output(
     tmp_path: Path, socket_root: Path, owned_addresses: set[object]
 ) -> None:
     # Fictional values; only the first's name says it holds a secret. The bundle names the next
-    # three, a server's key is called after it: the Host names them all for logs to hide.
+    # three, one through an interpolated api_key_env; a server's key is called after it: the
+    # Host names them all for logs to hide. GITHUB_PAT is empty here, and the .env file's.
     from alphaavatar.agents.utils.env_utils import server_key
     from alphaavatar.core.log.events import log_event
     from alphaavatar.host.configs import load_application, select_configuration
@@ -106,22 +107,26 @@ def test_the_keys_a_configuration_names_never_reach_the_log_output(
     paths = ApplicationPaths.from_root(tmp_path / "home")
     create_bundle(paths, "alpha", avatar_id="alpha", make_default=True)
     # MCP servers as a profile writes them: a placeholder, and an interpolation that reads its
-    # variable as the file loads. The introduction's reads an ordinary one, which stays shown.
+    # variable as the file loads, beside a header that reads an ordinary one, which stays shown.
     (paths.configs.profiles_dir / "alpha/plugins/tools/tools.yaml").write_text(
         "mcp:\n  plugin: default\n  enabled: true\n  servers:\n"
         "    docs:\n      url: https://mcp.invalid/\n"
         "      headers:\n        Authorization: Bearer <MCP_PAT>\n"
         "    code:\n      url: https://code.invalid/\n"
         "      headers:\n        Authorization: Bearer ${oc.env:GITHUB_PAT}\n"
+        "        X-Region: ${oc.env:REGION}\n"
     )
-    overrides = ["voice.tts.api_key_env=MODEL_AUTH", "avatar.introduction=In ${oc.env:REGION}."]
+    overrides = ["voice.tts.api_key_env=${oc.env:TTS_KEY_NAME,MODEL_AUTH}"]
+    (tmp_path / "chosen.env").write_text(f"GITHUB_PAT={values['GITHUB_PAT']}\n")
     stream = io.StringIO()
     variables = values | {
+        "GITHUB_PAT": "",
         "REGION": "region-west-0042",
         "ALPHAAVATAR_HOME": str(paths.root),
-        "ENV_FILE": str(tmp_path / "none"),
+        "ENV_FILE": str(tmp_path / "chosen.env"),
     }
     with mock.patch.dict(os.environ, variables):
+        os.environ.pop("TTS_KEY_NAME", None)
         settings = load_environment()
         load_application(select_configuration(None, overrides, settings), overrides, settings)
         logs = HostLog(devmode=True, stream=stream)

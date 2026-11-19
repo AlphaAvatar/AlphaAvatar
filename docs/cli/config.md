@@ -76,11 +76,12 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
 3. the credentials [`alphaavatar setup`](setup.md) stored, in the file the settings name.
 
 - The credentials are the variables the configuration names for them, under any name: each
-  `api_key_env` (a bundle's own, a server of your own's `ALPHAAVATAR_SERVER_KEY_<hash>`) and,
-  in its MCP servers, each `<NAME>` placeholder and `${oc.env:NAME}`; those components read
-  when it names none (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`,
-  `GOOGLE_API_KEY`, `VOICEAI_API_KEY`, `TAVILY_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY` and the
-  three `LIVEKIT_*`); and those setup stored.
+  `api_key_env` as it is once interpolated, such as `${oc.env:TTS_KEY_NAME,MODEL_AUTH}` (a
+  bundle's own, a server of your own's `ALPHAAVATAR_SERVER_KEY_<hash>`); in its MCP servers,
+  each `<NAME>` placeholder and each `${oc.env:NAME}` of an `Authorization` header; those
+  components read when it names none (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+  `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `VOICEAI_API_KEY`, `TAVILY_API_KEY`, `QDRANT_URL`,
+  `QDRANT_API_KEY` and the three `LIVEKIT_*`); and those setup stored.
 - An empty or blank credential counts as unset: it gives way to the next source and never takes
   another's place, and a value is taken as it is set, spaces and all.
 - `.env` itself loads as python-dotenv loads it: a variable the environment sets stays, empty
@@ -89,8 +90,10 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
   It is parsed once: `${NAME}` reads the environment's value first, then the file's earlier
   lines, never a later one; it reads a credential as the environment holds it, before the
   credentials are filled.
-- In the configuration, `${oc.env:NAME}` reads a credential once it is filled: the
-  configuration is interpolated after. It reads any other variable as the environment holds it.
+- In the configuration, `${oc.env:NAME}` reads a default or stored credential, and one an
+  `Authorization` header names, once it is filled. Any other, such as an MCP server's
+  `X-Region: ${oc.env:REGION}`, reads an ordinary variable as the environment holds it, empty
+  too, and logs show its value.
 - `upgrade` reads `.env` once, and the target build's plan and check, which run from `/`, read
   those values instead of a file: the ones they read are the ones `upgrade` read.
 - `ALPHAAVATAR_HOME`, which chooses the home that stores credentials, counts empty or blank as

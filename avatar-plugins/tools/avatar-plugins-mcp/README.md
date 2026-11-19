@@ -67,9 +67,12 @@ headers:
 ```
 
 Provide `GITHUB_PAT` through the environment, never as a committed token.
-`Bearer ${oc.env:GITHUB_PAT}` reads it too. Either way it is a credential: an empty one takes
-the `.env` file's or the stored value, and logs hide it
-([credentials](../../../docs/cli/config.md#credentials)). The configuration above is a
+`Bearer ${oc.env:GITHUB_PAT}` reads it too. A `<NAME>` placeholder is a credential wherever a
+server's settings hold it, `${oc.env:NAME}` only in the `Authorization` header: empty or blank,
+it takes the `.env` file's or the stored value, and logs hide it
+([credentials](../../../docs/cli/config.md#credentials)). Anywhere else, such as
+`X-Region: ${oc.env:REGION}`, `${oc.env:NAME}` reads an ordinary variable as the environment
+holds it, empty too, and logs show it. The configuration above is a
 fragment; see [complete examples](../../../examples/README.md).
 Restart Host after changing configured servers, transport settings or credentials.
 

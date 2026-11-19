@@ -10,7 +10,8 @@
 | 收尾 | cleanup 三处保护缺口；凭据空值统一规则；Router 两项计时测试的测量起点；RAG 能力描述 | 2026-11-18 | `174d1632` | `cde30675`（用户提交） | 已提交 |
 | 收尾二 | `.env` 凭据与普通变量分开、插值恢复进程值优先；RAG 缺失密钥检查；Router 偶发定位与测试同步 | 2026-11-18 | `cde30675` | `0e0c7b3a`（用户提交） | 已提交 |
 | 收尾三 | 凭据按实际声明补齐，删除按名称猜测；日志脱敏覆盖配置声明的密钥和自建服务器密钥 | 2026-11-18 | `0e0c7b3a` | `a6f97174`（用户提交） | 已提交 |
-| 收尾四 | `.env` 只解析一次；upgrade 目标使用父命令的文件快照；MCP 的 `${oc.env:NAME}` 按凭据补齐和脱敏 | 2026-11-19 | `a6f97174` | 未提交（用户提交） | 待审查 |
+| 收尾四 | `.env` 只解析一次；upgrade 目标使用父命令的文件快照；MCP 的 `${oc.env:NAME}` 按凭据补齐和脱敏 | 2026-11-19 | `a6f97174` | `ee7f43fb`（用户提交） | 已提交 |
+| 收尾五 | MCP 只有 Authorization 里的 `${oc.env:NAME}` 算凭据；插值后的 `api_key_env` 补齐并脱敏；去掉 python-dotenv 私有函数 | 2026-11-19 | `ee7f43fb` | 未提交（用户提交） | 待审查 |
 
 ## 收尾（基线 `174d1632`）
 
@@ -259,3 +260,62 @@
 - `ALPHAAVATAR_MAX_SESSION_SECONDS`、`ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS` 遇空值报解析错误，仍按要求不处理。
 - MCP servers 以外、写在凭据位置的 `${oc.env:NAME}` 仍按普通变量处理，例如 `vdb_config.api_key: ${oc.env:MY_QDRANT}`。setup 写的 `${oc.env:QDRANT_API_KEY,null}` 不受影响：`QDRANT_*` 在默认清单里，`*_API_KEY` 也按名称隐藏。
 - 文件快照放在一个环境变量里，受 Linux 单个环境变量 128 KiB 的上限约束（`MAX_ARG_STRLEN`）。超过时目标命令应无法启动，这一点没有实测。普通 `.env` 远小于这个上限。
+
+## 收尾五（基线 `ee7f43fb`）
+
+`.env` 单次解析、升级目标使用父命令的文件快照、`GITHUB_PAT` 的脱敏路径都已接受。快照大小的限制按要求只记录，传递方式不变。本轮修三处问题。
+
+### 1. MCP 里只有凭据位置的 `${oc.env:NAME}` 算凭据
+
+- **问题**（审查复现）：上一轮把 MCP servers 下所有 `${oc.env:NAME}` 都当凭据。`X-Region: ${oc.env:REGION}` 在进程 `REGION=""`、文件 `REGION=us-east-1` 时，进程的空值被文件值覆盖，区域值也进了脱敏名单，日志里的路由信息因此被隐藏。
+- **现在的规则**：沿用已有的明确凭据入口，不新增分类：
+  - `api_key_env`；
+  - MCP 的 `<NAME>` 占位符：它的解析本来就按凭据规则处理，空值或空白算缺失，所以在 server 设置里任何位置都算凭据，与之前相同；
+  - `${oc.env:NAME}` 只有写在 `Authorization` 请求头里才算凭据，请求头名不区分大小写。
+  - 其他位置的 `${oc.env:NAME}` 都是普通变量，比如别的请求头、URL 和参数：保留进程里的空值，不补齐，也不进脱敏名单。
+- **实现**：`interpolated_credentials()` 只读各 server 的 `headers`，从 `Authorization` 的值里取 `${oc.env:NAME}`。
+
+### 2. 插值后实际生效的 `api_key_env`
+
+- **问题**：上一轮只扫描插值前的配置，`api_key_env: ${oc.env:TTS_KEY_NAME,MODEL_AUTH}` 收集到的是这串原文，不是变量名。进程里为空时拿不到文件值；进程值有效时，名字也没登记脱敏。
+- **修复**：`loader._composed` 分两步：
+  - 插值前：按第 1 项补齐 `Authorization` 里引用的凭据并登记脱敏。这一步保留，因为插值后就看不出来源。
+  - 插值后：`configured_credentials()` 在解析后的配置上收集每个 `api_key_env` 的实际值和 MCP 的 `<NAME>`，同样补齐并登记。这一扫描与 `a6f97174` 的写法相同。
+- `TTS_KEY_NAME` 这类只用来选变量名的变量本身是普通变量，不补齐，也不进名单。
+
+### 3. python-dotenv 私有函数
+
+- **问题**：上一轮导入了 `dotenv.main._load_dotenv_disabled`，但 Host 声明的是 `python-dotenv>=1.0.1`。逐个安装核对后确认：1.0.1、1.1.0、1.1.1 都没有这个函数，1.2.0 才有。按声明的最低版本安装时，`load_env_file()` 直接报 `ImportError`。
+- **修复**：不再使用私有函数。`PYTHON_DOTENV_DISABLED` 的判断写在 `credentials.py`，取值与 python-dotenv 1.2 相同（`1`、`true`、`t`、`yes`、`y`，不区分大小写）。依赖声明仍是 `>=1.0.1`，元数据和 `uv.lock` 不需要改。
+- **最低版本**：`DotEnv(path, encoding=..., override=False).dict()` 的签名和插值规则从 1.0.1 到 1.2.1 都一样，已逐个对照源码。
+
+### 4. 文档
+
+`docs/cli/config.md`「Credentials」、`.env.template` 开头说明、MCP README 的凭据一段。
+
+### 5. 验证
+
+- **新回归**：
+  - MCP：同一个 server 里同时有 `Authorization: Bearer ${oc.env:GITHUB_PAT}` 和 `X-Region: ${oc.env:REGION}`，另一个 server 用小写的 `authorization`。密钥在进程里为空或空白时取 `.env` 的值，并被隐藏；`X-Region` 保留进程里的空值，`REGION` 不进名单，服务器地址和区域值在脱敏后的文本里照常显示。
+  - `api_key_env` 由插值选变量名，分 4 种：用默认值选中 `MODEL_AUTH`，进程为空取文件值；进程为空白时文件值先于旧的已存值；由 `TTS_KEY_NAME` 选中 `CHOSEN_AUTH`，取文件值；进程值有效时保留进程值。每种都检查选中的名字已登记、`TTS_KEY_NAME` 未登记、值被隐藏。
+  - Host 日志测试改为：`api_key_env` 用插值写；`GITHUB_PAT` 在进程里为空、由 `.env` 补上；同一个 server 加上 `X-Region`。五个虚构密钥值都不出现在真实日志输出里，区域值、服务器地址、异常类型和其他字段保留。
+  - 用 `ee7f43fb` 的 loader 跑这些用例，6 个全部失败。
+- **最低版本**：`uv run --with python-dotenv==1.0.1` 下，确认 pytest 用的是 1.0.1 的解释器，跑 Host 的 configs、Host 日志、upgrade、cleanup、check、setup 测试：140 passed，包括禁用 dotenv 的用例。同样条件下，`ee7f43fb` 的 `credentials.py` 报 `ImportError: cannot import name '_load_dotenv_disabled'`。
+- **变异测试**：32 个全部被抓到（`mutants/run9.py`）。
+  - 上一轮 28 个里的 25 个按新代码调整后重跑。
+  - 另外 3 个换成本轮的版本：MCP 里所有 `${oc.env:}` 都当凭据、`Authorization` 的引用不收集、`Authorization` 插值后才补齐。
+  - 新增 4 个：请求头名区分大小写、`api_key_env` 按插值前原文收集、插值选中的名字不登记脱敏、在 python-dotenv 1.0.1 下改回私有函数。
+- **仓库检查**：`ruff check`、`ruff format --check`、`git diff --check`、`uv lock --check`、`check_workspace.py` 通过，改动文档的链接 0 处问题。
+- **离线全量**：821 passed（311 s），无失败；之后只改了工作记录。
+- **未验证**：
+  - 该 SHA 的 CI 没有查看；CI 用锁定的 1.2.1，不覆盖最低版本，最低版本只做了上面这次手动核对；
+  - 真实安装包没有复验；
+  - 没有调用计费服务；
+  - LiveKit 通话由用户验收。
+
+### 6. 记录，未改
+
+- `ALPHAAVATAR_MAX_SESSION_SECONDS`、`ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS` 遇空值报解析错误，仍不处理。
+- 文件快照受单个环境变量 128 KiB 的上限约束（见收尾四），按要求只记录。
+- 其他携带凭据的请求头（如 `X-API-Key`）写成 `${oc.env:NAME}` 时按普通变量处理，这类请求头应使用 `<NAME>`。
+- `DotEnv` 位于 `dotenv.main`，没有下划线，但也不在 python-dotenv 的 `__all__` 里。

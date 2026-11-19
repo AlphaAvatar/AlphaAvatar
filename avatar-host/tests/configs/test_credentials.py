@@ -226,6 +226,97 @@ def test_a_variable_a_bundle_names_takes_the_first_value_neither_empty_nor_blank
         assert os.environ["MODEL_AUTH"] == ""
 
 
+def _hidden() -> set[str]:
+    from alphaavatar.core.log.records import HIDDEN_ENV
+
+    return set(os.environ.get(HIDDEN_ENV, "").split(","))
+
+
+def test_in_an_mcp_server_only_authorization_interpolates_a_credential(tmp_path: Path) -> None:
+    """``${oc.env:NAME}`` in an Authorization header, however cased, is a credential: empty or
+    blank, it takes the .env file's value, and logs hide it. In another header it reads an
+    ordinary variable as the environment holds it, empty too, and logs show it."""
+    from alphaavatar.core.log.records import Redactor
+    from alphaavatar.host.configs import load_application, select_configuration
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True)
+    (paths.configs.profiles_dir / "alpha/plugins/tools/tools.yaml").write_text(
+        "mcp:\n  plugin: default\n  enabled: true\n  servers:\n"
+        "    docs:\n      url: https://mcp.invalid/\n"
+        "      headers:\n        Authorization: Bearer ${oc.env:GITHUB_PAT}\n"
+        "        X-Region: ${oc.env:REGION}\n"
+        "    code:\n      url: https://code.invalid/\n"
+        "      headers:\n        authorization: token ${oc.env:CODE_PAT}\n"
+    )
+    lines = [f"ALPHAAVATAR_HOME={paths.root}", "GITHUB_PAT=gh-file", "CODE_PAT=code-file"]
+    (tmp_path / "chosen.env").write_text("\n".join([*lines, "REGION=us-east-1"]))
+    variables = {"GITHUB_PAT": "", "CODE_PAT": " ", "REGION": ""}
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env")} | variables):
+        os.environ.pop("ALPHAAVATAR_HOME", None)
+        settings = load_environment()
+        config = load_application(select_configuration(None, (), settings), (), settings)
+        servers = config.avatar.tools.mcp.servers
+        assert {key: server["headers"] for key, server in servers.items()} == {
+            "docs": {"Authorization": "Bearer gh-file", "X-Region": ""},
+            "code": {"authorization": "token code-file"},
+        }
+        assert os.environ["REGION"] == "" and "REGION" not in _hidden()
+        os.environ["REGION"] = "us-east-1"
+        shown = Redactor()("refused gh-file and code-file at https://mcp.invalid/ in us-east-1")
+        assert shown == "refused [redacted] and [redacted] at https://mcp.invalid/ in us-east-1"
+
+
+# A variable an api_key_env names by interpolation, by TTS_KEY_NAME or else its default, as the
+# environment, the .env file and the stored credentials hold it, and what loading leaves.
+CHOSEN = [
+    (None, "MODEL_AUTH", "", "from-file", None, "from-file"),
+    (None, "MODEL_AUTH", " ", "from-file", "stored-old", "from-file"),
+    ("CHOSEN_AUTH", "CHOSEN_AUTH", "", "from-file", None, "from-file"),
+    ("CHOSEN_AUTH", "CHOSEN_AUTH", "auth-set", "from-file", "stored-old", "auth-set"),
+]
+
+
+@pytest.mark.parametrize(
+    ("chooses", "chosen", "environment", "file", "stored", "left"),
+    CHOSEN,
+    ids=["default", "default-file-before-stored", "chosen", "chosen-environment"],
+)
+def test_the_variable_an_interpolated_api_key_env_names_is_a_credential(
+    tmp_path: Path,
+    chooses: str | None,
+    chosen: str,
+    environment: str,
+    file: str,
+    stored: str | None,
+    left: str,
+) -> None:
+    from alphaavatar.core.log.records import Redactor
+    from alphaavatar.host.configs import load_application, select_configuration
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    kept = {chosen: stored} if stored else None
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=kept)
+    lines = [f"ALPHAAVATAR_HOME={paths.root}", f'{chosen}="{file}"']
+    (tmp_path / "chosen.env").write_text("\n".join(lines))
+    overrides = ["voice.tts.api_key_env=${oc.env:TTS_KEY_NAME,MODEL_AUTH}"]
+    variables = {"ENV_FILE": str(tmp_path / "chosen.env"), chosen: environment}
+    with mock.patch.dict(os.environ, variables):
+        for name in ("ALPHAAVATAR_HOME", *([] if chooses else ["TTS_KEY_NAME"])):
+            os.environ.pop(name, None)
+        if chooses:
+            os.environ["TTS_KEY_NAME"] = chooses
+        settings = load_environment()
+        config = load_application(
+            select_configuration(None, overrides, settings), overrides, settings
+        )
+        assert config.avatar.voice.tts.api_key_env == chosen
+        assert credential(chosen) == left
+        # The name it holds is no secret; the value of the one it names is.
+        assert chosen in _hidden() and "TTS_KEY_NAME" not in _hidden()
+        assert Redactor()(f"key {left} refused") == "key [redacted] refused"
+
+
 def _readers(name: str):
     """Each reader of a credential, with ``name`` for its variable where it takes one."""
     from alphaavatar.agents.avatar.provider.factory import create_embedding_model, create_llm_model
