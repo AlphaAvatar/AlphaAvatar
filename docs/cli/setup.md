@@ -112,9 +112,11 @@ there too, and nothing is enabled.
   `settings.yaml` makes the bundle the default and names the credentials stored with it, so even
   a killed setup leaves both as they were or both new.
 - Failing or interrupted before that, the current version, command, bundles, settings and
-  credentials stay as they were, and the environment this run made is removed. Model weights
-  are not part of the plan: runners download them into the model cache when they start, at
-  `start` and in [`doctor`](doctor.md#runtime-start)'s runtime diagnosis alike.
+  credentials stay as they were, and the environment this run made is removed: whole into a
+  marked stage first, and a stage, its own or one a stopped run left, loses its mark last, so a
+  run stopped even then leaves only marked stages, which the next installation removes. Model
+  weights are not part of the plan: runners download them into the model cache when they
+  start, at `start` and in [`doctor`](doctor.md#runtime-start)'s runtime diagnosis alike.
 - Takes the lock `install.sh` takes, `<prefix>/.install.lock`: a second installation into the
   prefix is refused while one runs. A lock that is not a regular file, a link or a pipe, is
   refused and left as it is.

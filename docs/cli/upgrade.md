@@ -105,7 +105,10 @@ as `upgrade` read it when it started, never the file again, even under a relativ
 A failure or a signal before the switch leaves `current`, the command and the previous version
 and environment as they were, and removes what this run made: each directory it makes is moved
 into place and recorded as its own while signals wait, so none is left whenever one arrives.
-The reason goes to stderr:
+A base or environment it removes goes whole into a marked stage first, and every stage, its
+own or one a stopped run left, loses its mark last: stopped even then, a run leaves only marked
+stages, which the next `install.sh`, `setup`, `upgrade` or `cleanup` removes. The reason goes to
+stderr:
 
 ```text
 FAIL  Upgrade failed; AlphaAvatar 0.6.9-0600b13e01d0 stays current

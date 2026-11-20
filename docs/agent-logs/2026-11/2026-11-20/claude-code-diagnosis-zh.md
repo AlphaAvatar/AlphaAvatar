@@ -18,7 +18,8 @@
 | 收尾修正 | `action` 脱敏；转义的 `\${oc.env:}` 不再误报；`Authorization` 凭据为空时拒绝加载；P95 说明 | 2026-11-20 | `66d72583` | `8c23a217` | 已提交 |
 | 收尾二与真实 Doctor | 空凭据检查只针对会创建的 MCP；`${oc.env:NAME,default}` 的空凭据；真实 Doctor 视觉开、关各 5 轮 | 2026-11-20 | `8c23a217` | `79147886` | 已提交 |
 | 延迟定位 | 嵌套默认值凭据；Doctor 文本收尾；提交等待与 Context 就绪定位；空记忆不做 embedding；VAD 默认 0.3 s | 2026-11-20 | `79147886` | `c6ea6c19` | 已提交 |
-| 收尾三 | `${oc.env:NAME,}` 的空默认值不再误报；寻址策略与模型限制的记录；延迟收益口径 | 2026-11-20 | `c6ea6c19` | — | 待审查 |
+| 收尾三 | `${oc.env:NAME,}` 的空默认值不再误报；寻址策略与模型限制的记录；延迟收益口径 | 2026-11-20 | `c6ea6c19` | `69e00be8` | 已提交 |
+| 安装中断收尾 | `install.sh` 的信号窗口与归属记录；install、setup、upgrade 的暂存目录最后删标记；ROADMAP、KD-7 状态 | 2026-11-21 | `69e00be8` | — | 待审查 |
 
 ## 1. 基线与 CI
 
@@ -419,3 +420,45 @@
 | 变异 | 改回按元素个数判断：两个回归都失败，其中 config check 输出原样复现误报 |
 | 离线全量 | 852 passed（303 s；原 851 + 新增参数用例 1） |
 | 仓库检查 | ruff check、format（791 个文件）、`git diff --check`、`uv lock --check`、`check_workspace.py`（16 个成员）通过 |
+
+## 12. 安装中断收尾（基线 `69e00be8`）
+
+依据：用户 2026-11-21 的任务。`69e00be8` 的两条 CI 都通过（Quality [44763949105](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44763949105) 全量 852 passed；Linux package [44763949326](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44763949326)）。两处异常中断见[升级日志](../2026-11-17/claude-code-upgrade-zh.md)第二步第 7 节。本轮没有付费调用。
+
+### 12.1 改动
+
+- **`install.sh` 的信号窗口**：
+  - 会话内实测：没有 trap 时，bash 收到 SIGTERM、SIGHUP 会立刻执行 EXIT trap，与仍在运行的子进程并行，子进程在 cleanup 之后才完成。`mv -T` 成功到 `fresh=` 之间的窗口就是这样留下新目录的。
+  - 现在，做出目录或链接并记录的步骤先 `hold`（trap 只记下信号），步骤的命令经 `calm` 忽略信号运行（Ctrl-C 也送到子进程）；步骤完成并记录后，`release` 再按原信号退出（130、143、129）。
+  - 覆盖：建 `versions/`；建暂存目录并写标记；`mv -T` 到 `versions/<id>`；建命令目录与链接；切换 `current`；切换后检查失败时的恢复。
+- **`install.sh` 的归属记录与清理**：
+  - 清理 trap 在取得锁后立即设置，不再等暂存目录建好；
+  - `versions/`（`made_versions`）和为命令新建的目录（`made_bin`，到原已存在的最深一层）都记录，失败时只删空目录；去掉 `made_prefix`；
+  - 本次的新版本目录在退出时先整体移进暂存目录，再随它删除。
+- **标记最后删除**：
+  - `environment.py` 新增 `remove_marked()`（先删内容，最后删标记和目录，这两步等待信号）、`remove_stages()`，以及 `discard()`（整体移进一个新的带标记暂存目录，再删除，即原 cleanup 的做法）；
+  - setup、upgrade 清理旧暂存目录改用前两个；setup 重建死掉的部分环境、失败后删除本次环境，upgrade 删除本次基础包，改用 `discard()`；cleanup 的 `_remove` 改为调用它们，行为不变；
+  - `install.sh` 的 `remove_stage` 同样最后删标记。
+- 文档：
+  - `docs/cli/config.md` 推荐 `${oc.env:NAME,''}`；省略写法仍支持（OmegaConf 提示已弃用），没有加全局 warning 过滤；
+  - `docs/cli/setup.md`、`upgrade.md` 说明删除方式；
+  - ROADMAP 去掉 rollback，按已确认范围写为安装、向前升级、清理不用的版本，没有回退或降级；
+  - `bugs-zh.md` 的 KD-7 移到已修复：默认不二次审批是用户 2026-11-18 的决定，README 和示例已一致（README 日志）；
+  - 升级日志第 7 节的两条标注已处理。
+
+### 12.2 验证
+
+| 项目 | 结果 |
+|---|---|
+| `install.sh` 回归（`test_install_script.py`） | 在步骤完成后、记录前发信号：建暂存目录、`mv -T`、切换 × SIGTERM、Ctrl-C（进程组 SIGINT）、SIGHUP；步骤进行中发 SIGTERM；首次安装建命令链接时 SIGTERM；清理旧暂存时整组 SIGKILL。每项核对 current、命令可运行、数据不变、无残余，并重试。旧脚本下 14 项失败，其中 9 项失败在状态上：留下无标记暂存目录、留下 `versions/9.9.9-other`、留下命令链接和目录、旧暂存丢了标记 |
+| setup、upgrade 回归 | 删除旧暂存、重建死掉的环境、删除本次环境（setup）；删除旧暂存、删除本次基础包和环境（upgrade）时 Ctrl-C：只留带标记的暂存目录，current、设置不变，下一次运行清掉并完成 |
+| 变异 | Python 6 个、`install.sh` 8 个，全部被发现 |
+| 临时布局注入（会话临时目录 `interrupt/`） | 布局：`install.sh` 装 A、setup 建 A 的环境、应用 home 有设置和工作区文件。`install.sh` 装 B、setup 新计划、upgrade 到 B，各发 SIGTERM、Ctrl-C（进程组）、SIGHUP、SIGKILL（进程组），时刻均分 20 处，共 240 次。每次都核对 current 是原来的或已完成切换的、命令能运行、数据不变、没有未知目录，再重试。TERM、INT、HUP 180 次都不留残余；KILL 60 次中 30 次只留带标记的暂存目录，从未出现无标记的。重试后与不中断时的结果一致，只有 1 次例外：upgrade 切换后被杀，重试是同一构建的升级，按契约直接结束、不清理；这时 `cleanup` 识别出两个暂存目录（"a stage a stopped … left"）并删除，已另行核对 |
+| 离线全量 | 870 passed（309 s；原 852 + 新增 18：`install.sh` 14、setup 3、upgrade 1） |
+| 仓库检查 | ruff check、format（791 个文件）、`git diff --check`、`uv lock --check`、`check_workspace.py`（16 个成员）、`bash -n` 通过 |
+
+### 12.3 发现，未改
+
+- SIGKILL 无法捕获。只在两处相邻系统调用之间被杀时，会留下空的、无标记的暂存目录：建目录到写标记之间，删标记到 `rmdir` 之间。按现有契约（无标记的不删）保留，不影响之后的安装；240 次注入没有碰到。
+- 被杀后留下的带标记暂存目录，由下一次真正安装的 `install.sh`、setup、upgrade 或 `cleanup` 删除；同一构建的 upgrade 不动任何东西，也不删它们（已有契约与测试）。
+- O-10 仍可复现：`voice.stt.model` 只在 `STTConfig.get_plugin` 检查，`voice.tts.model` 在配置校验时检查。

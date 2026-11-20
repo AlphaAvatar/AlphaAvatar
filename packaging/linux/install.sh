@@ -19,12 +19,31 @@
 # Installing the version current already runs keeps its setup environment. A failed or
 # interrupted run removes only what it created, judged by where current points when it ends;
 # the current version, the command and existing data stay as they were, and a path this script
-# cannot tell it made is never removed.
+# cannot tell it made is never removed. A signal acts between steps, never while one makes a
+# directory or link and records it; what a stopped removal leaves is a stage still marked, which
+# the next run, setup or upgrade removes.
 set -euo pipefail
 
 RELEASES="https://github.com/AlphaAvatar/AlphaAvatar/releases/download"
 
 die() { echo "Error: $*" >&2; exit 1; }
+
+# A step that makes something holds signals until it is recorded, then they end the run as they
+# would have: without a trap bash runs the cleanup at once, beside a command still under way.
+held=""
+hold() { trap 'held=130' INT; trap 'held=143' TERM; trap 'held=129' HUP; }
+release() { trap - INT TERM HUP; [[ -z "$held" ]] || exit "$held"; }
+calm() ( trap '' INT TERM HUP; exec "$@" )  # Its commands: Ctrl-C reaches them too.
+mark=".alphaavatar-install"  # In each stage in versions/, install.sh's or upgrade's.
+remove_stage() (
+  # The mark last: stopped at any point, what is left is a stage still marked.
+  shopt -s dotglob nullglob
+  for item in "$1"/*; do
+    [[ "$item" == "$1/$mark" ]] || rm -rf -- "$item"
+  done
+  rm -f -- "$1/$mark"
+  rmdir -- "$1"
+)
 
 usage() {
   cat <<EOF
@@ -87,8 +106,6 @@ if [[ "$(readlink "$entry" || true)" != "$link" ]]; then
   [[ -d "$probe" && -w "$probe" ]] || die "Cannot create $entry: $probe is not a writable directory"
 fi
 
-made_prefix=""
-[[ -e "$prefix" ]] || made_prefix=1
 mkdir -p "$prefix"
 # The lock setup takes too: a regular file of the prefix, never through a link, never truncated,
 # never removed: every run locks the same file.
@@ -99,6 +116,31 @@ refused="$lock is not a lock file this script or setup made; it is left as it is
 exec 9<> "$lock"
 [[ -f /dev/fd/9 ]] || die "$refused"
 flock -n 9 || die "Another installation into $prefix is running"
+# What this run makes, each recorded as it appears; the cleanup undoes it from here on.
+made_versions="" stage="" fresh="" made_bin="" made_entry=""
+cleanup() {
+  trap '' INT TERM HUP  # Finish cleaning up whatever else arrives.
+  # Removed unless current points to it: a signal may land just after the switch. Moved into
+  # the stage whole, then removed with it: a stop leaves no half of it in place.
+  if [[ -n "$fresh" && "$(readlink -f "$prefix/current" || true)" != "$(readlink -f "$fresh")" ]]
+  then
+    mv -T -- "$fresh" "$stage/fresh" || true
+  fi
+  [[ -z "$stage" ]] || remove_stage "$stage" || true
+  # A first installation that ends without a current version leaves no command either: the
+  # link it made, if it still points here, and the directories made for it, as far as empty.
+  if [[ -n "$made_entry" && ! -e "$prefix/current" && "$(readlink "$entry")" == "$link" ]]; then
+    rm -f -- "$entry"
+    dir="$bin_dir"
+    while [[ -n "$made_bin" && "$dir" != "$made_bin" ]] && rmdir -- "$dir" 2>/dev/null; do
+      dir="$(dirname "$dir")"
+    done
+  fi
+  # The prefix keeps the lock file, which another run may have opened already: removed, the
+  # next would lock a new one beside it.
+  [[ -z "$made_versions" ]] || rmdir -- "$prefix/versions" 2>/dev/null || true
+}
+trap cleanup EXIT  # Also on SIGINT, SIGTERM and SIGHUP: bash exits through the EXIT trap.
 previous="$(readlink "$prefix/current" || true)"
 # What this script or setup made: versions/<name> or a marked envs/<name> of this prefix,
 # reached through no other link.
@@ -109,34 +151,19 @@ if [[ -e "$prefix/current" || -L "$prefix/current" ]] \
   die "$prefix/current is not a link this script or setup made; it is left as it is"
 fi
 [[ ! -L "$prefix/versions" ]] || die "$prefix/versions is a link; it is left as it is"
-mkdir -p "$prefix/versions"
+hold
+[[ -e "$prefix/versions" ]] || made_versions=1
+calm mkdir -p -- "$prefix/versions"
+release
 for dir in "$prefix/versions"/.install-*; do
-  # A stage whose run was killed, marked as this script's: the lock is ours now.
-  if [[ -d "$dir" && ! -L "$dir" && -f "$dir/.alphaavatar-install" ]]; then rm -rf -- "$dir"; fi
+  # A stage whose run was stopped, marked as this script's or upgrade's: the lock is ours now.
+  if [[ -d "$dir" && ! -L "$dir" && -f "$dir/$mark" ]]; then remove_stage "$dir"; fi
 done
 # This run's own directory, on the same file system as the versions it renames into.
-stage="$(mktemp -d "$prefix/versions/.install-XXXXXX")"
-touch "$stage/.alphaavatar-install"
-fresh="" made_entry=""
-cleanup() {
-  trap '' INT TERM HUP  # Finish cleaning up whatever else arrives.
-  rm -rf -- "$stage"
-  # Removed unless current points to it: a signal may land just after the switch.
-  if [[ -n "$fresh" && "$(readlink -f "$prefix/current" || true)" != "$(readlink -f "$fresh")" ]]
-  then
-    rm -rf -- "$fresh"
-  fi
-  # A first installation that ends without a current version leaves no command either: the
-  # link it made, if it still points here. The prefix it made keeps the lock file alone, which
-  # another run may have opened already: removed, the next would lock a new one beside it.
-  if [[ -n "$made_entry" && ! -e "$prefix/current" && "$(readlink "$entry")" == "$link" ]]; then
-    rm -f -- "$entry"
-  fi
-  if [[ -n "$made_prefix" && ! -e "$prefix/current" ]]; then
-    rmdir -- "$prefix/versions" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT  # Also on SIGINT and SIGTERM: bash exits through the EXIT trap.
+hold
+stage="$(calm mktemp -d "$prefix/versions/.install-XXXXXX")"
+calm touch -- "$stage/$mark"
+release
 
 # The package is this run's own copy: what is checked is what unpacks and runs, whatever
 # happens to the source meanwhile.
@@ -210,19 +237,23 @@ elif [[ -e "$target" || -L "$target" ]]; then
 else
   echo "Checking AlphaAvatar $id"
   check "$candidate" || die "The package does not run on this machine"
-  mv -T "$candidate" "$target"
+  hold
+  calm mv -T -- "$candidate" "$target"
   fresh="$target"  # This run's: removed at exit unless current points to it.
+  release
   check "$target" || die "The package does not run from $target"
 fi
 
 if [[ "$(readlink "$entry" || true)" != "$link" ]]; then
-  mkdir -p "$bin_dir"
-  made_entry=1  # First: a signal may land the moment the link exists.
+  hold
+  made_bin="$bin_dir"  # The deepest directory there already: those below it are this run's.
+  while [[ ! -e "$made_bin" && ! -L "$made_bin" ]]; do made_bin="$(dirname "$made_bin")"; done
+  calm mkdir -p -- "$bin_dir"
   # Created only if nothing is there: another installation may have made it meanwhile.
-  if ! ln -sT "$link" "$entry" 2>/dev/null; then
-    made_entry=""
-    die "$entry appeared meanwhile and runs $(readlink "$entry" || echo something else); choose another --bin-dir"
-  fi
+  calm ln -sT -- "$link" "$entry" 2>/dev/null && made_entry=1
+  release
+  [[ -n "$made_entry" ]] \
+    || die "$entry appeared meanwhile and runs $(readlink "$entry" || echo something else); choose another --bin-dir"
 fi
 switch="versions/$id"
 # A setup environment over this very version stays current: its capabilities remain.
@@ -231,14 +262,19 @@ sys.exit(json.load(open(sys.argv[1], encoding="utf-8"))["base"] != sys.argv[2])'
     "$prefix/$previous/share/alphaavatar/plan.json" "$id" 2>/dev/null; then
   switch="$previous"
 fi
-ln -s "$switch" "$stage/current"
-mv -Tf "$stage/current" "$prefix/current"
+hold  # The switch is whole before a signal acts: the cleanup tells by current what stays.
+calm ln -s -- "$switch" "$stage/current"
+calm mv -Tf -- "$stage/current" "$prefix/current"
+release
 if ! (cd / && [[ "$("$entry" --version)" == "AlphaAvatar $package_version" ]]); then
+  hold
   if [[ -n "$previous" ]]; then
-    ln -s "$previous" "$stage/previous" && mv -Tf "$stage/previous" "$prefix/current"
+    calm ln -s -- "$previous" "$stage/previous" \
+      && calm mv -Tf -- "$stage/previous" "$prefix/current"
   else
-    rm -f -- "$prefix/current"
+    calm rm -f -- "$prefix/current"
   fi
+  release
   die "$entry does not run AlphaAvatar $package_version; the previous version stays current"
 fi
 

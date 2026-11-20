@@ -28,6 +28,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from upgrade_samples import stopped_rmtree
 
 from alphaavatar.host.tools.setup import environment
 from alphaavatar.host.tools.setup.environment import Installation, SetupError, Sources, install
@@ -275,6 +276,47 @@ def test_one_installation_per_prefix_and_a_dead_partial_is_rebuilt(setup_layout)
     install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
     assert not (partial / "lib" / "half-written").exists() and not stale.exists()
     assert foreign.exists() and installation.current() == partial.resolve()
+
+
+@pytest.mark.parametrize("removing", ["a stopped run's stage", "a dead run's", "its own"])
+def test_a_stopped_removal_leaves_a_marked_stage_the_next_setup_removes(
+    setup_layout, monkeypatch: pytest.MonkeyPatch, removing: str
+) -> None:
+    """Ctrl-C while setup removes the stage a stopped run left, the plan's environment a run
+    that died left, or the environment it made itself once its check failed: what is left is a
+    stage still marked, none of the environment in place; current is as it was, and the next
+    setup removes the stage and installs."""
+    installation, plan, sources, _ = setup_layout
+    prefix, environment_dir = installation.prefix, installation.environment(plan)
+    left = prefix / "envs" / ".setup-left"
+    if removing != "its own":  # A stage marked as setup's, or the plan's directory.
+        partial = left if removing == "a stopped run's stage" else environment_dir
+        (partial / "lib").mkdir(parents=True)
+        (partial / "lib" / "half-written").write_text("")
+        (partial / environment.OWNER).touch()
+
+    def check(env: Path) -> None:
+        if removing == "its own":
+            raise SetupError("the environment fails its check")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(shutil, "rmtree", stopped_rmtree(environment.OWNER))
+        with pytest.raises(KeyboardInterrupt):
+            install(installation, plan, sources, check=check, enable=lambda: None)
+    assert os.readlink(prefix / "current") == "versions/base"
+    stages = sorted((prefix / "envs").iterdir())
+    if removing == "a stopped run's stage":
+        assert stages == [left]
+    else:  # Gone whole into a stage of its own.
+        assert not environment_dir.exists()
+        assert any((stage / "removed" / "lib").is_dir() for stage in stages)
+    assert all(
+        stage.name.startswith(environment.SETUP_STAGE) and environment.marked(stage)
+        for stage in stages
+    )
+    install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+    assert leftovers(prefix) == [plan.id[:16]]
+    assert installation.current() == environment_dir.resolve()
 
 
 def test_a_plan_made_before_another_setup_finished_keeps_what_that_one_installed(

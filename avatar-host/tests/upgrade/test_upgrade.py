@@ -34,7 +34,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from upgrade_samples import VERSION, build, installed, listing
+from upgrade_samples import VERSION, build, installed, listing, stopped_rmtree
 
 from alphaavatar.host.configs import application_paths
 from alphaavatar.host.configs.bundles import read_settings
@@ -375,6 +375,57 @@ def test_a_signal_as_a_directory_appears_finds_it_this_runs(
     command = prefix / "current" / "bin" / "alphaavatar"
     ran = subprocess.run([command, "--version"], cwd="/", capture_output=True, text=True)
     assert ran.stdout == f"AlphaAvatar {VERSION}\n", ran.stderr
+
+
+def test_a_stopped_removal_leaves_marked_stages_the_next_upgrade_removes(
+    builds, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C while an upgrade removes the stage a stopped run left in versions/, or the base
+    and environment it made once the target failed its check: what is left is stages still
+    marked, none of B in place; A stays current and runs, the settings as they were, and the
+    next upgrade removes the stages and switches."""
+    installation, first, second, run, log = builds
+    prefix = installation.prefix
+    previous, settings = os.readlink(prefix / "current"), application_paths().settings_file
+    held = settings.read_text()
+    left = prefix / "versions" / f"{environment.INSTALL_STAGE}left"
+    (left / "tree").mkdir(parents=True)
+    (left / "package.tar.gz").write_bytes(b"part of a download")
+    (left / environment.INSTALL_MARK).touch()
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            shutil, "rmtree", stopped_rmtree(environment.INSTALL_MARK, environment.OWNER)
+        )
+        with pytest.raises(KeyboardInterrupt):
+            run(package_file(second.package))
+        assert environment.marked(left, environment.INSTALL_MARK)
+        aside = left.rename(prefix.parent / "aside")  # Out of the next run's way.
+        with pytest.raises(KeyboardInterrupt):
+            run(package_file(second.package), UPGRADE_CHECK="refuse")
+    assert os.readlink(prefix / "current") == previous and settings.read_text() == held
+    command = prefix / "current" / "bin" / "alphaavatar"
+    ran = subprocess.run([command, "--version"], cwd="/", capture_output=True, text=True)
+    assert ran.stdout == f"AlphaAvatar {VERSION}\n", ran.stderr
+    marks_of = {"versions": environment.INSTALL_MARK, "envs": environment.OWNER}
+    stages = [
+        (path, mark)
+        for directory, mark in marks_of.items()
+        for path in (prefix / directory).iterdir()
+        if path.name.startswith(".")
+    ]
+    assert stages and all(environment.marked(path, mark) for path, mark in stages)
+    assert sorted(os.listdir(prefix / "versions"))[-1] == first.id  # Stages, then A alone.
+    environments = [path.name for path in (prefix / "envs").iterdir() if path.name[0] != "."]
+    assert environments == [previous.removeprefix("envs/")]
+    aside.rename(left)
+    switched = run(package_file(second.package))
+    assert switched.current == second.id
+    assert not [
+        path
+        for directory in ("versions", "envs")
+        for path in (prefix / directory).iterdir()
+        if path.name.startswith(".")
+    ]
 
 
 def test_one_installation_per_prefix(builds) -> None:

@@ -40,9 +40,7 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sys
-import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,9 +53,10 @@ from alphaavatar.host.tools.setup.environment import (
     SETUP_STAGE,
     Installation,
     SetupError,
+    discard,
     locked,
     marked,
-    signals_deferred,
+    remove_marked,
 )
 
 _BUILD = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]*")  # A build's ID, as install.sh takes one.
@@ -241,24 +240,9 @@ def _remove(path: Path) -> None:
         (SETUP_STAGE, OWNER) if path.parent.name == "envs" else (INSTALL_STAGE, INSTALL_MARK)
     )
     if path.name.startswith(stage_prefix):
-        stage = path  # A stage already, marked.
+        remove_marked(path, mark)  # A stage already, marked.
     else:
-        with signals_deferred():
-            stage = Path(tempfile.mkdtemp(prefix=stage_prefix, dir=path.parent))
-            (stage / mark).touch()
-            try:
-                os.rename(path, stage / "removed")
-            except OSError:
-                shutil.rmtree(stage)
-                raise
-    for child in stage.iterdir():
-        if child.name == mark:
-            continue
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-    shutil.rmtree(stage)
+        discard(path, stage_prefix, mark)
 
 
 def cleanup(

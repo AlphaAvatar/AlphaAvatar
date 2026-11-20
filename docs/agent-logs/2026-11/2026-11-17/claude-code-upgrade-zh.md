@@ -259,6 +259,6 @@ clone 取 `122128b8`，套用工作区改动（不含日志），只把 16 个 `
 - 实际 LiveKit 通话由用户验收。
 - cleanup 不检测仍在运行的 Host 进程，只在文档和预览的 Next 里要求先停止。
 - 发现但未修改：
-  - `install.sh` 有同类窗口：`mv -T` 把目录移到 `versions/<id>` 之后才 `fresh=`，期间收到信号会留下新目录；
-  - setup、upgrade 和 install.sh 清理旧暂存时直接 `rmtree` / `rm -rf`，中途被打断可能先删掉标记，留下无人清理的残余；
+  - `install.sh` 有同类窗口：`mv -T` 把目录移到 `versions/<id>` 之后才 `fresh=`，期间收到信号会留下新目录（已处理，见[诊断日志](../2026-11-20/claude-code-diagnosis-zh.md)第 12 节）；
+  - setup、upgrade 和 install.sh 清理旧暂存时直接 `rmtree` / `rm -rf`，中途被打断可能先删掉标记，留下无人清理的残余（已处理，同上）；
   - 上面那个 Router 计时断言在有负载时偶发失败，它比较的是两条记录各自的时间。

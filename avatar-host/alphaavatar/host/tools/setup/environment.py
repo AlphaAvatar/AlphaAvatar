@@ -368,6 +368,42 @@ def marked(path: Path, mark: str = OWNER) -> bool:
     return path.is_dir() and not path.is_symlink() and (path / mark).is_file()
 
 
+def remove_marked(stage: Path, mark: str = OWNER) -> None:
+    """Remove a marked directory, its mark last: stopped at any point, what is left is still
+    marked, a stage the next run removes."""
+    for child in stage.iterdir():
+        if child.name == mark:
+            continue
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    with signals_deferred():  # Unmarked, it is gone at once.
+        (stage / mark).unlink(missing_ok=True)
+        stage.rmdir()
+
+
+def remove_stages(directory: Path, prefix: str, mark: str = OWNER) -> None:
+    """The stages stopped runs left in ``directory``, each marked: the lock is ours now."""
+    for stale in directory.glob(f"{prefix}*"):
+        if marked(stale, mark):
+            remove_marked(stale, mark)
+
+
+def discard(path: Path, prefix: str, mark: str = OWNER) -> None:
+    """Remove ``path`` whole: moved into a marked stage of its own while signals wait, then
+    removed with it; a stop leaves no half of it in place, only a stage the next run removes."""
+    with signals_deferred():
+        stage = Path(tempfile.mkdtemp(prefix=prefix, dir=path.parent))
+        (stage / mark).touch()
+        try:
+            os.rename(path, stage / "removed")
+        except OSError:
+            remove_marked(stage, mark)
+            raise
+    remove_marked(stage, mark)
+
+
 def megabytes(size: int) -> str:
     return f"{size / 1e6:,.0f} MB"
 
@@ -435,9 +471,7 @@ def install_locked(
         raise SetupError(f"{prefix / 'envs'} is not this installation's own directory")
     made_envs = not (prefix / "envs").exists()
     (prefix / "envs").mkdir(exist_ok=True)
-    for stale in (prefix / "envs").glob(f"{SETUP_STAGE}*"):
-        if marked(stale):  # A stage whose run was killed: the lock is ours now.
-            shutil.rmtree(stale)
+    remove_stages(prefix / "envs", SETUP_STAGE)
     stage: Path | None = None
     created = enabled = False
     try:
@@ -452,7 +486,7 @@ def install_locked(
                 # rebuilt; anything else there, a link included, is not setup's to remove.
                 if not marked(environment) or environment == previous:
                     raise SetupError(f"{environment} exists and is not setup's; left as it is")
-                shutil.rmtree(environment)
+                discard(environment, SETUP_STAGE)
             files = []
             for index, artifact in enumerate(plan.artifacts, 1):
                 progress(f"[{index}/{len(plan.artifacts)}] {artifact.file}")
@@ -486,9 +520,11 @@ def install_locked(
                 else:
                     (prefix / "current").unlink()
             if created and not enabled and installation.current() != environment:
-                shutil.rmtree(environment, ignore_errors=True)
+                with suppress(OSError):
+                    discard(environment, SETUP_STAGE)
             if stage is not None:
-                shutil.rmtree(stage, ignore_errors=True)
+                with suppress(OSError):
+                    remove_marked(stage)
             if made_envs and not enabled and not any((prefix / "envs").iterdir()):
                 (prefix / "envs").rmdir()
     return environment

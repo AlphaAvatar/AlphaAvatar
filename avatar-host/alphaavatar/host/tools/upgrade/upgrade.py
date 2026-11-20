@@ -54,6 +54,7 @@ import tarfile
 import tempfile
 import zlib
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,12 +68,14 @@ from alphaavatar.host.tools.setup.environment import (
     Sources,
     check_environment,
     check_machine,
+    discard,
     download,
     install_locked,
     locked,
     machine_problems,
-    marked,
     megabytes,
+    remove_marked,
+    remove_stages,
     sha256,
     signals_deferred,
     switch_current,
@@ -400,10 +403,7 @@ def upgrade(
         if problems := machine_problems(found["glibc"], found["cpu"]):
             raise SetupError(f"AlphaAvatar {found['id']} needs " + "; ".join(problems))
         versions = prefix / "versions"
-        for stale in versions.glob(f"{INSTALL_STAGE}*"):
-            # A stage whose run was killed, marked as install.sh's or this: the lock is ours now.
-            if marked(stale, INSTALL_MARK):
-                shutil.rmtree(stale)
+        remove_stages(versions, INSTALL_STAGE, INSTALL_MARK)  # install.sh's, or this one's.
         stage: Path | None = None
         fresh: Path | None = None
         try:
@@ -499,6 +499,8 @@ def upgrade(
         finally:
             with signals_deferred():
                 if fresh is not None and installation.current_base() != fresh.name:
-                    shutil.rmtree(fresh, ignore_errors=True)
+                    with suppress(OSError):
+                        discard(fresh, INSTALL_STAGE, INSTALL_MARK)
                 if stage is not None:
-                    shutil.rmtree(stage, ignore_errors=True)
+                    with suppress(OSError):
+                        remove_marked(stage, INSTALL_MARK)

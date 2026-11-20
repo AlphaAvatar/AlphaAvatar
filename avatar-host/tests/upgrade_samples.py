@@ -31,6 +31,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import tarfile
 import zipfile
@@ -209,3 +210,24 @@ def installed(prefix: Path, build: Build, requirements: tuple[str, ...] | None) 
 
 def listing(root: Path) -> list[str]:
     return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+def stopped_rmtree(*marks: str):
+    """shutil.rmtree, stopped by Ctrl-C partway, as it may take any order: what it removed
+    first is the mark, when one is inside what it was given, or else one of what it holds."""
+    rmtree = shutil.rmtree
+
+    def stopped(path, *args, **kwargs) -> None:
+        path = Path(path)
+        if found := [path / mark for mark in marks if (path / mark).is_file()]:
+            found[0].unlink()
+        elif children := sorted(path.iterdir()):
+            if children[0].is_dir() and not children[0].is_symlink():
+                rmtree(children[0])
+            else:
+                children[0].unlink()
+        else:
+            path.rmdir()
+        raise KeyboardInterrupt
+
+    return stopped

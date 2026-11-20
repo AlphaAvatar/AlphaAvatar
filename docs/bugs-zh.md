@@ -6,7 +6,6 @@
 
 | 编号 | 问题 | 当前状态 |
 | --- | --- | --- |
-| KD-7 | 工具默认审批行为与部分示例文档不一致。 | 待单独审查工具执行授权和用户确认策略。 |
 | O-10 | 缺少 `voice.stt.model` 时，配置检查可能通过，直到装配会话才报错。 | Doctor 可定位到 `session.start`。静态校验待统一。 |
 | O-11 | 离线且模型缺失时，模型解析可能留下空缓存目录和锁文件。 | 待修复。 |
 | KD-19 | 固定的两句样本经分段 STT（`gpt-4o-transcribe`）转写时，经常只剩第一句。 | 遗漏发生在 STT 服务返回的文字里，插件如实传递；改停顿、换声线无效，指令式第二句最容易整句丢失（第五批）。第六批用当前可用、插件支持的模型对照（同一批样本、自动语言、不加提示）：`gpt-4o-transcribe` 两句都在 7/20，`gpt-4o-mini-transcribe`、`gpt-transcribe`、`whisper-1` 都是 20/20；但在独立多句、中英混合和同会话切换语言的 27 段里，默认 27/27，`gpt-transcribe` 24/27（英文句中的中文词改写成拼音），mini 21/27（中文词译成英文或拼音、一次地名错、切换后输出繁体）；`whisper-1` 慢约一倍。没有候选全部通过，默认仍为 `gpt-4o-transcribe`、自动语言、不加提示（Doctor 日志第六批）。按已知模型限制保留：诊断日志第 10 节的 VAD 对照中，两个阈值下都有单段内缺句。系统验收看音频完整提交、跨段累计、终态与取消、超期结果隔离和诊断是否准确，不以固定样本全部答对为准，不再为此扩大模型实验（诊断日志第 11 节）。 |
@@ -21,6 +20,7 @@
 
 | 编号 | 问题 | 修复 |
 | --- | --- | --- |
+| KD-7 | loop：工具默认审批行为与部分示例文档不一致。 | 默认 `approval_required: false` 是既定行为（用户 2026-11-18 确认），只改文档：`tool_policies: {}` 下已授予 Run 的能力不再二次审批；`enabled: false` 拒绝，`approval_required: true` 需要授权方，原生 Host 不提供，这样的能力不提供给模型。README 和示例 YAML 注释已与此一致（[README 日志](agent-logs/2026-11/2026-11-18/claude-code-readme-zh.md)）。 |
 | KD-46 | context、loop：Context 没就绪时抛出 `TimeoutError("Required Turn context is not ready")`，被 Loop 当成自己的预算超时：探索阶段记为 `time_budget`，不再调用工具，直接进入只回答的收尾；收尾时仍不就绪则以 `failed / timeout` 结束，不请求模型。 | 按用户的决定，Context 不再抛出，记一条 warning（带 `turn_id` 和仍在等的消费者）后照常准备：它等的都是可以没有的证据。Turn 已不是它输入当前的快照时，Memory、Persona 的 `content_for` 仍以 `ValueError` 拒绝，Run 以 `execution_failed` 结束。回归 `test_a_turn_whose_context_is_not_ready_is_still_prepared_and_says_so`，改回抛出、去掉 warning 时都失败；Loop 探测中只有第一次失败、每次都失败两种情况，Run 都以 `completed` 结束，带工具请求一次模型（Speaker Vector 日志第十一批之后）。 |
 | KD-18 | context：每轮请求都重发 History 中的全部图片，累计内联字节超过 Responses `max_inline_bytes` 后，此后每一轮都被拒，纯文字轮也一样。 | History 仍完整保存。请求把历史图片（用户消息和工具输出）在原位置换成 `<image_not_replayed />`，只有本轮图片内联发送。 |
 | KD-22 | provider：OpenAI Responses 的 `model.request_sent` 在 `create()` 返回或抛错后才记，晚于请求真正交给传输层，Doctor 据此算的发送时刻偏晚。 | 发送时刻改由 httpx 请求钩子在交给传输层时逐次记录，每次尝试一条。 |

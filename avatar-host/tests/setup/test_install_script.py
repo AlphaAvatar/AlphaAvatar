@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""install.sh with a package of its layout: what it checks is what it unpacks and runs, and a
-current it cannot tell it made is left as it is."""
+"""install.sh with a package of its layout: what it checks is what it unpacks and runs, a
+current it cannot tell it made is left as it is, and a stopped run leaves current, the command
+and the data as they were, and nothing the next run does not remove."""
 
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "packaging/linux/install.sh"
-ID = "9.9.9-test"
+ID, OTHER = "9.9.9-test", "9.9.9-other"
 LAUNCHER = '#!/bin/sh\n{effect}[ "$1" = --version ] && echo "AlphaAvatar 9.9.9"\nexit 0\n'
 
 pytestmark = pytest.mark.skipif(
@@ -40,10 +41,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def package(directory: Path, effect: str = "") -> Path:
+def package(directory: Path, effect: str = "", package_id: str = ID) -> Path:
     """A base package as install.sh reads one: one top directory, its manifest, its command."""
-    top = directory / f"alphaavatar-{ID}"
-    manifest = {"id": ID, "version": "9.9.9", "glibc": "2.17", "cpu": [], "imports": ["json"]}
+    top = directory / f"alphaavatar-{package_id}"
+    manifest = {
+        "id": package_id,
+        "version": "9.9.9",
+        "glibc": "2.17",
+        "cpu": [],
+        "imports": ["json"],
+    }
     (top / "share/alphaavatar").mkdir(parents=True)
     (top / "share/alphaavatar/manifest.json").write_text(json.dumps(manifest))
     (top / "python/bin").mkdir(parents=True)
@@ -51,7 +58,7 @@ def package(directory: Path, effect: str = "") -> Path:
     (top / "bin").mkdir()
     (top / "bin/alphaavatar").write_text(LAUNCHER.format(effect=effect))
     (top / "bin/alphaavatar").chmod(0o755)
-    archive = directory / f"alphaavatar-{ID}.tar.gz"
+    archive = directory / f"alphaavatar-{package_id}.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(top, arcname=top.name)
     shutil.rmtree(top)
@@ -77,6 +84,7 @@ def layout(tmp_path: Path):
             timeout=120,
             env=env | (extra or {}),
             cwd="/",
+            start_new_session=True,  # Its own process group, as a terminal's job is.
         )
 
     return tmp_path, good, tools, run
@@ -161,3 +169,134 @@ def test_a_failed_first_installation_keeps_the_lock_every_run_takes(layout) -> N
     # lock the old file, the next a new one beside it, and both would install at once.
     assert [path.name for path in (tmp_path / "prefix").iterdir()] == [".install.lock"]
     assert not (tmp_path / "bin/alphaavatar").exists()
+
+
+# A command on PATH in place of the real one; where its arguments hold $INJECT_AT, the run is
+# sent $INJECT_SIGNAL before the command acts or after ($INJECT_WHEN): the script alone, as
+# kill sends it, or its whole process group, as a terminal sends Ctrl-C and hangups.
+SIGNALLING = """#!/bin/sh
+case "$*" in *"$INJECT_AT"*) hit=1 ;; *) hit="" ;; esac
+to=0
+[ "$INJECT_TO" = group ] || to=$(cut -d' ' -f5 /proc/$$/stat)
+if [ -n "$hit" ] && [ "$INJECT_WHEN" = before ]; then kill -s "$INJECT_SIGNAL" "$to"; sleep 0.5; fi
+"{real}" "$@"
+status=$?
+if [ -n "$hit" ] && [ "$INJECT_WHEN" = after ]; then kill -s "$INJECT_SIGNAL" "$to"; fi
+exit $status
+"""
+
+
+def signalling(tools: Path, command: str) -> None:
+    (tools / command).write_text(SIGNALLING.replace("{real}", shutil.which(command)))
+    (tools / command).chmod(0o755)
+
+
+def runs(entry: Path) -> str:
+    return subprocess.run([entry, "--version"], capture_output=True, text=True, cwd="/").stdout
+
+
+@pytest.mark.parametrize(
+    ("step", "signal", "when"),
+    [
+        # The moment after the step acted, before the run records it.
+        *(
+            (step, signal, "after")
+            for step in ("stage", "version", "switch")
+            for signal in ("TERM", "INT", "HUP")
+        ),
+        # While it acts: the run waits for it.
+        *((step, "TERM", "before") for step in ("stage", "version", "switch")),
+    ],
+)
+def test_a_signal_as_a_step_makes_something_acts_once_it_is_recorded(
+    layout, step: str, signal: str, when: str
+) -> None:
+    """A signal as the stage appears, as the version moves into versions/, or as current
+    switches, the moment after or while it acts: the step completes and is recorded, then the
+    run ends, as the signal would have.
+    Current is the version it was, unless the switch completed; the command runs; the data are
+    untouched; nothing of the run is left; the retry installs."""
+    tmp_path, _, tools, run = layout
+    prefix, entry, data = tmp_path / "prefix", tmp_path / "bin/alphaavatar", tmp_path / "data"
+    other = package(tmp_path / "next", package_id=OTHER)
+    digest = hashlib.sha256(other.read_bytes()).hexdigest()
+    installs = ("--file", str(other), "--sha256", digest)
+    environ = {"ALPHAAVATAR_HOME": str(data)}
+    (data / "avatars/alpha").mkdir(parents=True)
+    (data / "avatars/alpha/memory.db").write_bytes(b"memories")
+    assert run(extra=environ).returncode == 0
+    command, at = {
+        "stage": ("mktemp", ".install-XXXXXX"),
+        "version": ("mv", "/tree/alphaavatar-"),
+        "switch": ("mv", f" {prefix / 'current'}"),
+    }[step]
+    signalling(tools, command)
+    to = "group" if signal == "INT" else "script"
+    injected = {"INJECT_AT": at, "INJECT_SIGNAL": signal, "INJECT_WHEN": when, "INJECT_TO": to}
+    stopped = run(*installs, extra=environ | injected)
+    switched = step == "switch"
+    assert os.readlink(prefix / "current") == f"versions/{OTHER if switched else ID}"
+    assert runs(entry) == "AlphaAvatar 9.9.9\n"
+    assert sorted(os.listdir(prefix / "versions")) == sorted([ID, *([OTHER] if switched else [])])
+    assert (data / "avatars/alpha/memory.db").read_bytes() == b"memories"
+    assert stopped.returncode == 128 + {"HUP": 1, "INT": 2, "TERM": 15}[signal], stopped.stderr
+    retried = run(*installs, extra=environ)
+    assert retried.returncode == 0, retried.stderr
+    assert os.readlink(prefix / "current") == f"versions/{OTHER}"
+    assert sorted(os.listdir(prefix / "versions")) == sorted([ID, OTHER])
+
+
+def test_a_signal_as_the_command_appears_leaves_neither_it_nor_its_directories(layout) -> None:
+    """SIGTERM the moment a first installation has linked its command into directories it
+    made: once the link is recorded the run ends, and removes it and those directories; the
+    prefix keeps the lock alone."""
+    tmp_path, _, tools, run = layout
+    entry = tmp_path / "made/bin/alphaavatar"
+    signalling(tools, "ln")
+    injected = {"INJECT_AT": str(entry), "INJECT_SIGNAL": "TERM", "INJECT_WHEN": "after"}
+    stopped = run("--bin-dir", str(entry.parent), extra=injected | {"INJECT_TO": "script"})
+    assert not (tmp_path / "made").exists() and not entry.is_symlink()
+    assert os.listdir(tmp_path / "prefix") == [".install.lock"]
+    assert stopped.returncode == 143, stopped.stderr
+    retried = run("--bin-dir", str(entry.parent))
+    assert retried.returncode == 0, retried.stderr
+    assert runs(entry) == "AlphaAvatar 9.9.9\n"
+
+
+# rm, killing the whole run partway through a stage stopped runs left: the stage's mark first
+# where the mark is inside what it was given, as rm -rf may take any order.
+KILLING = """#!/bin/sh
+for operand; do
+  case "$operand" in */.install-left*) ;; *) continue ;; esac
+  if [ -f "$operand/.alphaavatar-install" ]; then
+    "{real}" -f "$operand/.alphaavatar-install"
+  else
+    "{real}" -rf "$operand"
+  fi
+  kill -s KILL 0
+done
+exec "{real}" "$@"
+"""
+
+
+def test_a_run_killed_removing_a_stopped_runs_stage_leaves_it_marked_for_the_next(layout) -> None:
+    tmp_path, _, tools, run = layout
+    prefix, entry = tmp_path / "prefix", tmp_path / "bin/alphaavatar"
+    assert run().returncode == 0
+    left = prefix / "versions/.install-left"
+    (left / "tree/alphaavatar-9.9.9/bin").mkdir(parents=True)
+    (left / "package.tar.gz").write_bytes(b"part of a download")
+    (left / ".alphaavatar-install").touch()
+    (tools / "rm").write_text(KILLING.replace("{real}", shutil.which("rm")))
+    (tools / "rm").chmod(0o755)
+    killed = run()
+    assert killed.returncode == -9
+    # Still a stage of this script's, with what is left of it; current as it was.
+    assert (left / ".alphaavatar-install").is_file()
+    assert (
+        os.readlink(prefix / "current") == f"versions/{ID}" and runs(entry) == "AlphaAvatar 9.9.9\n"
+    )
+    (tools / "rm").unlink()
+    retried = run()
+    assert retried.returncode == 0, retried.stderr
+    assert os.listdir(prefix / "versions") == [ID]

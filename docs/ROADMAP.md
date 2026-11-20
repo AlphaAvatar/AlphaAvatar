@@ -548,7 +548,7 @@ The active client direction is AlphaAvatar Web, App, and OS. Third-party messagi
 
 | Version | Focus | Expected Outcome |
 | :------ | :---- | :--------------- |
-| **v0.6.9** | Installation, configuration, diagnostics and parallelism | Native installation/upgrade/rollback without requiring a system Python/Node installation; guided profile/bundle and credential setup; Host CLI Doctor and latency metrics; configurable inference runner replicas; bounded long-running, cancellation, voice and queue stress testing. |
+| **v0.6.9** | Installation, configuration, diagnostics and parallelism | Native installation, forward upgrade and removal of unused versions without requiring a system Python/Node installation (no rollback or downgrade); guided profile/bundle and credential setup; Host CLI Doctor and latency metrics; configurable inference runner replicas; bounded long-running, cancellation, voice and queue stress testing. |
 | **v0.6.10** | Persona and product interface | Configurable Persona profile detail with current behavior as the default; integrate the updated Figma product experience into Avatar App. |
 | **v0.7.0** | Documentation and demo stability | Consolidate user-facing guides, architecture documentation, standalone Roadmap and website/docs messaging; publish a reliable reference demo. |
 | **v0.7.1** | Identity, references and configuration consistency | Unify `avatar_id`, `session_id`, `context_id`, `turn_id`, existing `run_id` and source references across the runtime; enrich Memory source references; standardize environment and release version management. |
