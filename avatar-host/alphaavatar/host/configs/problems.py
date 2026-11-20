@@ -36,12 +36,8 @@ if TYPE_CHECKING:
 # Keys and paths as they are shown; any other spelling, which data might hold, is not.
 _KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_:-]{0,63}")
 _PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:\[\]-]{0,255}")
-# ${oc.env:NAME}, with its default if it gives one, as OmegaConf reads it: after an odd run of
-# backslashes ``${`` is text, after an even one it reads. A default that interpolates is not.
-_ENV = re.compile(
-    r"(?<!\\)(?:\\\\)*\$\{oc\.env:\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1\s*(?:,([^{}]*))?\}"
-)
 _INDEX = re.compile(r"\[(\d+)\]")  # OmegaConf's a.b[0], as a path says it: a.b.0.
+_PROBE = "__alphaavatar_credential__"  # Where a credential's call is evaluated, beside its header.
 _SET = "set them in the environment or in the .env file ENV_FILE names (default .env)"
 
 
@@ -87,14 +83,14 @@ def setup_installs(source: ConfigSource | None) -> str:
     return "setup installs it for a bundle, not a file"
 
 
-def _variable(location: str, name: str, *, credential: bool, default: str | None = None) -> Problem:
+def _variable(location: str, name: str, *, credential: bool, default: bool = False) -> Problem:
     # Never "<setting>: ...": after a setting such as Authorization, the log boundary would take
     # what follows for its value and hide it, the variable's name with it.
     state = "is empty" if os.environ.get(name) is not None else "is not set"
     problem = f"reads {'the credential ' if credential else ''}{name}, which {state}"
     if not credential:  # An ordinary one is an interpolation's: a default would stand for it.
         problem += f", and ${{oc.env:{name}}} has no default"
-    elif default is not None and state == "is not set":  # Its default stands in, holding none.
+    elif default and state == "is not set":  # Its default stands in, holding none.
         problem += ", and its default is empty"
     return Problem(f"{location} {problem}", location, problem, variable=name)
 
@@ -156,32 +152,48 @@ def _creates_mcp(data: Any) -> bool:
         return False
 
 
-def _holds(default: str | None) -> bool:
-    """Whether an ``oc.env`` default, as written, holds a value: not empty, blank or null."""
-    return default is not None and default.strip().strip("'\"").strip() not in ("", "null")
+def _sends(config: Any, keys: tuple[str, ...], call: str) -> bool | None:
+    """Whether ``call``, evaluated by OmegaConf beside the header at ``keys``, nested defaults
+    and all, holds a value: not empty, blank or null; None when it does not evaluate."""
+    from omegaconf.errors import OmegaConfBaseException
+
+    node = config
+    for key in keys[:-1]:
+        node = node[key]
+    node[_PROBE] = call
+    try:
+        value = node[_PROBE]
+    except OmegaConfBaseException:
+        return None
+    finally:
+        del node[_PROBE]
+    return value is not None and bool(str(value).strip())
 
 
 def _unset(written: Any, *, ordinary: bool, creates: bool) -> list[Problem]:
-    """Each ``${oc.env:NAME}`` that ``written`` reads to no value, at its setting. In an MCP
-    server's ``Authorization``, where MCP is created (``creates``), a credential: unset, empty or
-    blank once filled, unless unset with a default that holds one, as OmegaConf takes it. With
-    ``ordinary``, any other read without a default whose variable is unset: empty is a value."""
-    from alphaavatar.agents.utils import credential
+    """Each ``${oc.env:NAME}`` that ``written`` reads to no value, at its setting, as OmegaConf
+    parses and evaluates it. In an MCP server's ``Authorization``, where MCP is created
+    (``creates``), a credential: each outermost call evaluated as it is sent, once filled, and
+    refused empty, blank or null; one that does not evaluate, only if unset with no default.
+    With ``ordinary``, any other call without a default whose variable is unset: empty is a
+    value, and a call whose default reads an unset one fails as that one does."""
+    from omegaconf import OmegaConf
 
-    from .credentials import authorizations
+    from .credentials import authorizations, env_calls
 
     sent = {keys for keys, _ in authorizations(written)} if creates else set()
+    config = OmegaConf.create(written) if sent else None
     items: dict[tuple[str, str], Problem] = {}
     for keys, value in _strings(written):
         at = path(*keys)
-        for match in _ENV.finditer(value):
-            name, default = match[2], match[3]
-            if keys in sent:
-                if credential(name) is None and (name in os.environ or not _holds(default)):
+        for name, call, default, top in env_calls(value):
+            if keys in sent and top:
+                held = _sends(config, keys, call)
+                if held is False or (held is None and not default and name not in os.environ):
                     found = _variable(at, name, credential=True, default=default)
                     items.setdefault((at, name), found)
-            elif ordinary and default is None and name not in os.environ:
-                items.setdefault((at, name), _variable(at, name, credential=False))
+            elif ordinary and not default and name not in os.environ:
+                items.setdefault((at, name), _variable(at, name, credential=keys in sent))
     return list(items.values())
 
 

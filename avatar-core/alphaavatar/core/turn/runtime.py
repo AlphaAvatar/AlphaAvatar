@@ -299,19 +299,23 @@ class TurnRuntime:
             await waiter(snapshot)
 
         work = asyncio.create_task(join(), name=f"turn_context:{consumer_id}:{snapshot.turn_id}")
+        started, outcome = asyncio.get_running_loop().time(), "failed"
         try:
             while self._context_waiters.get(consumer_id) is waiter:
                 if self.get(snapshot.input_id) is not snapshot:
+                    outcome = "superseded"
                     return False
                 changed = asyncio.create_task(self._context_changed.wait())
                 try:
                     await asyncio.wait((work, changed), return_when=asyncio.FIRST_COMPLETED)
                     if work.done():
                         await work
+                        outcome = "done"
                         return True
                 finally:
                     changed.cancel()
                     await asyncio.gather(changed, return_exceptions=True)
+            outcome = "unregistered"
             return True
         except Exception as error:
             logger.warning(
@@ -322,6 +326,14 @@ class TurnRuntime:
             )
             return False
         finally:
+            # What each consumer held the Turn's Context for, apart: they are awaited together.
+            logger.debug(
+                "Turn context consumer consumer_id=%s turn_id=%s outcome=%s wait_ms=%.1f",
+                consumer_id,
+                snapshot.turn_id,
+                outcome,
+                (asyncio.get_running_loop().time() - started) * 1000,
+            )
             work.cancel()
             await asyncio.gather(work, return_exceptions=True)
             pending[consumer_id] -= 1

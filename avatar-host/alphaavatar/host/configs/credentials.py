@@ -48,7 +48,7 @@ FILE = re.compile(r"credentials-[0-9a-f]{16}\.env")
 # The .env file's values a command read, as JSON, for the commands it runs to read instead of a
 # file: upgrade's target runs from /, where a relative ENV_FILE names another or none.
 FILE_VALUES = "ALPHAAVATAR_ENV_FILE_VALUES"
-_OC_ENV = re.compile(r"\$\{oc\.env:\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
+_VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")  # What ``oc.env`` reads a variable by.
 _DISABLED = {"1", "true", "t", "yes", "y"}  # PYTHON_DOTENV_DISABLED, as python-dotenv reads it.
 # What components read a credential from when the configuration names no variable of its own
 # for it, as .env.template lists them.
@@ -187,6 +187,38 @@ def _servers(data: Mapping[str, Any]) -> Mapping[str, Any]:
     return servers if isinstance(servers, Mapping) else {}
 
 
+def env_calls(value: str) -> Iterator[tuple[str, str, bool, bool]]:
+    """Each ``${oc.env:NAME}`` that ``value`` interpolates, as OmegaConf's own grammar reads it
+    (``\\${`` is text), nested ones too: the variable, the call as written, whether it gives
+    a default, and whether it is outermost, its value then part of ``value``'s."""
+    if "${" not in value:
+        return
+    from omegaconf import grammar_parser
+    from omegaconf.errors import GrammarParseError
+    from omegaconf.grammar.gen.OmegaConfGrammarParser import OmegaConfGrammarParser as Grammar
+
+    try:
+        tree = grammar_parser.parse(value)
+    except GrammarParseError:
+        return  # Interpolating it fails too, and says where.
+
+    def walk(node: Any, top: bool) -> Iterator[tuple[str, str, bool, bool]]:
+        for child in getattr(node, "children", None) or ():
+            if isinstance(child, Grammar.InterpolationResolverContext):
+                sequence = child.sequence()
+                arguments = sequence.element() if sequence is not None else []
+                name = arguments[0].getText().strip("'\"") if arguments else ""
+                if child.resolverName().getText() == "oc.env" and _VARIABLE.fullmatch(name):
+                    call = value[child.start.start : child.stop.stop + 1]
+                    yield name, call, len(arguments) > 1, top
+                yield from walk(child, False)
+            else:
+                nested = isinstance(child, Grammar.InterpolationNodeContext)
+                yield from walk(child, top and not nested)
+
+    yield from walk(tree, True)
+
+
 def authorizations(data: Mapping[str, Any]) -> Iterator[tuple[tuple[str, ...], str]]:
     """Each MCP server's ``Authorization`` header, however cased, that holds text: the keys
     leading to it, and the text."""
@@ -201,7 +233,7 @@ def interpolated_credentials(data: Mapping[str, Any]) -> set[str]:
     """The variables a composed configuration, as written, interpolates as credentials: each
     ``${oc.env:NAME}`` of an MCP server's ``Authorization`` header, which once interpolated no
     longer says what it read. Any other interpolation reads an ordinary variable."""
-    return {name for _, value in authorizations(data) for name in _OC_ENV.findall(value)}
+    return {name for _, value in authorizations(data) for name, *_ in env_calls(value)}
 
 
 def configured_credentials(data: Mapping[str, Any]) -> set[str]:

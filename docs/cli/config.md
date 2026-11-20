@@ -107,10 +107,11 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
   `plugin`), a server's credential unset, empty or blank once filled, by `<NAME>` placeholder
   or by `${oc.env:NAME}` in `Authorization` (never sent as `Bearer `); and any other
   `${oc.env:NAME}` without a default whose variable is unset (one set empty interpolates as
-  empty). In `Authorization`, `${oc.env:NAME,default}` takes its default only while `NAME` is
-  unset, as OmegaConf does: an empty or blank `NAME`, or a default that is empty or `null`, is
-  refused too. An MCP not created sends nothing and requires none, though its settings still
-  interpolate. [`config check`](#config-check) shows how it is reported.
+  empty). In `Authorization`, each call is taken as OmegaConf evaluates it, nested defaults
+  included: `${oc.env:NAME,default}` takes its default only while `NAME` is unset, so an empty
+  or blank `NAME`, or a default that holds no value, is refused too. An MCP not created sends
+  nothing and requires none, though its settings still interpolate.
+  [`config check`](#config-check) shows how it is reported.
 
 - The default bundle comes from the same read of the settings as the stored credentials: a
   setup committing meanwhile changes neither.

@@ -318,6 +318,9 @@ def _static(
                 "LiveKit transport: not measured; the samples end at the Host's output",
                 "client playback: not measured; no client takes part",
                 "physical devices: not opened; the samples stand in for them",
+                # The picture is a shared screen: what reads camera frames never runs on it.
+                "camera input: not sent; the picture is a shared screen, so what reads a "
+                "camera, such as face recognition, is not covered",
             ),
             action="Join a dev session from a client to try its devices",
         ),

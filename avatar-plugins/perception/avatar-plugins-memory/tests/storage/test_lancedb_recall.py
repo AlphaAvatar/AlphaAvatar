@@ -1,0 +1,108 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""A recall embeds its query only when the owners and scopes it reads hold a memory."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.plugins.memory.storage.vdb.lancedb_runner import LanceDBRunner
+
+DIMENSION = 4
+
+
+class CountingEmbeddings:
+    """A remote embedding model stand-in: each query it embeds is counted."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def embed_query(self, text: str) -> list[float]:
+        self.queries.append(text)
+        return [1.0, 0.0, 0.0, 0.0]
+
+
+def runner(path: Path) -> tuple[LanceDBRunner, CountingEmbeddings]:
+    # The runner as initialize() leaves it, without a launch or a remote model.
+    found = LanceDBRunner.__new__(LanceDBRunner)
+    found._client = lancedb.get_client(client_path=path)
+    found._ensure_collection("memories", DIMENSION)
+    found._memory_table = found._client.open_table("memories")
+    found._embeddings = CountingEmbeddings()
+    return found, found._embeddings
+
+
+def memory(memory_id: str, owner: str, scope: str) -> dict:
+    row = dict.fromkeys(
+        (
+            "id",
+            "page_content",
+            "doc_kind",
+            "memory_id",
+            "memory_kind",
+            "memory_type",
+            "episode_id",
+            "context_id",
+            "runtime_session_id",
+            "parent_context_id",
+            "task_id",
+            "scope_key",
+            "topic",
+            "created_at",
+            "updated_at",
+            "node_id",
+            "node_key",
+            "node_type",
+        ),
+        "",
+    )
+    json_lists = ("owner_refs_json", "participant_refs_json", "source_refs_json")
+    return (
+        row
+        | dict.fromkeys(json_lists, "[]")
+        | {
+            "id": memory_id,
+            "vector": [1.0, 0.0, 0.0, 0.0],
+            "page_content": "likes green",
+            "doc_kind": "memory_item",
+            "memory_id": memory_id,
+            "scope_key": scope,
+            "owner_keys": [owner],
+            "revision": 1,
+            "source_memory_ids_json": "[]",
+            "supersedes_memory_ids_json": "[]",
+            "node_weight": 0.0,
+            "graph_nodes_json": "[]",
+            "graph_links_json": "[]",
+            "extra_data_json": "{}",
+        }
+    )
+
+
+def test_a_recall_with_nothing_to_find_embeds_no_query(tmp_path: Path) -> None:
+    """An empty store, or one holding only someone else's memories, returns no candidates
+    without embedding; the owner's own are embedded for and found, as before."""
+    store, embeddings = runner(tmp_path / "lancedb")
+    search = {"context_str": "### user:\nWhat color?", "scope_keys": ["scope:a"], "top_k": 3}
+
+    assert store._search_by_context(owner_keys=["user:a"], **search)["candidates"] == []
+    store._memory_table.add([memory("m-b", "user:b", "scope:a")])
+    assert store._search_by_context(owner_keys=["user:a"], **search)["candidates"] == []
+    assert embeddings.queries == []
+
+    store._memory_table.add([memory("m-a", "user:a", "scope:a")])
+    found = store._search_by_context(owner_keys=["user:a"], **search)
+    assert [c["memory_id"] for c in found["candidates"]] == ["m-a"]
+    assert embeddings.queries == ["### user:\nWhat color?"]

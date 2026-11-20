@@ -34,6 +34,7 @@ import socket
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -1254,10 +1255,96 @@ def test_the_text_shows_the_figures_the_json_holds(
     assert "the Host's output boundary; RTC transport and client playback are not in it" in (
         " ".join(shown.split())
     )
-    # Each runner with its workers as configured, all of them ready.
+    # Each runner with its workers as configured, all of them ready; its calls, or that it
+    # summarized none, never a count it did not report.
     runners = data["models.runners"]["runners"]
     assert runners and all((r["workers"], r["ready_workers"]) == (1, 1) for r in runners)
     assert all("· 1 worker · " in line for line in shown.splitlines() if "started in" in line)
+    flat = " ".join(shown.split())
+    assert flat.count("no call summary observed") == sum(r["calls"] is None for r in runners)
+    assert flat.count(" calls, queue ≤ ") == sum(bool(r["calls"]) for r in runners)
+
+
+def test_a_figure_round_1_alone_lacks_says_why_as_that_round_does(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Round 1 without a figure the later rounds have: the line under the table gives round 1's
+    own reason. A passed rounds' table whose round 1 did not pass says it is not in it."""
+    from alphaavatar.host.cli.render import Report
+    from alphaavatar.host.tools.doctor import ScenarioOutcome
+    from alphaavatar.host.tools.doctor.schemas.session import (
+        FigureSummary,
+        Metric,
+        ScenarioResult,
+        ScenarioSummary,
+    )
+
+    why = "not measured: no semantic addressing ran for the final, or none is traced"
+    summary = ScenarioSummary(
+        "voice",
+        "c",
+        rounds=3,
+        passed=2,
+        figures=(
+            FigureSummary(
+                "addressing_queue",
+                "ms",
+                first=None,
+                samples=2,
+                median=0.1,
+                low=0.1,
+                high=0.1,
+                all_first=None,
+                all_samples=2,
+                all_median=0.1,
+                all_low=0.1,
+                all_high=0.1,
+            ),
+        ),
+    )
+    missing = Metric("addressing_queue", None, "ms", "a", "b", "input trace", 0, note=why)
+
+    def shown(outcome, **table) -> str:
+        first = ScenarioResult("voice", outcome, "", "c", round=1, segments=(missing,))
+        groups = cli_doctor._details() if table.pop("details", False) else None
+        cli_doctor._figures_table(Report(), summary, first=first, groups=groups, **table)
+        return " ".join(capsys.readouterr().out.split())
+
+    label = dict(row for _, rows in cli_doctor.DETAILS for row in rows)["addressing_queue"]
+    assert f"— {label}, round 1: {why}" in shown(ScenarioOutcome.PASSED, every=True, details=True)
+    # Not in the passed rounds' table at all, whatever it measured: said once, not per figure.
+    latency = ScenarioSummary(
+        "voice",
+        "c",
+        rounds=3,
+        passed=2,
+        figures=(
+            FigureSummary(
+                "first_audio_frame", "ms", first=None, samples=2, median=1.0, low=1.0, high=1.0
+            ),
+        ),
+    )
+    first = ScenarioResult("voice", ScenarioOutcome.FAILED, "", "c", round=1)
+    cli_doctor._figures_table(Report(), latency, first=first)
+    text = " ".join(capsys.readouterr().out.split())
+    assert "— Round 1: it did not pass; Failed rounds shows what it measured" in text
+    assert ", round 1:" not in text
+
+
+def test_a_runner_without_a_call_summary_says_so_rather_than_a_count() -> None:
+    from alphaavatar.host.tools.doctor import CheckStatus
+    from alphaavatar.host.tools.doctor.schemas.session import RunnerResult
+
+    runner = RunnerResult(
+        "m", CheckStatus.PASS, "s", startup_seconds=1.0, workers=2, ready_workers=1
+    )
+    assert (
+        cli_doctor._started(runner)
+        == "started in 1.00 s · 1 of 2 workers · no call summary observed"
+    )
+    served = replace(runner, calls=3, queue_wait_max_ms=0.2, execution_max_ms=4.0)
+    assert cli_doctor._started(served).endswith(" · 3 calls, queue ≤ 0.2 ms, run ≤ 4.0 ms")
+    assert cli_doctor._started(replace(runner, status=CheckStatus.FAIL)) == "s"
 
 
 def test_model_files_load_from_the_cache_and_one_missing_downloads_as_start_does(

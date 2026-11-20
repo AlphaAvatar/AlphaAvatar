@@ -210,7 +210,8 @@ class VADConfig(BaseModel):
         default=None, min_length=1, description="VAD implementation used by Interaction Router."
     )
     min_speech_duration: float = Field(default=0.05, ge=0.0)
-    min_silence_duration: float = Field(default=0.55, ge=0.0)
+    # Silence after speech before a segment closes; the next segment continues the same input.
+    min_silence_duration: float = Field(default=0.3, ge=0.0)
     activation_threshold: float = Field(default=0.5, gt=0.0, le=1.0)
     deactivation_threshold: float | None = Field(default=None, gt=0.0, le=1.0)
     smoothing_alpha: float = Field(default=0.35, ge=0.0, lt=1.0)

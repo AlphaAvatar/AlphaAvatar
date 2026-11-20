@@ -294,6 +294,17 @@ class LanceDBRunner(InferenceRunner):
             if (memory_id := str(row.get("memory_id") or "").strip())
         ]
 
+    def _stored(self, where: str) -> bool:
+        """Whether a row these filters select could be a candidate: one with its memory."""
+        rows = (
+            self._memory_table.search()
+            .where(f"({where}) AND memory_id != ''")
+            .select(["memory_id"])
+            .limit(1)
+            .to_list()
+        )
+        return bool(rows)
+
     def _filter_candidates(self, *, where: str, limit: int) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -324,25 +335,25 @@ class LanceDBRunner(InferenceRunner):
         embedding_wait = vector_wait = 0.0
         memories, graph = [], []
         phase, error_type = "embedding", None
+        common = {"owner_keys": owner_keys, "scope_keys": scope_keys, "memory_type": memory_type}
+        memory_where = self._where(doc_kind="memory_item", **common)
+        graph_where = self._where(doc_kind="graph_node", **common)
         try:
+            # Nothing these owners and scopes hold can be recalled: the query, which a remote
+            # model may embed, is not embedded, and the search would have found nothing anyway.
+            if not (self._stored(memory_where) or self._stored(graph_where)):
+                phase = "empty"
+                return out
+            embedding_started = perf_counter()
             try:
                 vector = self._embeddings.embed_query(context_str)
             finally:
-                embedding_wait = perf_counter() - started
-            common = {
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
-                "memory_type": memory_type,
-            }
+                embedding_wait = perf_counter() - embedding_started
             phase = "vector"
             vector_started = perf_counter()
             try:
-                memories = self._query_candidates(
-                    vector, where=self._where(doc_kind="memory_item", **common), limit=top_k
-                )
-                graph = self._query_candidates(
-                    vector, where=self._where(doc_kind="graph_node", **common), limit=top_k
-                )
+                memories = self._query_candidates(vector, where=memory_where, limit=top_k)
+                graph = self._query_candidates(vector, where=graph_where, limit=top_k)
             finally:
                 vector_wait = perf_counter() - vector_started
             out["candidates"] = self._merge_candidates(memories, graph, limit=top_k)

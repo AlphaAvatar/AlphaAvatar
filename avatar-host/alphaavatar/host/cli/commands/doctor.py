@@ -387,13 +387,17 @@ def _text(
         if summaries and ran:
             why = "no round observed any figure"
         out.wrapped(f"Not measured · {why}", indent=2)
+
+    def first(summary):  # Its round 1, whose own reasons say why a figure of it is missing.
+        return next((r for r in scenarios if r.name == summary.name and r.round == 1), None)
+
     for summary in observed:
         if summary.passed:
-            _figures_table(out, summary)
+            _figures_table(out, summary, first=first(summary))
         if summary.passed < summary.rounds:
-            _figures_table(out, summary, every=True)
+            _figures_table(out, summary, every=True, first=first(summary))
     for summary in observed:
-        _figures_table(out, summary, every=True, groups=_details())
+        _figures_table(out, summary, every=True, groups=_details(), first=first(summary))
 
     ready = next((m for m in checks["session.start"].metrics if m.name == "session_ready"), None)
     if ready is not None and ready.value is not None:
@@ -413,21 +417,7 @@ def _text(
             out.row("Runtime start", shown, column=column)
         width = out.column([runner.method for runner in runners])
         for runner in runners:
-            shown = runner.summary
-            if runner.status == CheckStatus.PASS and runner.startup_seconds is not None:
-                shown = f"started in {runner.startup_seconds:.2f} s"
-                if runner.workers is not None:
-                    ready_of = (
-                        ""
-                        if runner.ready_workers == runner.workers
-                        else f"{runner.ready_workers} of "
-                    )
-                    shown += f" · {ready_of}{runner.workers} worker{'s' * (runner.workers != 1)}"
-                if runner.calls:
-                    shown += (
-                        f" · {runner.calls} calls, queue ≤ {_ms(runner.queue_wait_max_ms)}, "
-                        f"run ≤ {_ms(runner.execution_max_ms)}"
-                    )
+            shown = _started(runner)
             out.row(runner.method, shown, status=str(runner.status), column=width)
             if runner.status != CheckStatus.PASS:
                 for line in runner.details:
@@ -449,6 +439,24 @@ def _worst(group) -> str:
         if status in statuses:
             return str(status)
     return "SKIP"
+
+
+def _started(runner) -> str:
+    """A runner on one line: its start, workers and calls once it passed, else its summary."""
+    if runner.status != CheckStatus.PASS or runner.startup_seconds is None:
+        return runner.summary
+    shown = f"started in {runner.startup_seconds:.2f} s"
+    if runner.workers is not None:
+        ready_of = "" if runner.ready_workers == runner.workers else f"{runner.ready_workers} of "
+        shown += f" · {ready_of}{runner.workers} worker{'s' * (runner.workers != 1)}"
+    if runner.calls:
+        shown += (
+            f" · {runner.calls} calls, queue ≤ {_ms(runner.queue_wait_max_ms)}, "
+            f"run ≤ {_ms(runner.execution_max_ms)}"
+        )
+    elif runner.calls is None:  # A runner summarizes its calls once it has served one.
+        shown += " · no call summary observed"
+    return shown
 
 
 def _summary(title: str, group, prepared) -> str:
@@ -536,31 +544,41 @@ def _details() -> tuple[tuple[str | None, str, tuple[tuple[str, str], ...]], ...
     return tuple((None, title, rows) for title, rows in DETAILS)
 
 
-def _figures_table(out: Report, summary, *, every: bool = False, groups=None) -> None:
+def _figures_table(out: Report, summary, *, every: bool = False, groups=None, first=None) -> None:
     """One scenario's figures over its passed rounds, or with ``every`` over every round that
     observed them, failed ones included: the first round apart, then the later rounds'
     samples, median and range, and their 95th percentile once there are enough. Latency by
     default, each stage's total on its own line, its rows below it; with ``groups`` of
-    ``DETAILS``, what diagnoses them, over every round."""
+    ``DETAILS``, what diagnoses them, over every round. A round 1 (``first``) missing a figure
+    later rounds have says why, as that round's own figure does."""
     figures = {figure.name: figure for figure in summary.figures}
+    # Round 1 outside the passed rounds' table: none of its figures is in it.
+    apart = not every and first is not None and first.outcome != ScenarioOutcome.PASSED
+    reasons_of_first = (
+        {m.name: m.note for m in (*first.metrics, *first.segments) if m.value is None and m.note}
+        if first is not None and not apart
+        else {}
+    )
     latency = groups is None
     groups = _latency() if latency else groups
     p95 = not every and any(f.p95 is not None for f in summary.figures)
     header = ("Metric", "Round 1", "n", "Median", "Range", *(("P95",) * p95))
-    rows, missing, merged = [], [], []
+    rows, missing, merged, unseen = [], [], [], []
 
     def cells(f) -> list[str]:
-        first, n, median, low, high = (
+        value, n, median, low, high = (
             (f.all_first, f.all_samples, f.all_median, f.all_low, f.all_high)
             if every
             else (f.first, f.samples, f.median, f.low, f.high)
         )
         if f.merged:
             merged.append((labels[f.name], f.merged))
-        elif first is None and not n and f.name not in _TOTALS:
+        elif value is None and not n and f.name not in _TOTALS:
             missing.append((labels[f.name], f.note or "not observed in any such round"))
+        elif value is None and f.name not in _TOTALS and (why := reasons_of_first.get(f.name)):
+            unseen.append((labels[f.name], why))
         return [
-            _in(f.unit, first),
+            _in(f.unit, value),
             str(n),
             _in(f.unit, median),
             _range(f.unit, low, high) if n else "—",
@@ -609,12 +627,15 @@ def _figures_table(out: Report, summary, *, every: bool = False, groups=None) ->
     for label, count in merged:
         rounds = f"{count} round{'s' * (count != 1)}"
         out.note(f"— {label}: from an earlier node in {rounds}, so no sample of it", indent=2)
-    # Figures missing for one reason share its line.
-    reasons: dict[str, list[str]] = {}
-    for label, why in missing:
-        reasons.setdefault(why, []).append(label)
-    for why, found in reasons.items():
-        out.note(f"— {', '.join(found)}: {why}", indent=2)
+    # Figures missing for one reason share its line; round 1's alone say it is round 1's.
+    if apart:
+        out.note("— Round 1: it did not pass; Failed rounds shows what it measured", indent=2)
+    for found, round_1 in ((missing, ""), (unseen, ", round 1")):
+        reasons: dict[str, list[str]] = {}
+        for label, why in found:
+            reasons.setdefault(why, []).append(label)
+        for why, labelled in reasons.items():
+            out.note(f"— {', '.join(labelled)}{round_1}: {why}", indent=2)
 
 
 _TOTALS = ("input", "context", "output")

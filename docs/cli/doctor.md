@@ -266,7 +266,9 @@ output boundary: every measurement ends at the Host's output. A wait the Host ob
 service, such as `stt_wait` or `model_first_event`, holds the network as well as the service:
 none is the service's own time. LiveKit's transport, what a
 client shows or plays, and the physical devices are not measured, since no RTC server, client
-or device takes part; `devices.media` says so, and they are measured separately.
+or device takes part; `devices.media` says so, and they are measured separately. The picture
+is a shared screen, never a camera's frames, so what reads a camera, such as face recognition,
+does not run on it: `devices.media` says that too.
 
 End to end, in this order: `first_text` (Runtime first text, the first answer text chunk out),
 `first_audio_frame` (the runtime's first answer audio frame out), `response_final` (every
@@ -572,15 +574,18 @@ vision, for `voice_vision` alone; Doctor's input), each row from its own start, 
 says. Last, `Session`, each session's readiness at the median over all of them, and `Runners`,
 the runtime's one start and how the model cache changed meanwhile, then each runner's start,
 its workers (as configured, and how many were ready when fewer), the calls it served, and its
-peak queue wait and execution. Each `Latency` and `Details` row gives round 1, then the later
-rounds' count (`n`, said under the table), median and range; the passed rounds' `Latency` table
-alone adds P95, once there are 20 samples. Where the terminal is too narrow, each figure takes
-lines of its own. A figure no round observed is `—`, never `0 ms`, and a line under its table
-says why; a row merged in some rounds says in how many. Times under 10 ms keep one decimal.
-When the diagnosis did not run, `Latency` says so, `Not measured`, with why. `Run again as
-JSON` is the command that prints the same diagnosis as JSON, with the same `--rounds`: every
-round, event boundary, sample count, service and piece of evidence. Run with `KEY=VALUE`
-overrides, it says to give the same ones, and does not repeat them.
+peak queue wait and execution; a runner summarizes its calls once it has served one, so one
+with none says `no call summary observed` (`calls` is `null`). Each `Latency` and `Details`
+row gives round 1, then the later rounds' count (`n`, said under the table), median and range;
+the passed rounds' `Latency` table alone adds P95, once there are 20 samples. Where the
+terminal is too narrow, each figure takes lines of its own. A figure no round observed is `—`,
+never `0 ms`, and a line under its table says why; one round 1 alone did not observe says why
+too, as that round's figure does (`…, round 1: …`), and a passed rounds' table whose round 1
+did not pass says so. A row merged in some rounds says in how many. Times under 10 ms keep one
+decimal. When the diagnosis did not run, `Latency` says so, `Not measured`, with why. `Run
+again as JSON` is the command that prints the same diagnosis as JSON, with the same
+`--rounds`: every round, event boundary, sample count, service and piece of evidence. Run with
+`KEY=VALUE` overrides, it says to give the same ones, and does not repeat them.
 `--list` lists the checks in the same groups.
 
 JSON keeps the status, the tally (`counts`), the `configuration` diagnosed as

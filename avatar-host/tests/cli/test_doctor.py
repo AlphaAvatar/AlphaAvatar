@@ -152,6 +152,11 @@ def test_without_a_configuration_doctor_says_how_to_create_one_and_checks_the_re
         "session.cleanup": "SKIP",
         "devices.media": "SKIP",
     }
+    # What the samples cannot reach, named: a shared screen is no camera.
+    assert any(
+        line.startswith("camera input: not sent;") and "face recognition" in line
+        for line in checks["devices.media"]["details"]
+    )
     assert "`alphaavatar config init <name> --avatar-id <id>`" in checks["config.load"]["action"]
     assert (
         checks["paths.home"]["summary"] == f"{home}  (not created yet; created when first needed)"

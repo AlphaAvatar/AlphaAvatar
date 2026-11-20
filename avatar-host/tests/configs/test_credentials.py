@@ -389,6 +389,79 @@ def test_an_authorization_default_stands_in_only_for_an_unset_credential(
     )
 
 
+NESTED = (
+    "mcp:\n  plugin: default\n  enabled: true\n  servers:\n"
+    "    docs:\n      url: https://mcp.invalid/\n"
+    "      headers:\n        Authorization: Bearer ${oc.env:PRIMARY_PAT,${oc.env:SHARED_PAT}}\n"
+)
+
+
+# PRIMARY_PAT as the process (None: unset) and the .env file hold it, SHARED_PAT as the process
+# holds it, and what the header sends, or the variable refused and why.
+NESTED_DEFAULTS = [
+    ("", None, "shared-set", ("PRIMARY_PAT", "which is empty")),
+    ("  ", None, "shared-set", ("PRIMARY_PAT", "which is empty")),
+    (None, None, "shared-set", "Bearer shared-set"),
+    (None, None, " ", ("PRIMARY_PAT", "which is not set, and its default is empty")),
+    ("primary-set", None, "shared-set", "Bearer primary-set"),
+    ("primary-set", None, " ", "Bearer primary-set"),  # The default it does not take.
+    ("", "primary-file", "shared-set", "Bearer primary-file"),
+    # OmegaConf evaluates a default before it knows whether it takes it.
+    ("primary-set", None, None, ("SHARED_PAT", "which is not set")),
+]
+
+
+@pytest.mark.parametrize(
+    ("primary", "file", "shared", "outcome"),
+    NESTED_DEFAULTS,
+    ids=[
+        "empty",
+        "blank",
+        "default",
+        "default-blank",
+        "primary",
+        "default-not-taken",
+        "file",
+        "default-unset",
+    ],
+)
+def test_a_nested_default_is_taken_as_omegaconf_evaluates_it(
+    tmp_path: Path, primary: str | None, file: str | None, shared: str | None, outcome: object
+) -> None:
+    """``${oc.env:PRIMARY_PAT,${oc.env:SHARED_PAT}}`` sends what OmegaConf evaluates, once the
+    environment, the .env file and the stored credentials have filled it: an empty or blank
+    PRIMARY_PAT is sent as it is, so it is refused, however good the shared one is; unset, the
+    shared one stands in, and refused too when it holds none."""
+    from alphaavatar.host.configs import MissingVariables, load_application, select_configuration
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True)
+    (paths.configs.profiles_dir / "alpha/plugins/tools/tools.yaml").write_text(NESTED)
+    lines = [f"ALPHAAVATAR_HOME={paths.root}", *([f"PRIMARY_PAT={file}"] if file else [])]
+    (tmp_path / "chosen.env").write_text("\n".join(lines))
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env")}):
+        for name, value in (
+            ("ALPHAAVATAR_HOME", None),
+            ("PRIMARY_PAT", primary),
+            ("SHARED_PAT", shared),
+        ):
+            os.environ.pop(name, None)
+            if value is not None:
+                os.environ[name] = value
+        settings = load_environment()
+        source = select_configuration(None, (), settings)
+        if isinstance(outcome, str):
+            servers = load_application(source, (), settings).avatar.tools.mcp.servers
+            assert servers["docs"]["headers"] == {"Authorization": outcome}
+            return
+        with pytest.raises(MissingVariables) as refused:
+            load_application(source, (), settings)
+    [item] = refused.value.items
+    name, why = outcome
+    assert item.location == "tools.mcp.servers.docs.headers.Authorization"
+    assert (item.variable, item.problem) == (name, f"reads the credential {name}, {why}")
+
+
 # A variable an api_key_env names by interpolation, by TTS_KEY_NAME or else its default, as the
 # environment, the .env file and the stored credentials hold it, and what loading leaves.
 CHOSEN = [

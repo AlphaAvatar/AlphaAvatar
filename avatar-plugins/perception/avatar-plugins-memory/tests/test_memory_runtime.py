@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import date
@@ -261,6 +262,30 @@ async def test_a_turn_is_ready_for_context_before_memory_records_it(tmp_path: Pa
 
     await wait_until(lambda: state.message_sequence == 1, "Memory never recorded the Turn")
     await memory.on_stop()
+    await runtime.aclose()
+
+
+async def test_each_context_consumer_logs_how_long_it_held_the_turn(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The consumers are awaited together: each says what it alone held the Turn's Context for.
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+
+    async def slow(snapshot: object) -> None:
+        await asyncio.sleep(0.02)
+
+    runtime.turn.register_context_consumer("test.slow", waiter=slow)
+    snapshot = commit_turn(runtime, speaker(runtime), 0, "hello")
+    with caplog.at_level(logging.DEBUG, logger="alphaavatar.core.turn"):
+        assert await runtime.turn.wait_context_ready(snapshot, timeout=1)
+    (line,) = (
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Turn context consumer consumer_id=test.slow ")
+    )
+    assert f"turn_id={snapshot.turn_id} outcome=done wait_ms=" in line
+    assert float(line.rsplit("wait_ms=", 1)[1]) >= 20
+    runtime.turn.unregister_context_consumer("test.slow")
     await runtime.aclose()
 
 
