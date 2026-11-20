@@ -109,7 +109,10 @@ CI build's own wheels sit beside its package, so pass `--artifacts <directory>` 
 
 A configuration names each plugin by capability type and implementation, and the installed
 packages' entry points provide them; `config check` and `doctor` name a missing one at the
-setting that selects it, and say whether this release's setup installs it. Loading a
+setting that selects it, and say whether this release's setup installs it, with the command
+for the bundle checked (`alphaavatar setup my-avatar`); a configuration file, which setup does
+not take, gets no command. A variable the configuration reads that holds no value, such as an
+MCP server's `<MCP_PAT>`, is named with the setting that reads it. Loading a
 configuration resolves the plugins with their settings and the model providers those name,
 and plans the inference workers of all their runners: what `config check` reports is what
 `start` launches.

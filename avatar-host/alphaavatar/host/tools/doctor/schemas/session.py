@@ -128,6 +128,8 @@ class RunnerResult:
     summary: str
     details: tuple[str, ...] = ()
     startup_seconds: float | None = None
+    workers: int | None = None  # As configured (runtime.inference), and how many were ready
+    ready_workers: int | None = None
     # What it served during the session, as its process summarizes it: calls, and the peak
     # wait in its queue and the peak execution, in milliseconds.
     calls: int | None = None

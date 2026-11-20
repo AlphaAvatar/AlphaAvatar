@@ -29,26 +29,32 @@ another bundle, each run reported on its own.
 
 ## Checks
 
-| ID | Checks | Needs a configuration |
-| --- | --- | --- |
-| `system.platform` | Operating system; the POSIX local socket API (AF_UNIX) the Host needs — present, not opened | |
-| `python.version` | The interpreter against the Python versions AlphaAvatar supports | |
-| `packages.alphaavatar` | Installed AlphaAvatar packages come from one release; the Host's requirements are installed | |
-| `config.load` | Selection, profiles, overrides and validation, with `config check`'s result | |
-| `config.runners` | The inference runners and workers the configuration selects | yes |
-| `packages.capabilities` | Packages the enabled capabilities need: RTC backend, loop, context, model provider backends, voice, router, status, character, memory, persona and tools, with their extras and versions | yes |
-| `paths.home` | Application home: where it came from, state, owner and mode, write access, settings, bundles, free space; a link without a target fails | |
-| `paths.cache` | Cache root: state, write access, downloaded models, free space | |
-| `paths.workspace` | The Avatar's workspace: state, write access, free space | yes |
-| `session.start` | A temporary session of the configuration: assembled as `start` would, and ready | yes, session |
-| `models.runners` | The planned runners started as `start` starts them, missing model files downloaded: the runtime's [start](#runtime-start) sample, each runner's start, calls, queue and execution figures | yes, session |
-| `services.external` | Model, speech, vector store, tool and MCP services: reached by the session only when authorized; the RTC server is never contacted | yes |
-| `session.scenarios` | Fixed samples through each enabled modality chain, with figures and evidence | yes, session |
-| `session.cleanup` | Sessions, executor, runtime, runner processes, sockets and the temporary workspace reclaimed | yes, session |
-| `devices.media` | Microphones, cameras and players: client devices, never opened — not verified | |
+| ID | Checks | Needs a configuration | May reach, once authorized |
+| --- | --- | --- | --- |
+| `system.platform` | Operating system; the POSIX local socket API (AF_UNIX) the Host needs — present, not opened | | |
+| `python.version` | The interpreter against the Python versions AlphaAvatar supports | | |
+| `packages.alphaavatar` | Installed AlphaAvatar packages come from one release; the Host's requirements are installed | | |
+| `config.load` | Selection, profiles, overrides and validation, with `config check`'s result | | |
+| `config.runners` | The inference runners and workers the configuration selects | yes | |
+| `packages.capabilities` | Packages the enabled capabilities need: RTC backend, loop, context, model provider backends, voice, router, status, character, memory, persona and tools, with their extras and versions | yes | |
+| `paths.home` | Application home: where it came from, state, owner and mode, write access, settings, bundles, free space; a link without a target fails | | |
+| `paths.cache` | Cache root: state, write access, downloaded models, free space | | |
+| `paths.workspace` | The Avatar's workspace: state, write access, free space | yes | |
+| `session.start` | A temporary session of the configuration: assembled as `start` would, and ready | yes, session | external services |
+| `models.runners` | The planned runners started as `start` starts them, missing model files downloaded: the runtime's [start](#runtime-start) sample, each runner's start, workers, calls, queue and execution figures | yes, session | model downloads, external services (a vector store's probe) |
+| `services.external` | Model, speech, vector store, tool and MCP services: reached by the session only when authorized; the RTC server is never contacted | yes | external services |
+| `session.scenarios` | Fixed samples through each enabled modality chain, with figures and evidence | yes, session | external services |
+| `session.cleanup` | Sessions, executor, runtime, runner processes, sockets and the temporary workspace reclaimed | yes, session | |
+| `devices.media` | Microphones, cameras and players: client devices, never opened — not verified | | |
 
-The static checks create, download, load, start and contact nothing, and open no socket; a
-`.env` Doctor cannot read is a `config.load` failure in the same report. The first
+The static checks create, download, load, start and contact nothing, and open no socket; only
+the runtime diagnosis may download model files or call services, and only once
+[authorized](#authorization). `--list` names what each check may reach. A `.env` Doctor
+cannot read is a `config.load` failure in the same report. A configuration that does not load
+fails `config.load` with what [`config check`](config.md#config-check) says, through the same
+diagnosis: each setting at fault by its path, such as the MCP server and header that read a
+variable holding no value, and its next step as `action`, with `alphaavatar setup <bundle>`
+for the bundle checked; a file gets no setup command. The first
 configuration import in a process loads the plugins, as `config check` and `start` do, and
 some of their libraries probe the machine while importing: `urllib3` opens and binds one IPv6
 socket to test IPv6 support.
@@ -255,8 +261,10 @@ fails fails the round, its outputs judged one by one. Rejected credentials, a ge
 
 Every time is on one clock, the session's monotonic clock, and every figure runs from the
 **final speech**: the moment the frame carrying the sample's last voiced sample is published;
-the trailing silence follows as usual. Figures are server side, from diagnostic input to the
-output boundary: every measurement ends at the Host's output. LiveKit's transport, what a
+the trailing silence follows as usual. Figures are the Host's, from diagnostic input to its
+output boundary: every measurement ends at the Host's output. A wait the Host observes on a
+service, such as `stt_wait` or `model_first_event`, holds the network as well as the service:
+none is the service's own time. LiveKit's transport, what a
 client shows or plays, and the physical devices are not measured, since no RTC server, client
 or device takes part; `devices.media` says so, and they are measured separately.
 
@@ -387,6 +395,10 @@ process, or the diagnostic process itself had to be killed or left something beh
 | `FAIL` | `start` or `dev` would fail, or cannot work as configured; a measured scenario failed |
 | `SKIP` | Not run or not verifiable here: needs a configuration, authorization, or a client |
 
+The text says so in one line under the checks. A skipped check always says why, and a figure
+not measured is `—` (`null` in JSON) with why, never `0`; a failed round stays in the report,
+in its own table and in `Failed rounds`, never left out of the figures that describe the run.
+
 | Exit code | Meaning |
 | --- | --- |
 | `0` | No check failed; warnings and skipped checks allowed |
@@ -395,20 +407,13 @@ process, or the diagnostic process itself had to be killed or left something beh
 | `130` | Interrupted; the report still shows what ran |
 
 Three rounds of `voice`, vision off, on the offline test doubles of Doctor's tests (their
-figures are theirs, not a service's; their TTS logs no first PCM), in which the second round's
-STT gives the sum question's first sentence alone; from the sessions on. [cli.html](cli.html)
-shows earlier runs with the others, colors and all; its Doctor panels predate this layout:
+figures are theirs, not a service's; their TTS logs no first PCM and their STT plugin times no
+request), in which the second round's STT gives the sum question's first sentence alone; from
+the status legend on. [cli.html](cli.html) shows earlier runs with the others, colors and all;
+its Doctor panels predate this layout:
 
 ```text
-Session
-  Ready                  2.5 ms at the median of 3, 2.2–18 ms
-
-Runners
-  Runtime start          648 ms · the model cache did not grow (net)
-  PASS  alphaavatar.voice.vad.silero
-        started in 0.32 s · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
-  PASS  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.32 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+  PASS checked · WARN needs attention · FAIL fails as configured · SKIP not run here: why
 
 Scenarios · 3 rounds, a session each
   FAIL  voice                  2/3 passed · stopped: 1 at stt.final
@@ -422,28 +427,35 @@ Scenarios · 3 rounds, a session each
   With model m · stt openai_segment m · tts openai m · vision off
   Sample sum_question sha256:0f72883c4ad4
 
+Failed rounds · voice
+  Round 2 · stopped at stt.final · measured: Runtime first text 705 ms; First audio frame 727 ms;
+  Response complete 957 ms; Text complete 706 ms; Last audio frame 957 ms; Input 651 ms; Context 3.4
+  ms; Output 72 ms
+
 Latency · voice · 2 of 3 rounds passed
   Metric                                               Round 1   n   Median    Range
   End to end
-    Runtime first text                                  706 ms   1   706 ms   706 ms
+    Runtime first text                                  705 ms   1   705 ms   705 ms
     First audio frame                                   727 ms   1   727 ms   727 ms
-    Response complete                                   958 ms   1   957 ms   957 ms
+    Response complete                                   959 ms   1   957 ms   957 ms
     Text complete                                       706 ms   1   706 ms   706 ms
-    Last audio frame                                    958 ms   1   956 ms   956 ms
-  Input                                                 652 ms   1   652 ms   652 ms
-    Final speech → VAD close                            601 ms   1   601 ms   601 ms
+    Last audio frame                                    958 ms   1   957 ms   957 ms
+  Input                                                 651 ms   1   652 ms   652 ms
+    Final speech → VAD close                            600 ms   1   601 ms   601 ms
     VAD close → Final transcript                         51 ms   1    51 ms    51 ms
-  Context                                               3.4 ms   1   2.8 ms   2.8 ms
-    Final transcript → Turn commit                      1.0 ms   1   0.9 ms   0.9 ms
-    Turn commit → Context readiness check complete      0.7 ms   1   0.5 ms   0.5 ms
-    Context readiness check complete → Context built    1.2 ms   1   1.1 ms   1.1 ms
-    Context built → Model request sent                  0.5 ms   1   0.4 ms   0.4 ms
-  Output                                                 72 ms   1    72 ms    72 ms
+  Context                                               3.6 ms   1   2.9 ms   2.9 ms
+    Final transcript → Turn commit                      0.9 ms   1   0.9 ms   0.9 ms
+    Turn commit → Context readiness check complete      0.8 ms   1   0.6 ms   0.6 ms
+    Context readiness check complete → Context built    1.3 ms   1   0.9 ms   0.9 ms
+    Context built → Model request sent                  0.6 ms   1   0.5 ms   0.5 ms
+  Output                                                 73 ms   1    72 ms    72 ms
     Model request sent → First text delta                51 ms   1    51 ms    51 ms
     First text delta → TTS request                      0.9 ms   1   0.6 ms   0.6 ms
     TTS request → First PCM                                  —   0        —        —
     First PCM → First audio frame                            —   0        —        —
   n: later rounds that passed and observed it; the stages add up to First audio frame
+  From the final speech, the frame with the sample's last voiced sample going in, to the Host's
+  output boundary; RTC transport and client playback are not in it
   — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
   — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
   no first PCM
@@ -451,77 +463,140 @@ Latency · voice · 2 of 3 rounds passed
 Latency · voice · every round, the 1 not passed included
   Metric                                               Round 1   n   Median        Range
   End to end
-    Runtime first text                                  706 ms   2   705 ms   705–706 ms
-    First audio frame                                   727 ms   2   727 ms   726–727 ms
-    Response complete                                   958 ms   2   957 ms       957 ms
-    Text complete                                       706 ms   2   706 ms   705–706 ms
-    Last audio frame                                    958 ms   2   957 ms   956–957 ms
-  Input                                                 652 ms   2   652 ms   651–652 ms
-    Final speech → VAD close                            601 ms   2   601 ms       601 ms
-    VAD close → Final transcript                         51 ms   2    51 ms     50–51 ms
-  Context                                               3.4 ms   2   2.9 ms   2.8–3.0 ms
-    Final transcript → Turn commit                      1.0 ms   2   1.0 ms   0.9–1.0 ms
-    Turn commit → Context readiness check complete      0.7 ms   2   0.5 ms   0.5–0.6 ms
-    Context readiness check complete → Context built    1.2 ms   2   1.1 ms       1.1 ms
-    Context built → Model request sent                  0.5 ms   2   0.4 ms       0.4 ms
-  Output                                                 72 ms   2    72 ms        72 ms
+    Runtime first text                                  705 ms   2   705 ms       705 ms
+    First audio frame                                   727 ms   2   727 ms       727 ms
+    Response complete                                   959 ms   2   957 ms       957 ms
+    Text complete                                       706 ms   2   706 ms       706 ms
+    Last audio frame                                    958 ms   2   957 ms       957 ms
+  Input                                                 651 ms   2   651 ms   651–652 ms
+    Final speech → VAD close                            600 ms   2   601 ms   600–601 ms
+    VAD close → Final transcript                         51 ms   2    51 ms        51 ms
+  Context                                               3.6 ms   2   3.1 ms   2.9–3.4 ms
+    Final transcript → Turn commit                      0.9 ms   2   0.9 ms   0.9–1.0 ms
+    Turn commit → Context readiness check complete      0.8 ms   2   0.6 ms   0.6–0.7 ms
+    Context readiness check complete → Context built    1.3 ms   2   1.1 ms   0.9–1.3 ms
+    Context built → Model request sent                  0.6 ms   2   0.5 ms       0.5 ms
+  Output                                                 73 ms   2    72 ms        72 ms
     Model request sent → First text delta                51 ms   2    51 ms        51 ms
-    First text delta → TTS request                      0.9 ms   2   0.6 ms       0.6 ms
+    First text delta → TTS request                      0.9 ms   2   0.6 ms   0.6–0.7 ms
     TTS request → First PCM                                  —   0        —            —
     First PCM → First audio frame                            —   0        —            —
   n: later rounds that observed it; the stages add up to First audio frame
+  From the final speech, the frame with the sample's last voiced sample going in, to the Host's
+  output boundary; RTC transport and client playback are not in it
   — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
   — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
   no first PCM
 
-Failed rounds · voice
-  Round 2 · stopped at stt.final · measured: Runtime first text 705 ms; First audio frame 726 ms;
-  Response complete 957 ms; Text complete 705 ms; Last audio frame 957 ms; Input 651 ms; Context 3.0
-  ms; Output 72 ms
+Details · voice · every round, the 1 not passed included
+  Metric                                               Round 1   n    Median        Range
+  STT, the Turn's final
+    Segment committed → STT final                        51 ms   2     51 ms     50–51 ms
+    Queued in the plugin                                     —   0         —            —
+    TCP connect                                              —   0         —            —
+    TLS handshake                                            —   0         —            —
+    Upload                                                   —   0         —            —
+    Audio sent → answer headers, network and service         —   0         —            —
+    Answer headers → first event                             —   0         —            —
+    Answer headers → transcript done                         —   0         —            —
+  Turn taking and Context
+    Last assessment queued → started                    0.1 ms   2    0.1 ms       0.1 ms
+    Assessments, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
+    Timed holds, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
+    Semantic addressing queued → started                     —   0         —            —
+    Semantic addressing inference                            —   0         —            —
+    Speech closed → association ready                        —   0         —            —
+    Context readiness wait                              0.0 ms   2    0.0 ms       0.0 ms
+  Model request, first attempt
+    Client ready                                             —   0         —            —
+    Request taken → sent                                     —   0         —            —
+    Encoding                                            0.2 ms   2    0.2 ms       0.2 ms
+    Pictures                                                 0   2         0            0
+    Body sent                                          20.0 KB   2   20.0 KB      20.0 KB
+    Attempts                                                 1   2         1            1
+    Sent → first stream event, network and service      0.1 ms   2    0.1 ms       0.1 ms
+  Audio out
+    Answer audio                                        0.24 s   2    0.24 s       0.24 s
+    Frame interval, median                               21 ms   2     21 ms        21 ms
+    Largest gap between frames                           22 ms   2     22 ms        22 ms
+    Underruns of a real-time queue                          11   2        11           11
+    Producing time over audio duration                    0.96   2      0.96         0.96
+    Output events dropped                                    0   2         0            0
+  Doctor's input
+    Sample frames late, at worst                        2.1 ms   2    2.0 ms   1.9–2.1 ms
+  n: later rounds that observed it; each row from its own start
+  — Queued in the plugin, TCP connect, TLS handshake, Upload, Audio sent → answer headers, network
+  and service, Answer headers → first event, Answer headers → transcript done: not measured: its STT
+  plugin times no request
+  — Semantic addressing queued → started, Semantic addressing inference: not measured: no semantic
+  addressing ran for the final, or none is traced
+  — Speech closed → association ready: not measured: no association asked for the segment, or no
+  resolver records one
+  — Client ready, Request taken → sent: not observed in any such round
+
+Session
+  Ready                  2.5 ms at the median of 3, 2.2–19 ms
+
+Runners
+  Runtime start          661 ms · the model cache did not grow (net)
+  PASS  alphaavatar.voice.vad.silero
+        started in 0.33 s · 1 worker · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+  PASS  alphaavatar.router.turn_taking.smart_turn_v3
+        started in 0.33 s · 1 worker · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
 Run again as JSON
   alphaavatar doctor avatar.json --rounds 3 --json
 ```
 
-The text is grouped, through the [commands' shared layout](README.md#output). The headline gives
-the report's status and its tally; `Diagnostics completed` once the session ran. `Checks` has a
-row per group, environment, configuration, directories, and session and services: a group that
-only passed is its row, and any check that did not pass is a row under it with its details and
-next step. A group that ran nothing is under `Not verified`, with why and what would allow it.
-Once the diagnosis ran, the report follows the order a turn depends on: `Session`, each
-session's readiness at the median over all of them; `Runners`, the runtime's one start and how
-the model cache changed meanwhile, then each runner's start, the calls it served, and its peak
-queue wait and execution; `Scenarios`, the scenario with its rounds passed of run and where the
-others stopped, a failed round's reasons below it, each once with the rounds that share it, and
-the next step; then what its rounds ran with and the sample they heard. Then the `Latency`
-table over its passed rounds: end to end (Runtime first text, First audio frame, Response
-complete, Text complete, Last audio frame), then `Input`, `Context` and `Output`, each stage's
-total on its own line and its rows under it, each from the node before it (see
-[Figures](#figures)). When a round did not pass, a second table follows over every round that
-observed each figure, failed ones included, said so in its heading. Each row gives round 1,
-then the later rounds' count (`n`, said under the table), median and range, and P95 once there
-are 20 samples; where the terminal is too narrow, each figure takes lines of its own. A figure
-no round observed is `—`, never `0 ms`, and a line under its table says why; a row merged in
-some rounds says in how many. `Failed rounds` lists each failed round with the stage it stopped
-at and what it did measure: end to end and each stage. Times under 10 ms keep one decimal.
-When the diagnosis did not run, `Latency` says so, `Not measured`, with why. `Run again as
-JSON` is the command that prints the same diagnosis as JSON, with the same `--rounds`: every
-round, event boundary, sample count, service and piece of evidence. Run with `KEY=VALUE`
-overrides, it says to give the same ones, and does not repeat them.
+The text is grouped, through the [commands' shared layout](README.md#output), and gives the
+conclusion first. The headline gives the report's status and its tally; `Diagnostics
+completed` once the session ran. `Checks` has a row per group, environment, configuration,
+directories, and session and services: a group that only passed is its row, and any check that
+did not pass is a row under it with its details and next step. A group that ran nothing is under
+`Not verified`, with why and what would allow it; a line then says what each status means.
+Where the rounds stopped follows: `Scenarios`, the scenario with its rounds passed of run and
+where the others stopped, a failed round's reasons below it, each once with the rounds that
+share it, and the next step, then what its rounds ran with and the sample they heard; `Failed
+rounds`, each failed round with the stage it stopped at and what it did measure, end to end
+and each stage. Then end to end and by stage: the `Latency` table over the passed rounds, end
+to end (Runtime first text, First audio frame, Response complete, Text complete, Last audio
+frame), then `Input`, `Context` and `Output`, each stage's total on its own line and its rows
+under it, each from the node before it (see [Figures](#figures)), and a line on where every
+figure starts and ends: from the final speech to the Host's output boundary, RTC transport and
+client playback not in it. When a round did not pass, a second table follows over every round
+that observed each figure, failed ones included, said so in its heading. Then what diagnoses
+them: `Details`, over every round, failed ones included, by what each figure diagnoses (STT,
+the Turn's final; turn taking and Context; the model request's first attempt; audio out;
+vision, for `voice_vision` alone; Doctor's input), each row from its own start, as its label
+says. Last, `Session`, each session's readiness at the median over all of them, and `Runners`,
+the runtime's one start and how the model cache changed meanwhile, then each runner's start,
+its workers (as configured, and how many were ready when fewer), the calls it served, and its
+peak queue wait and execution. Each table row gives round 1, then the later rounds' count (`n`,
+said under the table), median and range, and P95 once there are 20 samples; where the terminal
+is too narrow, each figure takes lines of its own. A figure no round observed is `—`, never
+`0 ms`, and a line under its table says why; a row merged in some rounds says in how many.
+Times under 10 ms keep one decimal. When the diagnosis did not run, `Latency` says so, `Not
+measured`, with why. `Run again as JSON` is the command that prints the same diagnosis as JSON,
+with the same `--rounds`: every round, event boundary, sample count, service and piece of
+evidence. Run with `KEY=VALUE` overrides, it says to give the same ones, and does not repeat
+them.
 `--list` lists the checks in the same groups.
 
-JSON keeps the flat list of checks, each with `id`, `status`,
+JSON keeps the status, the tally (`counts`), the `configuration` diagnosed as
+[`config check --json`](config.md#config-check) summarizes it (`null` when none loaded), and the
+flat list of checks, each with `id`, `status`,
 `summary`, `details`, `action`, `runners`, `scenarios`, `metrics`, `services` and `summaries`; a
 scenario, one per round, has `name`, `outcome`, `summary`, `configuration`, `round`,
 `blocked_stage`, `cause`, `details`, `task`, `transcript`, `answer` (both bounded), `reached`,
 `request`, `outputs`, `metrics`, `segments`, `frames`, `sentences`, `evidence` and `sample`; a
 figure has `merged` besides its value and boundaries; a runner has `method`, `status`,
-`summary`, `details`, `startup_seconds`, `calls`, `queue_wait_max_ms` and `execution_max_ms`; a
+`summary`, `details`, `startup_seconds`, `workers`, `ready_workers`, `calls`,
+`queue_wait_max_ms` and `execution_max_ms`; a
 summary has `name`, `configuration`, `rounds`, `passed`, `stopped_at`, `figures` and `sample`;
 a service has `name`, `authorized`, `reached`, `passed` and `note`.
 Text, JSON and details pass the same output boundary as `config check`: credentials from the
 configuration and the environment are replaced and control characters removed. `--list --json` prints each check's `id`, `title`,
-`needs_configuration` and `in_session`.
+`needs_configuration`, `in_session` and `reaches` (`model downloads`, `external services`).
 
 Model provider backends come from the provider tasks start would create: the built-in plugins'
 settings are validated as `config check` does (`validate_plugin_settings`), so omitted fields

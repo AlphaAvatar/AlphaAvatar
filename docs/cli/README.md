@@ -49,9 +49,9 @@ Checks
 
 - Values share a column. On a narrow terminal, a value too long for its line goes below its
   label, indented and wrapped at spaces; a path stays whole. Diagnostics and commands print
-  whole too, so they can be searched for and copied. A missing package that does not fit its
-  line is split instead: the setting, what is wrong, the package and what installs it, a line
-  each.
+  whole too, so they can be searched for and copied. A setting at fault that does not fit its
+  line, such as a missing package or a variable holding no value, is split instead: the
+  setting, what is wrong, the package and what installs it, a line each.
 - The width is `COLUMNS`, else the terminal's, else 100 for a pipe or a file.
 - Colors, and a line redrawn in place (setup's step in progress, Doctor's running tests), appear
   only on a terminal: a pipe, `NO_COLOR` and `TERM=dumb` get the same lines, plain, each

@@ -26,6 +26,8 @@ class CheckSpec:
     title: str
     needs_configuration: bool = False
     in_session: bool = False  # Runs in the diagnostic session.
+    # What it may reach once authorized: "model downloads", "external services"; nothing else.
+    reaches: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +47,8 @@ class Check:
 @dataclass(frozen=True, slots=True)
 class Report:
     checks: tuple[Check, ...]
+    # What was diagnosed, as config check summarizes it; None when nothing loaded.
+    configuration: dict[str, Any] | None = None
 
     @property
     def status(self) -> CheckStatus:
@@ -69,5 +73,6 @@ class Report:
         return {
             "status": self.status,
             "counts": self.counts(),
+            "configuration": self.configuration,
             "checks": [asdict(check) for check in self.checks],
         }

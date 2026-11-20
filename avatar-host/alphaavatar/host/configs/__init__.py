@@ -32,17 +32,21 @@ from .loader import (
     validate_application,
     validate_plugin_settings,
 )
+from .problems import ConfigProblems, MissingVariables, Problem, describe_error, next_step
 from .template import REQUIRED_ENVIRONMENT, CreatedBundle, create_bundle, render_bundle
-from .view import describe_application, describe_error, describe_summary, output_scrubber
+from .view import describe_application, describe_summary, output_scrubber
 
 __all__ = [
     "LAYERS",
     "Need",
     "ApplicationConfig",
     "Capabilities",
+    "ConfigProblems",
     "ConfigReferenceError",
     "ConfigSource",
     "CreatedBundle",
+    "MissingVariables",
+    "Problem",
     "REQUIRED_ENVIRONMENT",
     "application_paths",
     "check_application_paths",
@@ -54,6 +58,7 @@ __all__ = [
     "format_failure",
     "load_application",
     "load_selections",
+    "next_step",
     "output_scrubber",
     "read_settings",
     "render_bundle",

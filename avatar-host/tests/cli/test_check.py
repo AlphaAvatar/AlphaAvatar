@@ -180,9 +180,105 @@ def test_error_output_never_echoes_rejected_values(
     if as_json:
         error = json.loads(output.out)["error"]
         assert error["type"] == "ValidationError" and error["fields"]
-        assert set(error) == {"type", "fields", "diagnostic"}
+        assert set(error) == {"type", "fields", "diagnostic", "problems", "action"}
     else:
         assert "fields: " in output.err
+    assert sandbox == []
+
+
+MCP = """deepresearch: {plugin: null}
+rag: {plugin: null}
+mcp:
+  plugin: default
+  enabled: true
+  servers:
+    docs:
+      url: https://mcp.invalid/
+      headers: {Authorization: Bearer <MCP_PAT>, X-Seen: inline-value}
+    code:
+      url: https://code.invalid/
+      headers: {Authorization: "Bearer ${oc.env:GITHUB_PAT}", X-Region: "${oc.env:REGION}"}
+"""
+
+
+def test_a_variable_holding_no_value_is_named_at_the_setting_that_reads_it(
+    tmp_path: Path, home: Path, sandbox: list[str], capsys: pytest.CaptureFixture
+) -> None:
+    """The credentials an MCP server reads, by placeholder or in Authorization, and an
+    ordinary interpolated variable: each named with the setting that reads it, in config
+    check's text and JSON and in Doctor's config.load, with the same next step; never a value
+    as written, nor a validation message."""
+    assert main(["config", "init", "alpha", "--avatar-id", "alpha"]) == 0
+    capsys.readouterr()
+    (home / "configs/profiles/alpha/plugins/tools/tools.yaml").write_text(MCP)
+    env_file = tmp_path / "chosen.env"
+    env_file.write_text("")
+    environ = {"ENV_FILE": str(env_file), "COLUMNS": "1000"}
+    shown = []
+
+    def check(*argv: str) -> tuple[str, dict]:
+        assert main(["config", "check", *argv]) == 2
+        text = capsys.readouterr().err
+        assert main(["config", "check", *argv, "--json"]) == 2
+        failure = json.loads(capsys.readouterr().out)["error"]
+        assert main(["doctor", *argv, "--no-metrics", "--json"]) == 1
+        load = {c["id"]: c for c in json.loads(capsys.readouterr().out)["checks"]}["config.load"]
+        # Doctor says what config check says, with the same next step.
+        assert all(f"      {line}" in text for line in load["details"][2:])
+        assert [p["line"] for p in failure["problems"]] == load["details"][2:]
+        assert load["action"] == failure["action"]
+        shown.append(text + json.dumps(failure) + json.dumps(load))
+        return text, failure
+
+    names = ("MCP_PAT", "GITHUB_PAT", "REGION")
+    with mock.patch.dict(os.environ, environ), mock.patch("sys.stdin.isatty", return_value=False):
+        for name in names:
+            os.environ.pop(name, None)
+        # Interpolated first: the Authorization credential, the .env file and the stored ones
+        # consulted too, and an ordinary variable, which only its default would stand for.
+        text, failure = check()
+        code = "tools.mcp.servers.code.headers"
+        assert (
+            f"      {code}.Authorization reads the credential GITHUB_PAT, which is not set" in text
+        )
+        region = (
+            f"{code}.X-Region reads REGION, which is not set, and ${{oc.env:REGION}} has no default"
+        )
+        assert f"      {region}" in text
+        assert failure["type"] == "MissingVariables"
+        assert failure["fields"] == [f"{code}.Authorization", f"{code}.X-Region"]
+        assert [p["variable"] for p in failure["problems"]] == ["GITHUB_PAT", "REGION"]
+        assert failure["action"].startswith(
+            "Set GITHUB_PAT, REGION in the environment or in the .env"
+        )
+        # Then validation's: a placeholder, unset, then empty; one set empty interpolates.
+        env_file.write_text("GITHUB_PAT=fictional-file-github\n")
+        os.environ["REGION"] = ""
+        docs = "tools.mcp.servers.docs.headers.Authorization"
+        text, failure = check()
+        assert f"      {docs} reads the credential MCP_PAT, which is not set" in text
+        assert failure["problems"] == [
+            {
+                "line": f"{docs} reads the credential MCP_PAT, which is not set",
+                "location": docs,
+                "problem": "reads the credential MCP_PAT, which is not set",
+                "package": None,
+                "action": None,
+                "variable": "MCP_PAT",
+            }
+        ]
+        os.environ["MCP_PAT"] = "  "
+        text, _ = check()
+        assert f"      {docs} reads the credential MCP_PAT, which is empty" in text
+        # With another field refused: both, that one by its path alone.
+        text, failure = check("alpha", "avatar.timezone=Not/AZone")
+        assert failure["fields"] == ["avatar.timezone", docs]
+        assert "      avatar.timezone is not valid" in text
+        assert failure["action"].endswith(", and fix the other fields")
+    output = "".join(shown)
+    for value in ("Bearer", "inline-value", "mcp.invalid", "fictional-file-github", "Not/AZone"):
+        assert value not in output
+    assert "Value error" not in output and "is required in config" not in output
     assert sandbox == []
 
 

@@ -178,7 +178,17 @@ def test_without_a_configuration_doctor_says_how_to_create_one_and_checks_the_re
     for spec in specs:
         needs = "the session" if spec["in_session"] else "a configuration"
         needs = f" · needs {needs}" if spec["needs_configuration"] else ""
-        assert f"  {spec['id'].ljust(column)}{spec['title']}{needs}" in listed
+        reaches = f" · may reach {' and '.join(spec['reaches'])}" if spec["reaches"] else ""
+        assert f"  {spec['id'].ljust(column)}{spec['title']}{needs}{reaches}" in listed
+    # What may download model files or call services: the runtime diagnosis alone, which a
+    # person or the configuration authorizes; no static check reaches anything.
+    reach = {spec["id"]: tuple(spec["reaches"]) for spec in specs if spec["reaches"]}
+    assert reach == {
+        "session.start": ("external services",),
+        "models.runners": ("model downloads", "external services"),
+        "services.external": ("external services",),
+        "session.scenarios": ("external services",),
+    }
     # One entry point: the session is chosen by the configuration, never by a flag.
     for argv in (["alpha"], ["--runtime"], ["--live"]):
         with pytest.raises(SystemExit) as invalid:
@@ -333,15 +343,24 @@ def test_missing_packages_unusable_paths_and_env_files_fail_with_a_next_step(
     assert "'alpha-avatar-host[livekit]'" in capabilities["action"]
     assert "'alpha-avatar-plugins-provider[langchain]'" in capabilities["action"]
     assert capabilities["action"].startswith("Install into this Python environment: ")
-    # An installed package gets them from setup, which installs what it chose.
+    # An installed package gets them from setup for the bundle checked, which installs what
+    # it chose.
     with (
         mock.patch.object(metadata, "distribution", uninstalled),
         mock.patch.object(Installation, "running", return_value=object()),
     ):
         _, checks, _ = doctor(capsys)
+        filed = write(tmp_path / "avatar.json", {"avatar": {"id": "filed"}, "loop": LOOP})
+        _, from_file, _ = doctor(capsys, str(filed))
     action = checks["packages.capabilities"]["action"]
-    assert action.startswith("Run `alphaavatar setup`; it installs ")
+    assert action.startswith("Run `alphaavatar setup alpha`; it installs ")
     assert "'alpha-avatar-host[livekit]'" in action
+    # A file is no bundle setup takes: no command it cannot run.
+    action = from_file["packages.capabilities"]["action"]
+    assert action.startswith("Setup installs ") and action.endswith(
+        " for a bundle, not a file: use a bundle"
+    )
+    assert "`alphaavatar setup" not in action
 
     # Low free space warns.
     disk.free = 1 << 20
@@ -382,6 +401,10 @@ def test_doctor_reports_pass_the_configuration_output_boundary(
     config = write(tmp_path / "avatar\x1b[31m.json", value)
     _, checks, output = doctor(capsys, str(config))
     assert checks["config.load"]["details"] == ["avatar [redacted]"]
+    # What was diagnosed, as config check summarizes it, through the same boundary.
+    report = json.loads(output[output.index('{"status"') :])
+    assert report["configuration"]["avatar_id"] == "[redacted]"
+    assert report["configuration"]["plugins"]["tools"]["mcp"] == {"plugin": "default", "servers": 1}
     assert checks["paths.home"]["details"][0].startswith("chosen by the configuration file;")
     assert "[redacted]" in checks["paths.workspace"]["summary"]
     assert [name for name, secret in SECRETS.items() if secret in output] == []

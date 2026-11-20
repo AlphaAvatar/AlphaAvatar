@@ -208,8 +208,8 @@ class Report:
             self.write(" " * indent + (self.paint(line, DIM) if auxiliary else line))
 
     def missing(self, items: Sequence[Any], *, indent: int) -> None:
-        """Each missing package's line, whole where the terminal holds it; else its parts on
-        lines of their own: the setting, what is wrong, the package, what installs it."""
+        """Each setting at fault on its line, whole where the terminal holds it; else its
+        parts on lines of their own: the setting, what is wrong, the package, what fixes it."""
         redact = Redactor()
         for item in items:
             line = redact(clean(item.line), limit=None)

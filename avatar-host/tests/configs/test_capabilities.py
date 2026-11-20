@@ -84,24 +84,45 @@ def test_an_installed_package_says_which_missing_plugins_setup_installs(
     (base / "share/alphaavatar/catalog.json").write_text(json.dumps({"plugins": plugins}))
     assert main(["config", "init", "alpha", "--avatar-id", "alpha"]) == 0
     capsys.readouterr()
+    # The same selections as a file of their own: setup takes bundles alone.
+    file = tmp_path / "avatar.json"
+    home = {"home": str(tmp_path / "home")}
+    file.write_text(json.dumps({"application": home, "avatar": {"id": "file"}}))
+    selections = ("loop.plugin=nowhere", "tools.deepresearch.plugin=elsewhere", "router.plugin=x")
     installed = Installation(base.parent.parent, base)
     with mock.patch.object(Installation, "running", return_value=installed):
-        code, output = check(
-            capsys, "loop.plugin=nowhere", "tools.deepresearch.plugin=elsewhere", "router.plugin=x"
-        )
-    assert code == 2
+        code, output = check(capsys, *selections)  # The default bundle, alpha
+        assert code == 2
+        filed, from_file = check(capsys, str(file), *selections)
+        assert filed == 2
+        main(["config", "check", "alpha", *selections, "--json"])
+        failure = json.loads(capsys.readouterr().out)["error"]
     for location, name, package in (
         ("loop", "nowhere", "alpha-avatar-plugins-loop"),
         ("tools.deepresearch", "elsewhere", "alpha-avatar-plugins-deepresearch"),
     ):
-        assert (
-            f"{location}.plugin: no installed package provides {location} {name!r}; "
-            f"`alphaavatar setup` installs it ({package})" in output
-        )
-    assert (
+        missing = f"{location}.plugin: no installed package provides {location} {name!r}"
+        # For a bundle, the command that installs it; a file gets no command setup cannot run.
+        assert f"{missing}; `alphaavatar setup alpha` installs it ({package})" in output
+        assert f"{missing}; setup installs it for a bundle, not a file ({package})" in from_file
+    not_offered = (
         "router.plugin: no installed package provides router 'x'; "
-        "this release's `alphaavatar setup` does not offer it" in output
+        "this release's `alphaavatar setup` does not offer it"
     )
+    assert not_offered in output and not_offered in from_file
+    assert "`alphaavatar setup " not in from_file
+    # JSON: each problem with its parts, and the next step for the bundle checked.
+    assert failure["type"] == "MissingCapabilities"
+    assert failure["fields"] == ["loop.plugin", "router.plugin", "tools.deepresearch.plugin"]
+    assert failure["problems"][0] | {"line": None} == {
+        "line": None,
+        "location": "loop.plugin",
+        "problem": "no installed package provides loop 'nowhere'",
+        "package": "alpha-avatar-plugins-loop",
+        "action": "`alphaavatar setup alpha` installs it",
+        "variable": None,
+    }
+    assert failure["action"].startswith("Run `alphaavatar setup alpha` for what it installs")
     # What the check says setup installs, `setup <bundle>` plans from the same catalog.
     from alphaavatar.host.configs import load_selections, select_configuration
     from alphaavatar.host.tools.setup.choices import bundle_requirements

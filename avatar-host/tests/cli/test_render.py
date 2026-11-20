@@ -392,15 +392,15 @@ def test_the_width_is_columns_else_the_streams_own_terminal_else_100(color_capab
 def test_a_missing_package_too_long_for_the_line_shows_its_parts_apart(
     color_capable: object,
 ) -> None:
-    from alphaavatar.host.configs.capabilities import Missing
+    from alphaavatar.host.configs import Problem
 
-    item = Missing(
-        "loop.plugin: no installed package provides loop 'realtime'; `alphaavatar setup` "
+    item = Problem(
+        "loop.plugin: no installed package provides loop 'realtime'; `alphaavatar setup alpha` "
         "installs it (alpha-avatar-plugins-loop)",
         "loop.plugin",
         "no installed package provides loop 'realtime'",
         "alpha-avatar-plugins-loop",
-        "`alphaavatar setup` installs it",
+        "`alphaavatar setup alpha` installs it",
     )
     wide, narrow = io.StringIO(), io.StringIO()
     Report(wide, width=200).missing([item], indent=6)
@@ -411,5 +411,5 @@ def test_a_missing_package_too_long_for_the_line_shows_its_parts_apart(
         "      loop.plugin",
         "        no installed package provides loop 'realtime'",
         "        alpha-avatar-plugins-loop",
-        "        `alphaavatar setup` installs it",
+        "        `alphaavatar setup alpha` installs it",
     ]

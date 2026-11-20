@@ -17,7 +17,8 @@ The selections resolve as start resolves them (``resolve_plugins``): each implem
 capability type and name from the installed package declaring it, the provider backends their
 settings name, and the inference runners they use. Each needs its package, with the extra
 named after it when the package has one; the RTC backend needs its Host extra and each runner
-its ``REQUIRES``. In an installed package, what `alphaavatar setup` offers is named as such.
+its ``REQUIRES``. In an installed package, what `alphaavatar setup` offers is named as such,
+with the command for the bundle the configuration came from.
 Resolving loads factory modules and reads package metadata; no runner, model, client or
 session starts.
 """
@@ -30,7 +31,7 @@ from typing import TYPE_CHECKING
 
 from alphaavatar.host.version import DISTRIBUTION as HOST
 
-from .bundles import ConfigReferenceError
+from .problems import ConfigProblems, Problem, setup_installs
 
 if TYPE_CHECKING:
     from packaging.requirements import Requirement
@@ -38,27 +39,12 @@ if TYPE_CHECKING:
     from alphaavatar.agents.runtime.plugin import PluginSelection, UnavailablePlugins
 
     from .application import ApplicationConfig
+    from .bundles import ConfigSource
 
 
-class MissingCapabilities(ConfigReferenceError):
-    """Selections the installed packages do not serve; each line says what would.
-
-    ``items`` hold each line and its parts: the setting, what is wrong, the package that
-    would serve it and what installs it, where known; a narrow terminal shows them apart.
-    """
-
-    def __init__(self, message: str, items: tuple[Missing, ...] = ()) -> None:
-        super().__init__(message)
-        self.items = items
-
-
-@dataclass(frozen=True, slots=True)
-class Missing:
-    line: str  # As the message has it
-    location: str
-    problem: str
-    package: str | None = None
-    action: str | None = None
+class MissingCapabilities(ConfigProblems):
+    """Selections the installed packages do not serve; each problem says what would: the
+    setting, what is wrong, the package that would serve it and what installs it, where known."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,8 +136,11 @@ def offered() -> dict[str, dict[str, str]] | None:
         return None
 
 
-def unavailable(error: UnavailablePlugins) -> MissingCapabilities:
-    """Every unavailable selection, with what installs it where that is known."""
+def unavailable(
+    error: UnavailablePlugins, source: ConfigSource | None = None
+) -> MissingCapabilities:
+    """Every unavailable selection, with what installs it where that is known: for the bundle
+    ``source`` names, its setup command."""
     from packaging.requirements import Requirement
 
     setup = offered()
@@ -161,7 +150,7 @@ def unavailable(error: UnavailablePlugins) -> MissingCapabilities:
         line, package, action = f"{location}: {problem}", None, None
         if problem.missing and setup is not None:
             if package := setup.get(module.value, {}).get(name):
-                action = "`alphaavatar setup` installs it"
+                action = setup_installs(source)
                 line += f"; {action} ({package})"
             else:
                 action = "this release's `alphaavatar setup` does not offer it"
@@ -170,10 +159,9 @@ def unavailable(error: UnavailablePlugins) -> MissingCapabilities:
             found = unmet(Requirement(with_extra(problem.distribution, name)), set())
             line += "".join(f"; {item}" for item in found)
             package = with_extra(problem.distribution, name) if found else None
-        items.append(Missing(line, location, str(problem), package, action))
+        items.append(Problem(line, location, str(problem), package, action))
     return MissingCapabilities(
-        "Selected plugins are not available; install them, or change the settings that "
-        "select them:" + "".join(f"\n      {item.line}" for item in items),
+        "Selected plugins are not available; install them, or change the settings that select them",
         tuple(items),
     )
 
@@ -198,26 +186,27 @@ def resolve_capabilities(config: ApplicationConfig) -> Capabilities:
 
 
 def check_capabilities(config: ApplicationConfig) -> Capabilities:
-    """Each selection served by an installed package with its requirements; else one error."""
+    """Each selection served by an installed package with its requirements; else one error,
+    naming the setup command for the bundle the configuration came from."""
     from alphaavatar.agents.runtime.plugin import UnavailablePlugins
 
     capabilities = resolve_capabilities(config)
     if capabilities.selection.problems:
-        raise unavailable(UnavailablePlugins(capabilities.selection))
+        raise unavailable(UnavailablePlugins(capabilities.selection), config.source)
     from alphaavatar.host.tools.setup.choices import requirements_offered
 
     installs = requirements_offered() if offered() is not None else frozenset()
-    items: dict[str, Missing] = {}
+    items: dict[str, Problem] = {}
     for need, problems in capabilities.missing().items():
-        action = "`alphaavatar setup` installs it" if need.requirement in installs else None
+        action = setup_installs(config.source) if need.requirement in installs else None
         suffix = f" ({action})" if action else ""
         for problem in problems:
             line = f"{need.location}: {need.requirement}: {problem}{suffix}"
-            items.setdefault(line, Missing(line, need.location, problem, need.requirement, action))
+            items.setdefault(line, Problem(line, need.location, problem, need.requirement, action))
     if items:
         raise MissingCapabilities(
             "Selected capabilities miss packages; install them, or change the settings that "
-            "select them:" + "".join(f"\n      {line}" for line in items),
+            "select them",
             tuple(items.values()),
         )
     return capabilities

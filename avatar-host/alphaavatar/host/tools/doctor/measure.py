@@ -745,7 +745,8 @@ class _Turn:
 
     def metrics(self) -> tuple[Metric, ...]:
         origin = ("last voiced sample in", self.start)
-        boundary = "diagnostic input to the output boundary, server side"
+        # Within the Host: RTC transport and client playback come after its output boundary.
+        boundary = "diagnostic input to the Host's output boundary"
         text, audio = self._output("text_chunk"), self._output("audio_frame")
         # Completion is recorded only for a turn that completed, every output of it normally.
         completed = self._completed_at() if self.o.ended is None else None
@@ -1339,6 +1340,8 @@ class _Turn:
             ("model_request_bytes", "request_bytes", "bytes", "the body the transport sent"),
         ):
             value = fields.get(key)
+            # A record without the field: its provider times no such step.
+            absent = missing or "not measured: its provider logs no such step"
             found.append(
                 Metric(
                     name,
@@ -1348,7 +1351,7 @@ class _Turn:
                     what,
                     "provider log",
                     int(value is not None),
-                    note=missing if value is None else None,
+                    note=absent if value is None else None,
                 )
             )
         found.append(

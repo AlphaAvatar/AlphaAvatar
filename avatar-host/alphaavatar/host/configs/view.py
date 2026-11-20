@@ -28,11 +28,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alphaavatar.core.log import error_fields
 from alphaavatar.core.log.records import Redactor
 
 from .application import ApplicationConfig
-from .bundles import ConfigSource, format_failure
+from .bundles import ConfigSource
 
 HIDDEN = "[hidden]"
 REDACTED = "[redacted]"
@@ -227,12 +226,3 @@ def describe_summary(
             "health": {"bind": host.health.bind, "port": host.health.port},
         }
     )
-
-
-def describe_error(error: BaseException) -> dict[str, Any]:
-    """Structured failure metadata: type, field locations and the bounded diagnostic only."""
-    return {
-        "type": type(error).__name__,
-        "fields": list(error_fields(error)),
-        "diagnostic": format_failure(error),
-    }

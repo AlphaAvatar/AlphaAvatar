@@ -101,6 +101,10 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
 - A credential unset, empty or blank everywhere is missing: what reads it refuses to start and
   names the variable, never its value. Logs hide the values of the credentials the
   configuration names and of servers' keys, as they hide those whose names say they are one.
+- A variable the configuration itself reads that holds no value fails loading, in every
+  command, at the setting that reads it, by name: an MCP server's `<NAME>` placeholder unset,
+  empty or blank, and any `${oc.env:NAME}` without a default whose variable is unset (one set
+  empty interpolates as empty). [`config check`](#config-check) shows how it is reported.
 
 - The default bundle comes from the same read of the settings as the stored credentials: a
   setup committing meanwhile changes neither.
@@ -270,13 +274,41 @@ ERROR Configuration and read-only path checks failed
     Bundle 'my-avatar': profiles.voice references missing profile 'my-avatar/voice': /home/me/.local/share/alphaavatar/configs/profiles/my-avatar/voice.yaml
 ```
 
-- Errors go to stderr, stdout stays empty, and name the failing fields, bundle or profile,
-  never the rejected values or file contents. Their lines print whole, however narrow the
-  terminal, so they can be searched for.
+A variable that holds no value is named at the setting that reads it, the MCP server and the
+header included; a credential (a `<NAME>` placeholder, or `${oc.env:NAME}` in `Authorization`)
+was looked for in the environment, the `.env` file and the stored credentials:
+
+```text
+AlphaAvatar / Config check
+ERROR Configuration and read-only path checks failed
+
+  error: MissingVariables
+    Variables the configuration reads hold no value; set them in the environment or in the .env
+    file ENV_FILE names (default .env):
+      tools.mcp.servers.code.headers.Authorization reads the credential GITHUB_PAT, which is not set
+      tools.mcp.servers.code.headers.X-Region reads REGION, which is not set, and ${oc.env:REGION} has no default
+```
+
+Interpolation comes first, so a `<NAME>` placeholder is reported once those are set
+(`tools.mcp.servers.docs.headers.Authorization reads the credential MCP_PAT, which is empty`);
+other fields validation refused with it are named by their path alone (`avatar.timezone is not
+valid`). In an installed package, an implementation no installed package provides says whether
+this release's setup installs it, with the command for the bundle checked:
+`` loop.plugin: no installed package provides loop 'realtime'; `alphaavatar setup my-avatar`
+installs it (alpha-avatar-plugins-loop) ``. For a configuration file, which setup does not take,
+it says `setup installs it for a bundle, not a file`, and gives no command.
+
+- Errors go to stderr, stdout stays empty, and name the failing fields, bundle, profile or
+  variable, never the rejected values, file contents, validation messages or an exception's own
+  text. Their lines print whole where the terminal holds them; a narrower one shows each
+  setting at fault with its problem, package and what installs it on lines of their own.
 - `--json` prints `{"valid": true, "config", "avatar_id", "home", "workspace", "plugins",
   "inference", "health"}` (`config` is `{"bundle", "default", "file"}`; `inference` maps each
   runner method to its workers) or `{"valid": false, "error": {"type", "fields",
-  "diagnostic"}}`, with credentials and control characters removed.
+  "diagnostic", "problems", "action"}}`: `fields` are the settings at fault, `problems` each
+  one with its `line`, `location`, `problem`, `package`, `action` and `variable`, and `action`
+  the next step, as [`doctor`](doctor.md)'s `config.load` gives it; credentials and control
+  characters removed.
 - The text follows the [commands' shared layout](README.md#output): a value too long for the
   terminal goes below its label, as `router` does above at 100 columns. Colors appear only on
   a terminal; pipes, `NO_COLOR` and `TERM=dumb` get the same text, plain.

@@ -24,6 +24,8 @@ from alphaavatar.host.workspace import ApplicationPaths
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
 
+    from .bundles import ConfigSource
+
 
 @dataclass(frozen=True, slots=True)
 class ApplicationConfig:
@@ -36,3 +38,5 @@ class ApplicationConfig:
     # Resolved input, not a file to re-read after accepting an assignment.
     payload: str = field(repr=False)
     previous_workspace_roots: tuple[Path, ...] = ()
+    # The bundle or file it was loaded from, which reports name; None when built from data.
+    source: ConfigSource | None = None

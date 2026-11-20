@@ -68,7 +68,7 @@ class MCPConfig(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if self.enabled and self.plugin is not None:
-            self.servers = resolve_env_placeholders(self.servers)
+            self.servers = resolve_env_placeholders(self.servers, ("servers",))
 
     def runner_config(self) -> dict[str, Any]:
         """What the plugin's inference runners read at launch; it holds credentials."""

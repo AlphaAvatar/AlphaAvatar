@@ -762,6 +762,11 @@ def test_a_figure_not_measured_carries_why_never_what_it_would_measure() -> None
     shown = figures(scenario(observation()))
     assert shown["context_ready_wait"].note == "how long registered context work held it back"
     assert shown["model_first_event"].value == 200
+    # A step its provider's record leaves out is missing, and says so: never a zero.
+    assert (shown["model_request_bytes"].value, shown["model_request_bytes"].note) == (20_000, None)
+    client = shown["model_request_client"]
+    assert (client.value, client.samples) == (None, 0)
+    assert client.note == "not measured: its provider logs no such step"
 
 
 def run(at: int, value: float | None, outcome: str = "passed", **fields) -> ScenarioResult:

@@ -117,43 +117,41 @@ def _switches(section: dict[str, Any], skip: tuple[str, ...] = ()) -> str:
     )
 
 
-def _load(target: str | None, overrides: Sequence[str]):
+def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int:
     from alphaavatar.host.configs import (
+        ConfigProblems,
         check_application_paths,
         check_capabilities,
+        describe_error,
+        describe_summary,
+        format_failure,
         load_application,
         select_configuration,
         validate_plugin_settings,
     )
     from alphaavatar.host.configs.credentials import load_environment
 
-    # The same .env and stored credentials start reads, for interpolated values, and the
-    # default bundle from the same read of the settings.
-    settings = load_environment(overrides)
-    source = select_configuration(target, overrides, settings)
-    config = load_application(source, overrides, settings)
-    check_application_paths(config)
-    validate_plugin_settings(config)
-    check_capabilities(config)
-    return config, source
-
-
-def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int:
-    from alphaavatar.host.configs import describe_error, describe_summary, format_failure
-    from alphaavatar.host.configs.capabilities import MissingCapabilities
-
+    source = None  # What a failure's next step names, once selected.
     try:
-        summary = describe_summary(*_load(target, overrides))
+        # The same .env and stored credentials start reads, for interpolated values, and the
+        # default bundle from the same read of the settings.
+        settings = load_environment(overrides)
+        source = select_configuration(target, overrides, settings)
+        config = load_application(source, overrides, settings)
+        check_application_paths(config)
+        validate_plugin_settings(config)
+        check_capabilities(config)
+        summary = describe_summary(config, source)
     except Exception as error:
         if as_json:
-            print(json.dumps({"valid": False, "error": describe_error(error)}, indent=2))
+            print(json.dumps({"valid": False, "error": describe_error(error, source)}, indent=2))
             return 2
         report = Report(sys.stderr)
         report.title("Config check")
         report.status("ERROR", f"{SCOPE} failed")
         report.write()
-        if isinstance(error, MissingCapabilities) and error.items:
-            # Each missing package by its setting, its parts apart on a narrow terminal.
+        if isinstance(error, ConfigProblems) and error.items:
+            # Each setting at fault on its line, its parts apart on a narrow terminal.
             heading, message = format_failure(error).splitlines()[:2]
             report.verbatim(heading)
             report.wrapped(message.strip(), indent=4)

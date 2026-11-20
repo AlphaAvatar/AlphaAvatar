@@ -59,8 +59,26 @@ def _snapshot_scalar(value: Any) -> Any:
     raise ValueError("Application configuration contains a non-serializable value")
 
 
-def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> ApplicationConfig:
+def _avatar(data: dict[str, Any]) -> AvatarConfig:
+    """The Avatar settings, validated; a variable they read that holds no value, such as an MCP
+    server's ``<NAME>``, named at the setting that reads it (``MissingVariables``)."""
+    from pydantic import ValidationError
+
     from alphaavatar.agents.configs import AvatarConfig
+
+    from .problems import missing_variables
+
+    try:
+        return AvatarConfig.model_validate(data)
+    except ValidationError as error:
+        if (missing := missing_variables(error)) is not None:
+            raise missing from None
+        raise
+
+
+def _validate(
+    value: Any, *, paths: ApplicationPaths | None = None, source: ConfigSource | None = None
+) -> ApplicationConfig:
     from alphaavatar.agents.runtime.inference import plan_inference_runners
     from alphaavatar.agents.runtime.plugin import UnavailablePlugins
 
@@ -88,13 +106,13 @@ def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> Applicati
     validate_session_config(host.rtc)
 
     # AvatarConfig
-    avatar = AvatarConfig.model_validate(avatar_data)
+    avatar = _avatar(avatar_data)
     # The selected plugins resolve with their settings and providers, then runtime.inference
     # is checked against all their runners: pure, no process, model or environment.
     try:
         plan_inference_runners(avatar)
     except UnavailablePlugins as error:
-        raise unavailable(error) from None
+        raise unavailable(error, source) from None
 
     # WorkspacePaths
     workspace = (
@@ -118,12 +136,15 @@ def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> Applicati
         separators=(",", ":"),
     )
     return ApplicationConfig(
-        host=host, avatar=avatar, paths=paths, workspace=workspace, payload=payload
+        host=host, avatar=avatar, paths=paths, workspace=workspace, payload=payload, source=source
     )
 
 
-def validate_application(value: Any, *, paths: ApplicationPaths | None = None) -> ApplicationConfig:
-    return _validate(value, paths=paths)
+def validate_application(
+    value: Any, *, paths: ApplicationPaths | None = None, source: ConfigSource | None = None
+) -> ApplicationConfig:
+    """``value`` validated as a configuration; ``source``, if given, is where it was read."""
+    return _validate(value, paths=paths, source=source)
 
 
 def restore_application(payload: str) -> ApplicationConfig:
@@ -156,7 +177,7 @@ def validate_plugin_settings(config: ApplicationConfig) -> dict[str, Any]:
 
     selection = resolve_plugins(config.avatar)
     if selection.problems:
-        raise unavailable(UnavailablePlugins(selection))
+        raise unavailable(UnavailablePlugins(selection), config.source)
     return selection.settings
 
 
@@ -171,6 +192,7 @@ def _composed(
     from omegaconf.errors import OmegaConfBaseException
 
     from .credentials import configured_credentials, fill_configured, interpolated_credentials
+    from .problems import unresolved
 
     if not isinstance(source, ConfigSource):
         source = ConfigSource(Path(source))
@@ -204,11 +226,16 @@ def _composed(
     data = compose_profiles(data, paths, source.origin)
     try:
         merged = OmegaConf.merge(data, changes)
-        if settings is not None:  # Before interpolation: a value still says what it reads.
-            fill_configured(interpolated_credentials(OmegaConf.to_container(merged)), settings)
-        data = _mapping(OmegaConf.to_container(merged, resolve=True))
+        written = OmegaConf.to_container(merged)
     except OmegaConfBaseException:
         raise ValueError("Invalid YAML, configuration override, or interpolation") from None
+    if settings is not None:  # Before interpolation: a value still says what it reads.
+        fill_configured(interpolated_credentials(written), settings)
+    try:
+        data = _mapping(OmegaConf.to_container(merged, resolve=True))
+    except OmegaConfBaseException as error:
+        # Said by setting and variable: the exception's own text may quote a value.
+        raise unresolved(written, error) from None
     if settings is not None:  # And after: an api_key_env may itself be interpolated.
         fill_configured(configured_credentials(data), settings)
     return data, paths
@@ -223,12 +250,10 @@ def load_selections(
     what setup plans a bundle's packages from before any of them is installed. With the
     ``settings`` loading read, the credentials it names are filled as ``load_application``
     fills them."""
-    from alphaavatar.agents.configs import AvatarConfig
-
     data, _ = _composed(source, overrides, settings)
     data.pop("application", None)
     host = HostConfig.model_validate(data.pop("host", {}))
-    return host, AvatarConfig.model_validate(data)
+    return host, _avatar(data)
 
 
 def load_application(
@@ -254,7 +279,9 @@ def load_application(
         host["execution"] = execution
         data["host"] = host
 
-    config = validate_application(data, paths=paths)
+    if not isinstance(source, ConfigSource):
+        source = ConfigSource(Path(source).expanduser().absolute())
+    config = validate_application(data, paths=paths, source=source)
     raw_avatar = _mapping(data.get("avatar", {}))
     if raw_avatar.get("workspace_root") is None:
         identity = config.avatar.avatar.id

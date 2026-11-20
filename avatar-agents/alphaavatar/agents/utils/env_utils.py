@@ -29,32 +29,31 @@ def credential(name: str, environ: Mapping[str, str | None] = os.environ) -> str
     return value if value is not None and value.strip() else None
 
 
-def resolve_env_placeholders(value: Any) -> Any:
-    """
-    Recursively resolve <ENV_VAR> placeholders in dict/list/str structures.
-    """
+class MissingVariable(ValueError):
+    """A variable a configuration reads that holds no value: its name and where it is read
+    (the keys down to that value), both safe to show, unlike the value around it."""
 
+    def __init__(self, name: str, location: tuple[str, ...] = ()) -> None:
+        super().__init__(f"Environment variable '{name}' is not set but is required in config")
+        self.name, self.location = name, location
+
+
+def resolve_env_placeholders(value: Any, location: tuple[str, ...] = ()) -> Any:
+    """Recursively resolve <ENV_VAR> placeholders in dict/list/str structures; one holding no
+    value raises ``MissingVariable``, with the keys below ``location`` that lead to it."""
     if isinstance(value, str):
 
         def replacer(match: re.Match) -> str:
-            var_name = match.group(1)
-            env_value = credential(var_name)
-            if env_value is None:
-                raise ValueError(
-                    f"Environment variable '{var_name}' is not set but is required in config"
-                )
+            if (env_value := credential(match.group(1))) is None:
+                raise MissingVariable(match.group(1), location)
             return env_value
 
         return ENV_PATTERN.sub(replacer, value)
-
-    elif isinstance(value, dict):
-        return {k: resolve_env_placeholders(v) for k, v in value.items()}
-
-    elif isinstance(value, list):
-        return [resolve_env_placeholders(v) for v in value]
-
-    else:
-        return value
+    if isinstance(value, dict):
+        return {k: resolve_env_placeholders(v, (*location, str(k))) for k, v in value.items()}
+    if isinstance(value, list):
+        return [resolve_env_placeholders(v, (*location, str(i))) for i, v in enumerate(value)]
+    return value
 
 
 def server_key(url: str) -> str:

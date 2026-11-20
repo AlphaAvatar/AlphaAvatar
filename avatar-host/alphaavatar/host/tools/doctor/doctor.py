@@ -72,6 +72,8 @@ _BUILT_IN = {
 # Stable identifiers, in report order.
 ROUNDS = 5  # Each scenario's runs by default, each in a session of its own
 MAX_ROUNDS = 50
+# What the runtime diagnosis may reach once authorized; the static checks reach nothing.
+_DOWNLOADS, _SERVICES = "model downloads", "external services"
 CHECKS = (
     CheckSpec("system.platform", "Operating system and the POSIX local socket API"),
     CheckSpec("python.version", "Python interpreter against the versions AlphaAvatar supports"),
@@ -83,13 +85,32 @@ CHECKS = (
     CheckSpec("paths.cache", "Cache root: state, permissions, free space"),
     CheckSpec("paths.workspace", "Avatar workspace: state, permissions, free space", True),
     CheckSpec(
-        "session.start", "A temporary session of the configuration: start, ready", True, True
+        "session.start",
+        "A temporary session of the configuration: start, ready",
+        True,
+        True,
+        (_SERVICES,),
     ),
     CheckSpec(
-        "models.runners", "Planned runners started from the model cache, offline", True, True
+        "models.runners",
+        "Planned runners started as start starts them, missing model files downloaded",
+        True,
+        True,
+        (_DOWNLOADS, _SERVICES),  # A vector store's runner embeds a probe text as it starts.
     ),
-    CheckSpec("services.external", "Model, speech, vector store and tool services", True),
-    CheckSpec("session.scenarios", "Fixed samples through each enabled modality chain", True, True),
+    CheckSpec(
+        "services.external",
+        "Model, speech, vector store and tool services",
+        True,
+        reaches=(_SERVICES,),
+    ),
+    CheckSpec(
+        "session.scenarios",
+        "Fixed samples through each enabled modality chain",
+        True,
+        True,
+        (_SERVICES,),
+    ),
     CheckSpec("session.cleanup", "Session, runners, sockets and files reclaimed", True, True),
     CheckSpec("devices.media", "Microphones, cameras and players: client devices, not opened"),
 )
@@ -283,7 +304,9 @@ def _static(
     checks = {
         "system.platform": _safely("system.platform", _platform),
         "python.version": _safely("python.version", _python),
-        "packages.alphaavatar": _safely("packages.alphaavatar", _packages),
+        "packages.alphaavatar": _safely(
+            "packages.alphaavatar", lambda: _packages(loaded[1] if loaded is not None else None)
+        ),
         "config.load": load,
         "devices.media": Check(
             "devices.media",
@@ -327,9 +350,13 @@ def _report(
     checks: dict[str, Check], loaded: tuple[ApplicationConfig, ConfigSource] | None
 ) -> Report:
     """The checks present, in ``CHECKS`` order, through the configuration output boundary."""
-    from alphaavatar.host.configs import output_scrubber
+    from alphaavatar.host.configs import describe_summary, output_scrubber
 
     scrub = output_scrubber(loaded[0] if loaded is not None else None)
+    try:  # What config check summarizes, through the same boundary; none if its plan fails.
+        configuration = describe_summary(*loaded) if loaded is not None else None
+    except Exception:
+        configuration = None
 
     def safe(text: str | None) -> str | None:
         return scrub(text) if text is not None else None
@@ -372,7 +399,8 @@ def _report(
                 ),
             )
             for check in (checks[spec.id] for spec in CHECKS if spec.id in checks)
-        )
+        ),
+        configuration,
     )
 
 
@@ -406,6 +434,7 @@ def _configuration(
         check_application_paths,
         format_failure,
         load_application,
+        next_step,
         read_settings,
         select_configuration,
         validate_plugin_settings,
@@ -427,6 +456,7 @@ def _configuration(
                 error,
                 "Fix the file ENV_FILE names (default .env): UTF-8 text of KEY=VALUE lines",
             )
+    source = None  # What a failure's next step names, once selected.
     try:
         if target is None:
             paths = application_paths(overrides)
@@ -444,19 +474,8 @@ def _configuration(
         check_application_paths(config)
         validate_plugin_settings(config)  # The steps config check and start take, in order.
     except Exception as error:
-        from alphaavatar.host.configs.capabilities import MissingCapabilities, offered
-
-        if isinstance(error, ModuleNotFoundError) and error.name:
-            action = f"Install the package that provides the Python module {error.name!r}"
-        elif isinstance(error, MissingCapabilities):
-            action = (
-                "Install the named packages into this Python environment"
-                if offered() is None
-                else "Run `alphaavatar setup` for what it installs"
-            ) + ", or change the settings that select the rest"
-        else:
-            action = "Fix the reported field or reference, then run doctor again"
-        return None, failure("The configuration did not load", error, action)
+        # As config check says it: the settings at fault, then what fixes them.
+        return None, failure("The configuration did not load", error, next_step(error, source))
     return (config, source), Check(
         "config.load",
         CheckStatus.PASS,
@@ -501,7 +520,7 @@ def _python() -> Check:
     return Check("python.version", CheckStatus.PASS, f"{found}; supported ({supported or 'any'})")
 
 
-def _packages() -> Check:
+def _packages(source: ConfigSource | None) -> Check:
     from packaging.requirements import Requirement
     from packaging.utils import canonicalize_name
 
@@ -520,7 +539,7 @@ def _packages() -> Check:
             CheckStatus.FAIL,
             "The Host's requirements are not all installed",
             tuple(problems),
-            _install(f"'{HOST}'"),
+            _install(f"'{HOST}'", source, needs_bundle=False),
         )
     if len(releases) > 1:
         return Check(
@@ -538,14 +557,19 @@ def _packages() -> Check:
     )
 
 
-def _install(requirements: str) -> str:
-    """How to install what is missing: setup in an installed package, else into this Python."""
+def _install(requirements: str, source: ConfigSource | None, *, needs_bundle: bool = True) -> str:
+    """How to install what is missing: into this Python, or with setup in an installed package,
+    for the bundle checked. What only setup for a bundle installs, a file cannot be given."""
     from alphaavatar.host.tools.setup.environment import Installation, SetupError
 
     try:
         Installation.running()
     except SetupError:
         return f"Install into this Python environment: {requirements}"
+    if source is not None and source.bundle is not None:
+        return f"Run `alphaavatar setup {source.bundle}`; it installs {requirements}"
+    if needs_bundle:
+        return f"Setup installs {requirements} for a bundle, not a file: use a bundle"
     return f"Run `alphaavatar setup`; it installs {requirements}"
 
 
@@ -565,7 +589,10 @@ def _capabilities(config: ApplicationConfig) -> Check:
             CheckStatus.FAIL,
             "Enabled capabilities miss packages",
             tuple(problems),
-            _install(" ".join(f"'{need.requirement}'" for need in missing) or "the named plugins"),
+            _install(
+                " ".join(f"'{need.requirement}'" for need in missing) or "the named plugins",
+                config.source,
+            ),
         )
     return Check("packages.capabilities", CheckStatus.PASS, f"Requirements installed for {count}")
 

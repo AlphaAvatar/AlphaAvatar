@@ -1145,12 +1145,14 @@ def _absent(name: str, outcome: ScenarioOutcome, reason: str, label: str) -> Sce
 
 
 def _runner(status: Any, error: tuple[str, ...]) -> RunnerResult:
+    workers = {"workers": status.workers, "ready_workers": status.ready_workers}
     if status.startup_state == "ready":
         return RunnerResult(
             status.method,
             CheckStatus.PASS,
             "started",
             startup_seconds=status.startup_elapsed_seconds,
+            **workers,
         )
     if status.startup_state in ("failed", "cancelled"):
         return RunnerResult(
@@ -1159,9 +1161,13 @@ def _runner(status: Any, error: tuple[str, ...]) -> RunnerResult:
             f"{status.startup_state}: {status.error_type}",
             error,
             status.startup_elapsed_seconds,
+            **workers,
         )
     return RunnerResult(
-        status.method, CheckStatus.SKIP, "not reached: an earlier runner did not start"
+        status.method,
+        CheckStatus.SKIP,
+        "not reached: an earlier runner did not start",
+        workers=status.workers,
     )
 
 

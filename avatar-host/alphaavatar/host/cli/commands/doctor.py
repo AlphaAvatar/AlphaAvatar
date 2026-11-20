@@ -62,6 +62,74 @@ LATENCY = (
 )
 
 
+# What the chain's rows leave out, by what each diagnoses: every row from its own start, as its
+# label says; none runs from the final speech unless it says so. A wait the Host observes on a
+# service holds the network too: no row is the service's own time.
+DETAILS = (
+    (
+        "STT, the Turn's final",
+        (
+            ("stt_request_to_final", "Segment committed → STT final"),
+            ("stt_queue", "Queued in the plugin"),
+            ("stt_connect", "TCP connect"),
+            ("stt_tls", "TLS handshake"),
+            ("stt_upload", "Upload"),
+            ("stt_wait", "Audio sent → answer headers, network and service"),
+            ("stt_first_event", "Answer headers → first event"),
+            ("stt_stream", "Answer headers → transcript done"),
+        ),
+    ),
+    (
+        "Turn taking and Context",
+        (
+            ("assessment_queue", "Last assessment queued → started"),
+            ("speech_completion_assessment", "Assessments, final → commit"),
+            ("decision_holds", "Timed holds, final → commit"),
+            ("addressing_queue", "Semantic addressing queued → started"),
+            ("addressing_inference", "Semantic addressing inference"),
+            ("association_ready", "Speech closed → association ready"),
+            ("context_ready_wait", "Context readiness wait"),
+        ),
+    ),
+    (
+        "Model request, first attempt",
+        (
+            ("model_request_client", "Client ready"),
+            ("model_request_prepare", "Request taken → sent"),
+            ("model_request_encode", "Encoding"),
+            ("model_request_frames", "Pictures"),
+            ("model_request_bytes", "Body sent"),
+            ("model_request_attempts", "Attempts"),
+            ("model_first_event", "Sent → first stream event, network and service"),
+        ),
+    ),
+    (
+        "Audio out",
+        (
+            ("audio_duration", "Answer audio"),
+            ("audio_frame_interval", "Frame interval, median"),
+            ("audio_max_gap", "Largest gap between frames"),
+            ("audio_underruns", "Underruns of a real-time queue"),
+            ("audio_rtf", "Producing time over audio duration"),
+            ("output_events_dropped", "Output events dropped"),
+        ),
+    ),
+    (
+        "Vision",
+        (
+            ("last_required_input", "Final speech → last required input in"),
+            ("frame_input_to_available", "Frame in → published to perception, median"),
+            ("selected_frame_age", "Oldest selected frame's age at the request"),
+            ("last_selected_frame_to_cutoff", "Newest selected frame in → Turn commit"),
+            ("vision_wait", "Turn commit → frames available"),
+        ),
+    ),
+    ("Doctor's input", (("input_lateness", "Sample frames late, at worst"),)),
+)
+# What each status means, as the report uses them.
+LEGEND = "PASS checked · WARN needs attention · FAIL fails as configured · SKIP not run here: why"
+
+
 def _stages() -> tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...]:
     """Each stage of the chain to the first audio frame: its total, then its rows, each
     from the node before; with every boundary, the totals add up to the first audio frame."""
@@ -129,7 +197,8 @@ def doctor(
             for spec in map(specs.__getitem__, ids):
                 needs = "the session" if spec.in_session else "a configuration"
                 needs = f" · needs {needs}" if spec.needs_configuration else ""
-                out.row(spec.id, spec.title + needs, column=column)
+                reaches = f" · may reach {' and '.join(spec.reaches)}" if spec.reaches else ""
+                out.row(spec.id, spec.title + needs + reaches, column=column)
         out.write()
         return 0
 
@@ -272,8 +341,60 @@ def _text(
             cause = group[0]  # What the rest of the group follows from.
             out.row(title, status="SKIP")
             _explained(out, cause, indent=2 + STATUS)
+    out.write()
+    out.note(LEGEND, indent=2)
 
-    # In the order a turn depends on them: the sessions, the runners, then each scenario.
+    # The conclusion first: each scenario's rounds and where those not passed stopped; then
+    # end to end and by stage; then what diagnoses them, the sessions and runners last.
+    summaries = checks["session.scenarios"].summaries if scenarios else ()
+    by = {x.name: x for x in summaries}
+    if scenarios:
+        rounds = max((x.rounds for x in summaries), default=0)
+        each = f" · {rounds} rounds, a session each" if rounds > 1 else ""
+        out.heading(f"Scenarios{each}")
+        shown_once = set()
+        for result in scenarios:
+            if result.round is not None:
+                if result.name not in shown_once:
+                    shown_once.add(result.name)
+                    found = [r for r in scenarios if r.name == result.name]
+                    _summary_row(out, by[result.name], found, column)
+                continue
+            status = _OUTCOMES.get(result.outcome, "SKIP")
+            out.row(result.name, result.summary, status=status, column=column)
+        for summary in summaries:  # What the rounds ran with, and the recording they heard.
+            out.wrapped(f"With {summary.configuration}", indent=2)
+            if summary.sample:
+                out.wrapped(f"Sample {summary.sample}", indent=2)
+    for summary in summaries:
+        failed = [
+            r for r in scenarios if r.name == summary.name and r.outcome == ScenarioOutcome.FAILED
+        ]
+        if failed:
+            out.heading(f"Failed rounds · {summary.name}")
+            for result in failed:
+                measured = _measured(result)
+                out.wrapped(
+                    f"Round {result.round} · stopped at {result.blocked_stage}"
+                    + (f" · measured: {measured}" if measured else " · nothing measured"),
+                    indent=2,
+                )
+
+    observed = [x for x in summaries if any(f.all_first or f.all_samples for f in x.figures)]
+    if not observed:
+        out.heading("Latency")
+        why = "no scenario was measured" if ran else checks["session.start"].summary
+        if summaries and ran:
+            why = "no round observed any figure"
+        out.wrapped(f"Not measured · {why}", indent=2)
+    for summary in observed:
+        if summary.passed:
+            _figures_table(out, summary)
+        if summary.passed < summary.rounds:
+            _figures_table(out, summary, every=True)
+    for summary in observed:
+        _figures_table(out, summary, every=True, groups=_details())
+
     ready = next((m for m in checks["session.start"].metrics if m.name == "session_ready"), None)
     if ready is not None and ready.value is not None:
         out.heading("Session")
@@ -295,6 +416,13 @@ def _text(
             shown = runner.summary
             if runner.status == CheckStatus.PASS and runner.startup_seconds is not None:
                 shown = f"started in {runner.startup_seconds:.2f} s"
+                if runner.workers is not None:
+                    ready_of = (
+                        ""
+                        if runner.ready_workers == runner.workers
+                        else f"{runner.ready_workers} of "
+                    )
+                    shown += f" · {ready_of}{runner.workers} worker{'s' * (runner.workers != 1)}"
                 if runner.calls:
                     shown += (
                         f" · {runner.calls} calls, queue ≤ {_ms(runner.queue_wait_max_ms)}, "
@@ -304,53 +432,6 @@ def _text(
             if runner.status != CheckStatus.PASS:
                 for line in runner.details:
                     out.note(line, indent=2 + STATUS)
-
-    summaries = checks["session.scenarios"].summaries if scenarios else ()
-    by = {x.name: x for x in summaries}
-    if scenarios:
-        rounds = max((x.rounds for x in summaries), default=0)
-        each = f" · {rounds} rounds, a session each" if rounds > 1 else ""
-        out.heading(f"Scenarios{each}")
-        shown_once = set()
-        for result in scenarios:
-            if result.round is not None:
-                if result.name not in shown_once:
-                    shown_once.add(result.name)
-                    found = [r for r in scenarios if r.name == result.name]
-                    _summary_row(out, by[result.name], found, column)
-                continue
-            status = _OUTCOMES.get(result.outcome, "SKIP")
-            out.row(result.name, result.summary, status=status, column=column)
-        for summary in summaries:  # What the rounds ran with, and the recording they heard.
-            out.wrapped(f"With {summary.configuration}", indent=2)
-            if summary.sample:
-                out.wrapped(f"Sample {summary.sample}", indent=2)
-
-    observed = [x for x in summaries if any(f.all_first or f.all_samples for f in x.figures)]
-    if not observed:
-        out.heading("Latency")
-        why = "no scenario was measured" if ran else checks["session.start"].summary
-        if summaries and ran:
-            why = "no round observed any figure"
-        out.wrapped(f"Not measured · {why}", indent=2)
-    for summary in observed:
-        if summary.passed:
-            _figures_table(out, summary)
-        if summary.passed < summary.rounds:
-            _figures_table(out, summary, every=True)
-    for summary in summaries:
-        failed = [
-            r for r in scenarios if r.name == summary.name and r.outcome == ScenarioOutcome.FAILED
-        ]
-        if failed:
-            out.heading(f"Failed rounds · {summary.name}")
-            for result in failed:
-                measured = _measured(result)
-                out.wrapped(
-                    f"Round {result.round} · stopped at {result.blocked_stage}"
-                    + (f" · measured: {measured}" if measured else " · nothing measured"),
-                    indent=2,
-                )
 
     # Every event boundary, sample count and piece of evidence: the diagnosis run again, as
     # many rounds. The overrides are not repeated, whatever they hold.
@@ -447,16 +528,23 @@ def _summary_row(out: Report, summary, results, column: int) -> None:
         out.wrapped(f"→ {step}", indent=2 + STATUS)
 
 
-def _figures_table(out: Report, summary, *, every: bool = False) -> None:
+def _latency() -> tuple[tuple[str | None, str, tuple[tuple[str, str], ...]], ...]:
+    return ((None, "End to end", LATENCY), *_stages())
+
+
+def _details() -> tuple[tuple[str | None, str, tuple[tuple[str, str], ...]], ...]:
+    return tuple((None, title, rows) for title, rows in DETAILS)
+
+
+def _figures_table(out: Report, summary, *, every: bool = False, groups=None) -> None:
     """One scenario's figures over its passed rounds, or with ``every`` over every round that
     observed them, failed ones included: the first round apart, then the later rounds'
-    samples, median and range, and their 95th percentile once there are enough. Each stage's
-    total is on its own line, its rows below it."""
+    samples, median and range, and their 95th percentile once there are enough. Latency by
+    default, each stage's total on its own line, its rows below it; with ``groups`` of
+    ``DETAILS``, what diagnoses them, over every round."""
     figures = {figure.name: figure for figure in summary.figures}
-    groups = (
-        (None, "End to end", LATENCY),
-        *((stage, title, rows) for stage, title, rows in _stages()),
-    )
+    latency = groups is None
+    groups = _latency() if latency else groups
     p95 = not every and any(f.p95 is not None for f in summary.figures)
     header = ("Metric", "Round 1", "n", "Median", "Range", *(("P95",) * p95))
     rows, missing, merged = [], [], []
@@ -487,12 +575,16 @@ def _figures_table(out: Report, summary, *, every: bool = False) -> None:
         head = cells(figures[total]) if total in figures else [""] * (len(header) - 1)
         rows.append((group, head))
         rows += [(f"  {label}", cells(figures[name])) for name, label in shown]
-    if every:
-        failed = summary.rounds - summary.passed
+    if not rows:
+        return
+    failed = summary.rounds - summary.passed
+    if not latency:
+        title = "every round" + (f", the {failed} not passed included" if failed else "")
+    elif every:
         title = f"every round, the {failed} not passed included"
     else:
         title = f"{summary.passed} of {summary.rounds} rounds passed"
-    out.heading(f"Latency · {summary.name} · {title}")
+    out.heading(f"{'Latency' if latency else 'Details'} · {summary.name} · {title}")
     if not out.table(header, rows):
         for label, values in rows:
             first, n, median, spread, *rest = values
@@ -504,7 +596,16 @@ def _figures_table(out: Report, summary, *, every: bool = False) -> None:
             indent = 4 if label.startswith(" ") else 2
             out.wrapped(f"{label.strip()}: round 1 {first}{later}", indent=indent)
     which = "rounds that observed it" if every else "rounds that passed and observed it"
-    out.note(f"n: later {which}; the stages add up to First audio frame", indent=2)
+    if latency:
+        out.note(f"n: later {which}; the stages add up to First audio frame", indent=2)
+        # Where every figure starts and ends: what Doctor measures is the Host.
+        out.note(
+            "From the final speech, the frame with the sample's last voiced sample going in, to "
+            "the Host's output boundary; RTC transport and client playback are not in it",
+            indent=2,
+        )
+    else:
+        out.note(f"n: later {which}; each row from its own start", indent=2)
     for label, count in merged:
         rounds = f"{count} round{'s' * (count != 1)}"
         out.note(f"— {label}: from an earlier node in {rounds}, so no sample of it", indent=2)
@@ -532,11 +633,15 @@ def _measured(result) -> str:
 
 
 def _in(unit: str, value: float | None) -> str:
-    """A value in its unit: milliseconds, a count of pictures, or a size."""
+    """A value in its unit: milliseconds, seconds, a count, a ratio or a size."""
     if value is None:
         return "—"
-    if unit == "frames":
-        return f"{int(value)}"
+    if unit in ("frames", "count"):
+        return f"{value:g}"
+    if unit == "s":
+        return f"{value:.2f} s"
+    if unit == "ratio":
+        return f"{value:.2f}"
     if unit == "bytes":
         size = float(value)
         for name in ("B", "KB", "MB"):

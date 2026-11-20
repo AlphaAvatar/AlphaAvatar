@@ -4,6 +4,7 @@
 - 从 T-10B 开始，Doctor 的设计、实现、实验、测试、限制以及后续 review 收尾都记录在本文件，按时间顺序追加。
 - 统一的 KD/O 表仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`；T-10A～T-10T3 记录在 [claude-code-t10-zh.md](claude-code-t10-zh.md)。
 - 干净机器安装的主日志是 [claude-code-install-zh.md](../2026-11-05/claude-code-install-zh.md)；T-10B 范围中"不做安装器"的结论和安装集合与 `packages.*` 检查的关系记录在那里。
+- 2026-11-20 起的配置诊断与 Doctor 体验优化（基线 `4a46fcab`）记录在 [claude-code-diagnosis-zh.md](../2026-11-20/claude-code-diagnosis-zh.md)。
 - T-10C `6a593f2` 第 6 节「`config init` 轻量交互入口」的方案已由交互配置日志 [claude-code-setup-zh.md](../2026-11-06/claude-code-setup-zh.md) 汇总并取代：交互配置由 `alphaavatar setup` 承担。
 
 ## 批次总览

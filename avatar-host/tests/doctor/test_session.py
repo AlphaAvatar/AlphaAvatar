@@ -149,6 +149,36 @@ def requests(chain: SimpleNamespace) -> list[dict]:
     return [json.loads(line) for line in lines]
 
 
+@pytest.mark.parametrize(
+    ("vision", "task"),
+    [
+        ({"enabled": True, "input_mode": "vlm"}, "voice_vision"),
+        ({"enabled": True, "input_mode": "realtime"}, "voice_vision"),
+        ({"enabled": True, "input_mode": "text"}, "voice"),
+        ({"enabled": False, "input_mode": "vlm"}, "voice"),
+    ],
+    ids=["vlm", "realtime", "text-only", "off"],
+)
+def test_the_scenario_follows_the_effective_vision_and_nothing_stands_in_for_voice(
+    tmp_path: Path, chain: SimpleNamespace, vision: dict, task: str
+) -> None:
+    """Vision on, speech and frames in one request; off or text only (which the configuration
+    takes as off), speech alone; the plan the question, the budget and the run read is the
+    loaded configuration's."""
+    planned = doctor_session.plan(load_application(configuration(tmp_path, vision=vision)))
+    assert ([t.name for t in planned.tasks], planned.vision) == ([task], task == "voice_vision")
+    assert planned.session_type == ("video" if task == "voice_vision" else "audio")
+    assert planned.missing is None
+    # Without speech output there is no voice session: no scenario at all, never a typed turn.
+    voice = {"vad": {"plugin": "silero"}, "stt": {"plugin": "openai_segment", "model": "m"}}
+    silent = doctor_session.plan(
+        load_application(
+            configuration(tmp_path, vision=vision, voice=voice | {"tts": {"plugin": None}})
+        )
+    )
+    assert silent.tasks == () and silent.missing.endswith("this configuration has no voice.tts")
+
+
 def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_and_frames(
     tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
 ) -> None:
@@ -1196,6 +1226,38 @@ def test_the_text_shows_the_figures_the_json_holds(
                 cli_doctor._range(unit, low, high) if n else "—",
             ]
             assert cells[labels[figure["name"]]] == expected, (title, figure["name"])
+    # What the chain's rows leave out, over every round, failed ones included, from the same
+    # summaries; every figure in it, none from the latency table again, vision's left out
+    # with vision off.
+    (part,) = shown.split("\nDetails · voice · ")[1:]
+    title, table = part.split("\n\n")[0].split("\n", 1)
+    assert title == "every round, the 1 not passed included"
+    details = {name: label for _, rows in cli_doctor.DETAILS for name, label in rows}
+    cells = {}
+    for line in table.splitlines()[1:]:
+        label, *values = re.split(r"\s{2,}", line.strip())
+        cells[label] = values
+    figures = {f["name"]: f for f in summary["figures"]}
+    shown_names = {name for name, label in details.items() if label in cells}
+    assert shown_names == set(details) & set(figures) and not shown_names & set(labels)
+    assert not {"last_required_input", "selected_frame_age"} & set(figures)
+    for name in shown_names:
+        figure = figures[name]
+        n, unit = figure["all_samples"], figure["unit"]
+        assert cells[details[name]] == [
+            cli_doctor._in(unit, figure["all_first"]),
+            str(n),
+            cli_doctor._in(unit, figure["all_median"]),
+            cli_doctor._range(unit, figure["all_low"], figure["all_high"]) if n else "—",
+        ], name
+    # Where the figures start and end: in the Host, never past its output.
+    assert "the Host's output boundary; RTC transport and client playback are not in it" in (
+        " ".join(shown.split())
+    )
+    # Each runner with its workers as configured, all of them ready.
+    runners = data["models.runners"]["runners"]
+    assert runners and all((r["workers"], r["ready_workers"]) == (1, 1) for r in runners)
+    assert all("· 1 worker · " in line for line in shown.splitlines() if "started in" in line)
 
 
 def test_model_files_load_from_the_cache_and_one_missing_downloads_as_start_does(

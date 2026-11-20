@@ -112,10 +112,11 @@ jobs:
           alphaavatar --help > /dev/null
           alphaavatar config init reference --avatar-id reference > init.txt
           grep -F 'alphaavatar setup reference' init.txt
-          # Nothing but the base: check names each implementation and what setup installs; wide
-          # enough that each diagnostic is one line, as searched for here.
+          # Nothing but the base: check names each implementation and the setup command that
+          # installs it for this bundle, the default; wide enough that each diagnostic is one
+          # line, as searched for here.
           if COLUMNS=1000 alphaavatar config check 2> check.txt; then exit 1; fi
-          grep -F "loop.plugin: no installed package provides loop 'realtime'; \`alphaavatar setup\` installs it" check.txt
+          grep -F "loop.plugin: no installed package provides loop 'realtime'; \`alphaavatar setup reference\` installs it" check.txt
           if COLUMNS=1000 alphaavatar config check tools.rag.plugin=default 2> rag.txt; then exit 1; fi
           grep -F "\`alphaavatar setup\` does not offer it" rag.txt
       - name: Setup plans the reference bundle from its settings
