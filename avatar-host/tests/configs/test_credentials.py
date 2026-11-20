@@ -234,13 +234,15 @@ def _hidden() -> set[str]:
 
 def test_in_an_mcp_server_only_authorization_interpolates_a_credential(tmp_path: Path) -> None:
     """``${oc.env:NAME}`` in an Authorization header, however cased, is a credential: empty or
-    blank, it takes the .env file's value, and logs hide it. In another header it reads an
-    ordinary variable as the environment holds it, empty too, and logs show it."""
+    blank, it takes the .env file's value, else the stored one, and logs hide it; holding none
+    still, it is refused at its setting, never sent as ``Bearer ``. In another header it reads
+    an ordinary variable as the environment holds it, empty too, and logs show it."""
     from alphaavatar.core.log.records import Redactor
-    from alphaavatar.host.configs import load_application, select_configuration
+    from alphaavatar.host.configs import MissingVariables, load_application, select_configuration
 
     paths = ApplicationPaths.from_root(tmp_path / "home")
-    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True)
+    kept = {"GITHUB_PAT": "gh-stored", "CODE_PAT": "code-stored"}  # The file's comes first.
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=kept)
     (paths.configs.profiles_dir / "alpha/plugins/tools/tools.yaml").write_text(
         "mcp:\n  plugin: default\n  enabled: true\n  servers:\n"
         "    docs:\n      url: https://mcp.invalid/\n"
@@ -249,21 +251,31 @@ def test_in_an_mcp_server_only_authorization_interpolates_a_credential(tmp_path:
         "    code:\n      url: https://code.invalid/\n"
         "      headers:\n        authorization: token ${oc.env:CODE_PAT}\n"
     )
-    lines = [f"ALPHAAVATAR_HOME={paths.root}", "GITHUB_PAT=gh-file", "CODE_PAT=code-file"]
+    lines = [f"ALPHAAVATAR_HOME={paths.root}", "GITHUB_PAT=gh-file"]
     (tmp_path / "chosen.env").write_text("\n".join([*lines, "REGION=us-east-1"]))
     variables = {"GITHUB_PAT": "", "CODE_PAT": " ", "REGION": ""}
     with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env")} | variables):
         os.environ.pop("ALPHAAVATAR_HOME", None)
+        # Without the read loading made, nothing fills them: empty and blank, both refused.
+        home = {"ALPHAAVATAR_HOME": str(paths.root)}
+        with mock.patch.dict(os.environ, home), pytest.raises(MissingVariables) as refused:
+            load_application(select_configuration(None, ()), ())
+        headers = "tools.mcp.servers.{}.headers.{}"
+        assert [(item.location, item.variable) for item in refused.value.items] == [
+            (headers.format("docs", "Authorization"), "GITHUB_PAT"),
+            (headers.format("code", "authorization"), "CODE_PAT"),
+        ]
+        assert all(item.problem.endswith("which is empty") for item in refused.value.items)
         settings = load_environment()
         config = load_application(select_configuration(None, (), settings), (), settings)
         servers = config.avatar.tools.mcp.servers
         assert {key: server["headers"] for key, server in servers.items()} == {
             "docs": {"Authorization": "Bearer gh-file", "X-Region": ""},
-            "code": {"authorization": "token code-file"},
+            "code": {"authorization": "token code-stored"},
         }
         assert os.environ["REGION"] == "" and "REGION" not in _hidden()
         os.environ["REGION"] = "us-east-1"
-        shown = Redactor()("refused gh-file and code-file at https://mcp.invalid/ in us-east-1")
+        shown = Redactor()("refused gh-file and code-stored at https://mcp.invalid/ in us-east-1")
         assert shown == "refused [redacted] and [redacted] at https://mcp.invalid/ in us-east-1"
 
 

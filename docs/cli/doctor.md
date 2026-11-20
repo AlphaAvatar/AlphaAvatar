@@ -334,12 +334,13 @@ instead.
 stopped (`stopped_at`), and for each figure, over the passed rounds, the first round's value
 apart (`first`), then the later rounds that passed and observed it: their count, median and
 range (`samples`, `median`, `low`, `high`), and their 95th percentile (`p95`) from 20 samples
-on. The `all_` fields give the same over every round that observed it, failed ones included,
-round 1 apart (`all_first`, `all_samples`, `all_median`, `all_low`, `all_high`); `merged`
-counts the rounds whose value ran from an earlier node. The text shows the passed rounds'
-table, and every round's when any did not pass; `n` is the later rounds counted. Each round's
-own figures stay with it, in `scenarios`, with its `round`. A few rounds on one machine
-describe this machine and these services today, not the pipeline's behavior in general.
+on. The `all_` fields give the same but the 95th percentile over every round that observed it,
+failed ones included, round 1 apart (`all_first`, `all_samples`, `all_median`, `all_low`,
+`all_high`); `merged` counts the rounds whose value ran from an earlier node. The text shows
+the passed rounds' table, and every round's when any did not pass; `n` is the later rounds
+counted. Each round's own figures stay with it, in `scenarios`, with its `round`. A few rounds
+on one machine describe this machine and these services today, not the pipeline's behavior in
+general.
 
 `scripts/quality/doctor_compare.py NAME=REPORT.json ...` puts saved reports side by side,
 recomputing each figure from the rounds the same way, checking it against the report's own
@@ -571,15 +572,15 @@ vision, for `voice_vision` alone; Doctor's input), each row from its own start, 
 says. Last, `Session`, each session's readiness at the median over all of them, and `Runners`,
 the runtime's one start and how the model cache changed meanwhile, then each runner's start,
 its workers (as configured, and how many were ready when fewer), the calls it served, and its
-peak queue wait and execution. Each table row gives round 1, then the later rounds' count (`n`,
-said under the table), median and range, and P95 once there are 20 samples; where the terminal
-is too narrow, each figure takes lines of its own. A figure no round observed is `—`, never
-`0 ms`, and a line under its table says why; a row merged in some rounds says in how many.
-Times under 10 ms keep one decimal. When the diagnosis did not run, `Latency` says so, `Not
-measured`, with why. `Run again as JSON` is the command that prints the same diagnosis as JSON,
-with the same `--rounds`: every round, event boundary, sample count, service and piece of
-evidence. Run with `KEY=VALUE` overrides, it says to give the same ones, and does not repeat
-them.
+peak queue wait and execution. Each `Latency` and `Details` row gives round 1, then the later
+rounds' count (`n`, said under the table), median and range; the passed rounds' `Latency` table
+alone adds P95, once there are 20 samples. Where the terminal is too narrow, each figure takes
+lines of its own. A figure no round observed is `—`, never `0 ms`, and a line under its table
+says why; a row merged in some rounds says in how many. Times under 10 ms keep one decimal.
+When the diagnosis did not run, `Latency` says so, `Not measured`, with why. `Run again as
+JSON` is the command that prints the same diagnosis as JSON, with the same `--rounds`: every
+round, event boundary, sample count, service and piece of evidence. Run with `KEY=VALUE`
+overrides, it says to give the same ones, and does not repeat them.
 `--list` lists the checks in the same groups.
 
 JSON keeps the status, the tally (`counts`), the `configuration` diagnosed as

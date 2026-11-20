@@ -186,13 +186,14 @@ def _composed(
 ) -> tuple[dict[str, Any], ApplicationPaths]:
     """The file with its profiles in place and the overrides applied, interpolated; and the
     home it belongs to. With the ``settings`` loading read, the credentials it names are filled
-    and hidden from logs: those it interpolates before, the others once it is interpolated."""
+    and hidden from logs: those it interpolates before, the others once it is interpolated. One
+    it interpolates that then holds no value, empty or blank too, is refused at its setting."""
     import yaml
     from omegaconf import OmegaConf
     from omegaconf.errors import OmegaConfBaseException
 
     from .credentials import configured_credentials, fill_configured, interpolated_credentials
-    from .problems import unresolved
+    from .problems import unresolved, unset_credentials
 
     if not isinstance(source, ConfigSource):
         source = ConfigSource(Path(source))
@@ -236,6 +237,8 @@ def _composed(
     except OmegaConfBaseException as error:
         # Said by setting and variable: the exception's own text may quote a value.
         raise unresolved(written, error) from None
+    if (unset := unset_credentials(written)) is not None:  # Not sent as "Bearer ".
+        raise unset
     if settings is not None:  # And after: an api_key_env may itself be interpolated.
         fill_configured(configured_credentials(data), settings)
     return data, paths

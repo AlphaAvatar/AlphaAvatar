@@ -251,6 +251,14 @@ def test_a_variable_holding_no_value_is_named_at_the_setting_that_reads_it(
         assert failure["action"].startswith(
             "Set GITHUB_PAT, REGION in the environment or in the .env"
         )
+        # The credential blank in the process, where no source holds one, is refused too, never
+        # sent as "Bearer "; the ordinary variable set empty interpolates as empty.
+        os.environ.update({"GITHUB_PAT": " ", "REGION": ""})
+        text, failure = check()
+        assert f"      {code}.Authorization reads the credential GITHUB_PAT, which is empty" in text
+        assert failure["type"] == "MissingVariables"
+        assert failure["fields"] == [f"{code}.Authorization"]
+        assert failure["action"].startswith("Set GITHUB_PAT in the environment or in the .env")
         # Then validation's: a placeholder, unset, then empty; one set empty interpolates.
         env_file.write_text("GITHUB_PAT=fictional-file-github\n")
         os.environ["REGION"] = ""
@@ -279,6 +287,57 @@ def test_a_variable_holding_no_value_is_named_at_the_setting_that_reads_it(
     for value in ("Bearer", "inline-value", "mcp.invalid", "fictional-file-github", "Not/AZone"):
         assert value not in output
     assert "Value error" not in output and "is required in config" not in output
+    assert sandbox == []
+
+
+def test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting(
+    tmp_path: Path, home: Path, sandbox: list[str], capsys: pytest.CaptureFixture
+) -> None:
+    """``\\${oc.env:NAME}`` is text, as OmegaConf escapes it: it loads as written and is never
+    taken for a variable to set. An interpolation that fails beside it is named at its setting,
+    in config check and Doctor alike, with any variable that holds no value."""
+    from alphaavatar.host.configs import load_application
+
+    config = tmp_path / "escaped.yaml"
+    loop = f"loop: {json.dumps(LOOP)}\n"
+    escaped = r"Use template \${oc.env:LITERAL_NAME}"
+
+    def check(text: str) -> tuple[str, dict]:
+        config.write_text(loop + text)
+        assert main(["config", "check", str(config)]) == 2
+        shown = capsys.readouterr().err
+        assert main(["config", "check", str(config), "--json"]) == 2
+        failure = json.loads(capsys.readouterr().out)["error"]
+        assert main(["doctor", str(config), "--no-metrics", "--json"]) == 1
+        load = {c["id"]: c for c in json.loads(capsys.readouterr().out)["checks"]}["config.load"]
+        assert [p["line"] for p in failure["problems"]] == load["details"][2:]
+        assert load["action"] == failure["action"]
+        assert "LITERAL_NAME" not in shown + json.dumps(failure) + json.dumps(load)
+        return shown, failure
+
+    timezone = "avatar.timezone holds an interpolation that cannot be resolved"
+    with mock.patch.dict(os.environ, {"COLUMNS": "1000"}):
+        for name in ("LITERAL_NAME", "REAL_NAME"):
+            os.environ.pop(name, None)
+        config.write_text(f"{loop}avatar:\n  id: alpha\n  introduction: '{escaped}'\n")
+        loaded = load_application(config)
+        assert loaded.avatar.avatar.introduction == "Use template ${oc.env:LITERAL_NAME}"
+        # As written: the escaped text first, the failing interpolation after it.
+        text, failure = check(
+            f"avatar:\n  id: alpha\n  introduction: '{escaped}'\n  timezone: '${{not_a_setting}}'\n"
+        )
+        assert f"      {timezone}" in text
+        assert failure["type"] == "ConfigProblems" and failure["fields"] == ["avatar.timezone"]
+        # Beside a variable an even run of backslashes leaves read, both, by their settings.
+        text, failure = check(
+            "avatar:\n  id: alpha\n  timezone: '${not_a_setting}'\n"
+            f"  introduction: '{escaped} and \\\\${{oc.env:REAL_NAME}}'\n"
+        )
+        assert failure["type"] == "MissingVariables"
+        assert failure["fields"] == ["avatar.introduction", "avatar.timezone"]
+        assert [p["variable"] for p in failure["problems"]] == ["REAL_NAME", None]
+        assert f"      {timezone}" in text
+        assert failure["action"].endswith(", and fix the other fields")
     assert sandbox == []
 
 

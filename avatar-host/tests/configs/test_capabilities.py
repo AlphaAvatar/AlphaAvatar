@@ -132,3 +132,33 @@ def test_an_installed_package_says_which_missing_plugins_setup_installs(
     found, unserved = bundle_requirements(host, avatar, plugins)
     assert found["alpha-avatar-plugins-deepresearch"] == "tools.deepresearch.plugin"
     assert not [item for item in unserved if item.startswith("tools.deepresearch")]
+
+
+def test_the_next_step_naming_the_bundle_passes_the_output_boundary(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A fictional credential's value that is also the bundle's name: the next step that names
+    the bundle hides it, as the problems and the diagnostic do."""
+    from alphaavatar.host.tools.setup.environment import Installation
+
+    base = tmp_path / "prefix" / "versions" / "base-1"
+    (base / "share" / "alphaavatar").mkdir(parents=True)
+    plugins = {"loop": {"nowhere": "alpha-avatar-plugins-loop"}}
+    (base / "share/alphaavatar/catalog.json").write_text(json.dumps({"plugins": plugins}))
+    name = "fictional-route-0042"
+    assert main(["config", "init", name, "--avatar-id", "alpha"]) == 0
+    capsys.readouterr()
+    installed = Installation(base.parent.parent, base)
+    environ = {"ROUTE_API_KEY": name, "COLUMNS": "1000"}
+    with (
+        mock.patch.object(Installation, "running", return_value=installed),
+        mock.patch.dict(os.environ, environ),
+    ):
+        assert main(["config", "check", name, "loop.plugin=nowhere", "--json"]) == 2
+        failure = json.loads(capsys.readouterr().out)["error"]
+        assert main(["config", "check", name, "loop.plugin=nowhere"]) == 2
+        text = capsys.readouterr().err
+    assert failure["type"] == "MissingCapabilities"
+    assert failure["action"].startswith("Run `alphaavatar setup [redacted]` for what it installs")
+    assert failure["problems"][0]["action"] == "`alphaavatar setup [redacted]` installs it"
+    assert name not in json.dumps(failure) and name not in text

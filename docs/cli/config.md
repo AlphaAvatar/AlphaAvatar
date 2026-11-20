@@ -93,7 +93,8 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
 - In the configuration, `${oc.env:NAME}` reads a default or stored credential, and one an
   `Authorization` header names, once it is filled. Any other, such as an MCP server's
   `X-Region: ${oc.env:REGION}`, reads an ordinary variable as the environment holds it, empty
-  too, and logs show its value.
+  too, and logs show its value. `\${oc.env:NAME}` is text, as OmegaConf escapes it, and reads
+  nothing.
 - `upgrade` reads `.env` once, and the target build's plan and check, which run from `/`, read
   those values instead of a file: the ones they read are the ones `upgrade` read.
 - `ALPHAAVATAR_HOME`, which chooses the home that stores credentials, counts empty or blank as
@@ -102,9 +103,11 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
   names the variable, never its value. Logs hide the values of the credentials the
   configuration names and of servers' keys, as they hide those whose names say they are one.
 - A variable the configuration itself reads that holds no value fails loading, in every
-  command, at the setting that reads it, by name: an MCP server's `<NAME>` placeholder unset,
-  empty or blank, and any `${oc.env:NAME}` without a default whose variable is unset (one set
-  empty interpolates as empty). [`config check`](#config-check) shows how it is reported.
+  command, at the setting that reads it, by name: an MCP server's credential unset, empty or
+  blank once filled, by `<NAME>` placeholder or by `${oc.env:NAME}` in `Authorization` (never
+  sent as `Bearer `), and any other `${oc.env:NAME}` without a default whose variable is unset
+  (one set empty interpolates as empty). [`config check`](#config-check) shows how it is
+  reported.
 
 - The default bundle comes from the same read of the settings as the stored credentials: a
   setup committing meanwhile changes neither.
@@ -292,8 +295,10 @@ ERROR Configuration and read-only path checks failed
 Interpolation comes first, so a `<NAME>` placeholder is reported once those are set
 (`tools.mcp.servers.docs.headers.Authorization reads the credential MCP_PAT, which is empty`);
 other fields validation refused with it are named by their path alone (`avatar.timezone is not
-valid`). In an installed package, an implementation no installed package provides says whether
-this release's setup installs it, with the command for the bundle checked:
+valid`). An interpolation that fails otherwise, such as one referencing no setting, is named
+at its setting, with any such variables (`avatar.timezone holds an interpolation that cannot be
+resolved`). In an installed package, an implementation no installed package provides says
+whether this release's setup installs it, with the command for the bundle checked:
 `` loop.plugin: no installed package provides loop 'realtime'; `alphaavatar setup my-avatar`
 installs it (alpha-avatar-plugins-loop) ``. For a configuration file, which setup does not take,
 it says `setup installs it for a bundle, not a file`, and gives no command.

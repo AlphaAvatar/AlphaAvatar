@@ -14,7 +14,8 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| 配置诊断与 Doctor | 缺失变量按设置路径和变量名报告；setup 提示给出 bundle 的命令；Doctor 报告先给结论，再给端到端、阶段和详细诊断 | 2026-11-20 | `4a46fcab` | — | 待审查 |
+| 配置诊断与 Doctor | 缺失变量按设置路径和变量名报告；setup 提示给出 bundle 的命令；Doctor 报告先给结论，再给端到端、阶段和详细诊断 | 2026-11-20 | `4a46fcab` | `66d72583` | 已提交 |
+| 收尾修正 | `action` 脱敏；转义的 `\${oc.env:}` 不再误报；`Authorization` 凭据为空时拒绝加载；P95 说明 | 2026-11-20 | `66d72583` | — | 待审查 |
 
 ## 1. 基线与 CI
 
@@ -120,12 +121,12 @@
   - `voice_vision` 的视觉分组；
   - 真实 TTS 的首个 PCM。
 - 真实 runtime 下 Runner 的 worker 数和就绪数（替身每个 runner 1 个 worker）。
-- 安装包内的 setup 提示：测试用模拟的 `Installation` 和 catalog 验证。CI 的 Linux package job 会在本轮提交后检查 `alphaavatar setup reference` 一行。
+- 安装包内的 setup 提示：测试用模拟的 `Installation` 和 catalog 验证。（已确认：`66d72583` 的 Linux package job 在真实安装包上检查到 `alphaavatar setup reference` 一行，见第 8 节。）
 - 实际 LiveKit 通话由用户验收。
 
 ## 6. 发现未改
 
-- `Authorization` 里的 `${oc.env:NAME}` 补齐后仍为空或空白时，OmegaConf 照常插值为 `Bearer `，加载不报错；同样位置的 `<NAME>` 会报缺失。本轮只改诊断，没有改加载语义。
+- `Authorization` 里的 `${oc.env:NAME}` 补齐后仍为空或空白时，OmegaConf 照常插值为 `Bearer `，加载不报错；同样位置的 `<NAME>` 会报缺失。本轮只改诊断，没有改加载语义。（收尾已改，见第 8 节。）
 - 插值先于校验：`${oc.env:}` 缺失和 `<NAME>` 缺失同时存在时，要分两次看到。
 - 运行时读取的凭据（例如 STT 的 `api_key_env`）缺失时：
   - 读取方的消息写了变量名；
@@ -136,3 +137,50 @@
 
 - 试跑配置和输出：会话临时目录 `diag/`（含一份有缺失 MCP 变量的 `avatar.yaml`）。
 - Doctor 离线三轮文本：会话临时目录 `doctor-text.txt`。`docs/cli/doctor.md` 的示例取自这次输出，路径改为 `avatar.json`。
+
+## 8. 收尾修正（基线 `66d72583`）
+
+依据：用户 2026-11-20 对本批的审查意见，按最小范围修正四处。另外两项（插值与占位符缺失分两次显示；运行时提供方错误缺变量名）按用户意见只记录，不改。
+
+### 8.1 基线 CI
+
+`66d72583` 两条 push CI 都通过：
+- Quality [44682379608](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44682379608)：全量 826 passed（538.20 s）。
+- Linux package [44682379710](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44682379710)：`verify` 在真实安装包上检查到 `` `alphaavatar setup reference` installs it ``。第 5 节的 setup 提示一项因此已确认。
+
+### 8.2 改动
+
+- `error.action` 脱敏：`describe_error()` 的 `action` 也经过同一个 `Redactor`。复现方式：虚构凭据值同时用作 bundle 名，缺包时 `action` 原样带出这个值。Doctor 的 action 本来就在报告出口统一处理，不用改。
+- 转义文本不再误报：
+  - 扫描 `${oc.env:NAME}` 时按 OmegaConf 的规则判断：前面是奇数个反斜杠时，这段是普通文本；偶数个时，照常插值。已在 OmegaConf 2.3.0 上核对。
+  - 插值实际失败的设置（`full_key`，`a.b[0]` 写成 `a.b.0`）不和已列出的变量重复时，作为一项单独列出：`<设置> holds an interpolation that cannot be resolved`。同时有缺失变量时，两者一起报告。
+  - 只有插值失败、没有缺失变量时，改为 `ConfigProblems`，JSON 的 `fields` 因此带上位置。原来这里是 `ConfigReferenceError`，`fields` 为空。
+- `Authorization` 凭据为空时拒绝加载：
+  - 针对 `Authorization` 中按凭据识别的 `${oc.env:NAME}`（不带默认值）。补齐的顺序不变：有效进程值、`.env`、Setup 保存值。
+  - 补齐后仍未设置、为空串或只有空白时，报告完整的设置路径和变量名，与 `<NAME>` 一致，不再加载成 `Bearer `。
+  - 插值成功后由 `unset_credentials()` 检查；插值失败时，由 `unresolved()` 和其他缺失项一起列出。
+  - 普通变量仍按 OmegaConf 读取，进程里的显式空值照常保留。这条规则只针对 `Authorization` 凭据。
+- 文档：
+  - `docs/cli/doctor.md`：P95 只出现在通过轮的 `Latency` 表。`Details`、全体轮表和 JSON 的 `all_` 字段都没有 P95。
+  - `docs/cli/config.md`：补充转义规则、凭据为空的拒绝和插值失败的报告方式。
+
+### 8.3 验证
+
+| 类别 | 项目 | 结果 |
+|---|---|---|
+| 新增回归 | `test_capabilities.py::test_the_next_step_naming_the_bundle_passes_the_output_boundary` | 凭据值作 bundle 名时，`action`、`problems`、文本都不含该值 |
+| 新增回归 | `test_check.py::test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting` | 用户给的 YAML：转义文本照常加载；`avatar.timezone` 按位置报告，不出现 `LITERAL_NAME`；偶数个反斜杠时变量照常插值，和插值失败一起报告；`config check` 文本、JSON 与 Doctor `config.load` 一致 |
+| 扩展回归 | `test_check.py` 缺失变量用例 | 进程中为空白、各来源都没有值时报 `which is empty`；普通变量为空时照常插值 |
+| 扩展回归 | `test_credentials.py::test_in_an_mcp_server_only_authorization_interpolates_a_credential` | 进程中为空或空白时，先用 `.env`，再用 Setup 保存值；不补齐时两处都按完整路径拒绝 |
+| 新增回归 | `test_loading.py::test_an_interpolation_failing_in_a_list_is_named_once_by_its_path` | 列表项的位置写成 `a.b.0`，同一设置只列一次 |
+| 变异 | 8 个 | 全部被测试发现：`action` 不脱敏；不判断反斜杠奇偶；不列插值失败的位置；不检查空凭据；凭据只判断是否未设置；不改写 `[0]`；插值失败的位置总是重复列出；`unresolved()` 不报普通变量 |
+| 受影响测试 | Host 与 Agents 全部测试 | 480 passed（261 s；原 477 + 新增 3） |
+| 离线全量 | `uv run pytest` | 829 passed（306 s；原 826 + 新增 3） |
+| 仓库检查 | ruff check、ruff format --check（790 个文件）、`git diff --check`、`uv lock --check`、`check_workspace.py`（16 个成员） | 通过 |
+| 同 SHA CI | — | 本轮改动未提交，没有 CI；提交后需核对 |
+| 真实服务 | — | 未运行：不调用计费服务，不连接 LiveKit |
+
+### 8.4 待复验与记录
+
+- 实际 LiveKit 通话由用户验收。第 5 节其余各项（Details 表的真实链路内容、真实 worker 数）仍待真实运行。
+- 只记录，不改：插值缺失和 `<NAME>` 缺失分两次显示（本轮已接受）；运行时提供方错误不带变量名，以后按提供方补充。

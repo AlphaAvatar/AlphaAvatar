@@ -36,8 +36,10 @@ if TYPE_CHECKING:
 # Keys and paths as they are shown; any other spelling, which data might hold, is not.
 _KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_:-]{0,63}")
 _PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:\[\]-]{0,255}")
-# ${oc.env:NAME} without a default, which fails its interpolation while NAME is unset.
-_BARE_ENV = re.compile(r"\$\{oc\.env:\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1\s*\}")
+# ${oc.env:NAME} without a default, which fails its interpolation while NAME is unset; as
+# OmegaConf reads it: after an odd run of backslashes ``${`` is text, after an even one it reads.
+_BARE_ENV = re.compile(r"(?<!\\)(?:\\\\)*\$\{oc\.env:\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1\s*\}")
+_INDEX = re.compile(r"\[(\d+)\]")  # OmegaConf's a.b[0], as a path says it: a.b.0.
 _SET = "set them in the environment or in the .env file ENV_FILE names (default .env)"
 
 
@@ -132,25 +134,49 @@ def _strings(value: Any, keys: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str
         yield keys, value
 
 
-def unresolved(written: Any, error: Exception) -> Exception:
-    """Why a composed configuration, as ``written``, did not interpolate: each ``${oc.env:NAME}``
-    without a default whose variable is unset, at its setting, a credential when an MCP server
-    sends it as ``Authorization``; else the setting whose interpolation failed; else that the
-    file or an override is not valid."""
+def _unset(written: Any, *, ordinary: bool) -> list[Problem]:
+    """Each ``${oc.env:NAME}`` without a default that ``written`` reads and that holds no value,
+    at its setting: a credential an MCP server sends as ``Authorization`` unset, empty or blank,
+    once filled, as anywhere one is read; with ``ordinary``, any other variable unset, as
+    OmegaConf reads it, an empty one being a value."""
+    from alphaavatar.agents.utils import credential
+
     from .credentials import interpolated_credentials
 
     credentials = interpolated_credentials(written) if isinstance(written, dict) else set()
-    items = [
-        _variable(path(*keys), name, credential=name in credentials)
-        for keys, value in _strings(written)
-        for name in dict.fromkeys(match[2] for match in _BARE_ENV.finditer(value))
-        if name not in os.environ
-    ]
-    if items:
-        return _missing(items)
+    items = []
+    for keys, value in _strings(written):
+        for name in dict.fromkeys(match[2] for match in _BARE_ENV.finditer(value)):
+            if name in credentials:
+                if credential(name) is None:
+                    items.append(_variable(path(*keys), name, credential=True))
+            elif ordinary and name not in os.environ:
+                items.append(_variable(path(*keys), name, credential=False))
+    return items
+
+
+def unset_credentials(written: Any) -> MissingVariables | None:
+    """The credentials a configuration, as ``written``, interpolates in an MCP server's
+    ``Authorization`` that hold no value: empty or blank interpolates, as ``Bearer ``, but sends
+    none. Each at its setting, as a ``<NAME>`` placeholder is; None when every one holds one."""
+    items = _unset(written, ordinary=False)
+    return _missing(items) if items else None
+
+
+def unresolved(written: Any, error: Exception) -> Exception:
+    """Why a composed configuration, as ``written``, did not interpolate: each ``${oc.env:NAME}``
+    without a default whose variable holds no value (``_unset``), at its setting, and the setting
+    whose interpolation failed where it is another; else the file or an override is not valid."""
+    items = _unset(written, ordinary=True)
     key = getattr(error, "full_key", None)
-    if isinstance(key, str) and _PATH.fullmatch(key):
-        return ConfigReferenceError(f"The interpolation at {key} cannot be resolved")
+    location = _INDEX.sub(r".\1", key) if isinstance(key, str) else ""
+    if _PATH.fullmatch(location) and all(item.location != location for item in items):
+        problem = "holds an interpolation that cannot be resolved"
+        items.append(Problem(f"{location} {problem}", location, problem))
+    if any(item.variable is not None for item in items):
+        return _missing(items)
+    if items:
+        return ConfigProblems("An interpolation cannot be resolved; fix what it reads", (*items,))
     return ValueError("Invalid YAML, configuration override, or interpolation")
 
 
@@ -194,5 +220,5 @@ def describe_error(error: BaseException, source: ConfigSource | None = None) -> 
         "fields": fields,
         "diagnostic": format_failure(error),
         "problems": problems,
-        "action": next_step(error, source),
+        "action": redact(next_step(error, source), limit=None),  # It may name the bundle.
     }

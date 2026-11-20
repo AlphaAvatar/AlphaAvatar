@@ -256,3 +256,27 @@ def test_restore_keeps_frozen_paths_and_inputs_after_the_environment_changes(
     assert json.loads(restored_absent.payload) == json.loads(absent.payload)
     assert "frozen-key" not in repr(restored) and "frozen-token" not in repr(restored)
     assert not (tmp_path / "frozen-home").exists() and not (tmp_path / "other-home").exists()
+
+
+def test_an_interpolation_failing_in_a_list_is_named_once_by_its_path() -> None:
+    """OmegaConf says a list item ``a.b[0]``: the setting at fault is the path the variable is
+    named at, ``a.b.0``, once."""
+    from omegaconf import OmegaConf
+    from omegaconf.errors import OmegaConfBaseException
+
+    from alphaavatar.host.configs import MissingVariables
+    from alphaavatar.host.configs.problems import unresolved
+
+    written = {"tools": {"items": [{"x": "${oc.env:UNSET_IN_LIST}"}], "y": ["${nowhere}"]}}
+    for value, items in (
+        (written, [("tools.items.0.x", "UNSET_IN_LIST")]),
+        ({"y": written["tools"]["y"]}, [("y.0", None)]),
+    ):
+        with mock.patch.dict(os.environ), pytest.raises(OmegaConfBaseException) as raised:
+            os.environ.pop("UNSET_IN_LIST", None)
+            OmegaConf.to_container(OmegaConf.create(value), resolve=True)
+        with mock.patch.dict(os.environ):
+            os.environ.pop("UNSET_IN_LIST", None)
+            problems = unresolved(value, raised.value)
+        assert isinstance(problems, MissingVariables) is (items[0][1] is not None)
+        assert [(item.location, item.variable) for item in problems.items] == items
