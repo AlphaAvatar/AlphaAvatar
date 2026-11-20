@@ -187,7 +187,8 @@ def _composed(
     """The file with its profiles in place and the overrides applied, interpolated; and the
     home it belongs to. With the ``settings`` loading read, the credentials it names are filled
     and hidden from logs: those it interpolates before, the others once it is interpolated. One
-    it interpolates that then holds no value, empty or blank too, is refused at its setting."""
+    an MCP it creates sends that then holds no value, empty or blank too, is refused at its
+    setting."""
     import yaml
     from omegaconf import OmegaConf
     from omegaconf.errors import OmegaConfBaseException
@@ -237,7 +238,7 @@ def _composed(
     except OmegaConfBaseException as error:
         # Said by setting and variable: the exception's own text may quote a value.
         raise unresolved(written, error) from None
-    if (unset := unset_credentials(written)) is not None:  # Not sent as "Bearer ".
+    if (unset := unset_credentials(written, data)) is not None:  # Not sent as "Bearer ".
         raise unset
     if settings is not None:  # And after: an api_key_env may itself be interpolated.
         fill_configured(configured_credentials(data), settings)

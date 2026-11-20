@@ -66,8 +66,13 @@ class MCPConfig(BaseModel):
         description="Mapping of MCP server identifiers to their configuration objects.",
     )
 
+    @property
+    def creates(self) -> bool:
+        """Whether MCP is created: only then are its servers' credentials read and sent."""
+        return self.enabled and self.plugin is not None
+
     def model_post_init(self, __context: Any) -> None:
-        if self.enabled and self.plugin is not None:
+        if self.creates:
             self.servers = resolve_env_placeholders(self.servers, ("servers",))
 
     def runner_config(self) -> dict[str, Any]:
@@ -103,7 +108,7 @@ class ToolsConfig(BaseModel):
 
             tools.append(tool)
 
-        if self.mcp.enabled and self.mcp.plugin is not None:
+        if self.mcp.creates:
             if not self.mcp.servers:
                 raise ValueError("Enabled MCP requires at least one configured server")
 

@@ -312,12 +312,13 @@ def test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting
         load = {c["id"]: c for c in json.loads(capsys.readouterr().out)["checks"]}["config.load"]
         assert [p["line"] for p in failure["problems"]] == load["details"][2:]
         assert load["action"] == failure["action"]
-        assert "LITERAL_NAME" not in shown + json.dumps(failure) + json.dumps(load)
+        for name in ("LITERAL_NAME", "DEFAULTED_NAME"):
+            assert name not in shown + json.dumps(failure) + json.dumps(load)
         return shown, failure
 
     timezone = "avatar.timezone holds an interpolation that cannot be resolved"
     with mock.patch.dict(os.environ, {"COLUMNS": "1000"}):
-        for name in ("LITERAL_NAME", "REAL_NAME"):
+        for name in ("LITERAL_NAME", "REAL_NAME", "DEFAULTED_NAME"):
             os.environ.pop(name, None)
         config.write_text(f"{loop}avatar:\n  id: alpha\n  introduction: '{escaped}'\n")
         loaded = load_application(config)
@@ -328,10 +329,12 @@ def test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting
         )
         assert f"      {timezone}" in text
         assert failure["type"] == "ConfigProblems" and failure["fields"] == ["avatar.timezone"]
-        # Beside a variable an even run of backslashes leaves read, both, by their settings.
+        # Beside a variable an even run of backslashes leaves read, both, by their settings;
+        # one unset with a default takes it.
         text, failure = check(
             "avatar:\n  id: alpha\n  timezone: '${not_a_setting}'\n"
-            f"  introduction: '{escaped} and \\\\${{oc.env:REAL_NAME}}'\n"
+            f"  introduction: '{escaped} and \\\\${{oc.env:REAL_NAME}}"
+            " ${oc.env:DEFAULTED_NAME,kept}'\n"
         )
         assert failure["type"] == "MissingVariables"
         assert failure["fields"] == ["avatar.introduction", "avatar.timezone"]

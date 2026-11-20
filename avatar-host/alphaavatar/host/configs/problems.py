@@ -36,9 +36,11 @@ if TYPE_CHECKING:
 # Keys and paths as they are shown; any other spelling, which data might hold, is not.
 _KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_:-]{0,63}")
 _PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:\[\]-]{0,255}")
-# ${oc.env:NAME} without a default, which fails its interpolation while NAME is unset; as
-# OmegaConf reads it: after an odd run of backslashes ``${`` is text, after an even one it reads.
-_BARE_ENV = re.compile(r"(?<!\\)(?:\\\\)*\$\{oc\.env:\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1\s*\}")
+# ${oc.env:NAME}, with its default if it gives one, as OmegaConf reads it: after an odd run of
+# backslashes ``${`` is text, after an even one it reads. A default that interpolates is not.
+_ENV = re.compile(
+    r"(?<!\\)(?:\\\\)*\$\{oc\.env:\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1\s*(?:,([^{}]*))?\}"
+)
 _INDEX = re.compile(r"\[(\d+)\]")  # OmegaConf's a.b[0], as a path says it: a.b.0.
 _SET = "set them in the environment or in the .env file ENV_FILE names (default .env)"
 
@@ -85,13 +87,15 @@ def setup_installs(source: ConfigSource | None) -> str:
     return "setup installs it for a bundle, not a file"
 
 
-def _variable(location: str, name: str, *, credential: bool) -> Problem:
+def _variable(location: str, name: str, *, credential: bool, default: str | None = None) -> Problem:
     # Never "<setting>: ...": after a setting such as Authorization, the log boundary would take
     # what follows for its value and hide it, the variable's name with it.
     state = "is empty" if os.environ.get(name) is not None else "is not set"
     problem = f"reads {'the credential ' if credential else ''}{name}, which {state}"
     if not credential:  # An ordinary one is an interpolation's: a default would stand for it.
         problem += f", and ${{oc.env:{name}}} has no default"
+    elif default is not None and state == "is not set":  # Its default stands in, holding none.
+        problem += ", and its default is empty"
     return Problem(f"{location} {problem}", location, problem, variable=name)
 
 
@@ -134,32 +138,59 @@ def _strings(value: Any, keys: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str
         yield keys, value
 
 
-def _unset(written: Any, *, ordinary: bool) -> list[Problem]:
-    """Each ``${oc.env:NAME}`` without a default that ``written`` reads and that holds no value,
-    at its setting: a credential an MCP server sends as ``Authorization`` unset, empty or blank,
-    once filled, as anywhere one is read; with ``ordinary``, any other variable unset, as
-    OmegaConf reads it, an empty one being a value."""
+def _creates_mcp(data: Any) -> bool:
+    """Whether ``data`` creates MCP, as ``MCPConfig`` decides it; settings it refuses create
+    none here, and validation names them."""
+    from pydantic import ValidationError
+
+    from alphaavatar.agents.configs.plugins.tools.tools_config import MCPConfig
+
+    tools = data.get("tools") if isinstance(data, dict) else None
+    mcp = tools.get("mcp") if isinstance(tools, dict) else None
+    switches = (
+        {k: mcp[k] for k in ("enabled", "plugin") if k in mcp} if isinstance(mcp, dict) else {}
+    )
+    try:
+        return MCPConfig.model_validate(switches).creates
+    except ValidationError:
+        return False
+
+
+def _holds(default: str | None) -> bool:
+    """Whether an ``oc.env`` default, as written, holds a value: not empty, blank or null."""
+    return default is not None and default.strip().strip("'\"").strip() not in ("", "null")
+
+
+def _unset(written: Any, *, ordinary: bool, creates: bool) -> list[Problem]:
+    """Each ``${oc.env:NAME}`` that ``written`` reads to no value, at its setting. In an MCP
+    server's ``Authorization``, where MCP is created (``creates``), a credential: unset, empty or
+    blank once filled, unless unset with a default that holds one, as OmegaConf takes it. With
+    ``ordinary``, any other read without a default whose variable is unset: empty is a value."""
     from alphaavatar.agents.utils import credential
 
-    from .credentials import interpolated_credentials
+    from .credentials import authorizations
 
-    credentials = interpolated_credentials(written) if isinstance(written, dict) else set()
-    items = []
+    sent = {keys for keys, _ in authorizations(written)} if creates else set()
+    items: dict[tuple[str, str], Problem] = {}
     for keys, value in _strings(written):
-        for name in dict.fromkeys(match[2] for match in _BARE_ENV.finditer(value)):
-            if name in credentials:
-                if credential(name) is None:
-                    items.append(_variable(path(*keys), name, credential=True))
-            elif ordinary and name not in os.environ:
-                items.append(_variable(path(*keys), name, credential=False))
-    return items
+        at = path(*keys)
+        for match in _ENV.finditer(value):
+            name, default = match[2], match[3]
+            if keys in sent:
+                if credential(name) is None and (name in os.environ or not _holds(default)):
+                    found = _variable(at, name, credential=True, default=default)
+                    items.setdefault((at, name), found)
+            elif ordinary and default is None and name not in os.environ:
+                items.setdefault((at, name), _variable(at, name, credential=False))
+    return list(items.values())
 
 
-def unset_credentials(written: Any) -> MissingVariables | None:
+def unset_credentials(written: Any, data: Any) -> MissingVariables | None:
     """The credentials a configuration, as ``written``, interpolates in an MCP server's
-    ``Authorization`` that hold no value: empty or blank interpolates, as ``Bearer ``, but sends
-    none. Each at its setting, as a ``<NAME>`` placeholder is; None when every one holds one."""
-    items = _unset(written, ordinary=False)
+    ``Authorization`` that hold no value, where it creates MCP once interpolated (``data``):
+    empty or blank interpolates, as ``Bearer ``, but sends none. Each at its setting, as a
+    ``<NAME>`` placeholder is; None when every one holds one."""
+    items = _unset(written, ordinary=False, creates=_creates_mcp(data))
     return _missing(items) if items else None
 
 
@@ -167,7 +198,7 @@ def unresolved(written: Any, error: Exception) -> Exception:
     """Why a composed configuration, as ``written``, did not interpolate: each ``${oc.env:NAME}``
     without a default whose variable holds no value (``_unset``), at its setting, and the setting
     whose interpolation failed where it is another; else the file or an override is not valid."""
-    items = _unset(written, ordinary=True)
+    items = _unset(written, ordinary=True, creates=_creates_mcp(written))
     key = getattr(error, "full_key", None)
     location = _INDEX.sub(r".\1", key) if isinstance(key, str) else ""
     if _PATH.fullmatch(location) and all(item.location != location for item in items):

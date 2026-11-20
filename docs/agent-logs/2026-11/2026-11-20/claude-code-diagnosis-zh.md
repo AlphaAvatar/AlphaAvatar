@@ -15,7 +15,8 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | 配置诊断与 Doctor | 缺失变量按设置路径和变量名报告；setup 提示给出 bundle 的命令；Doctor 报告先给结论，再给端到端、阶段和详细诊断 | 2026-11-20 | `4a46fcab` | `66d72583` | 已提交 |
-| 收尾修正 | `action` 脱敏；转义的 `\${oc.env:}` 不再误报；`Authorization` 凭据为空时拒绝加载；P95 说明 | 2026-11-20 | `66d72583` | — | 待审查 |
+| 收尾修正 | `action` 脱敏；转义的 `\${oc.env:}` 不再误报；`Authorization` 凭据为空时拒绝加载；P95 说明 | 2026-11-20 | `66d72583` | `8c23a217` | 已提交 |
+| 收尾二与真实 Doctor | 空凭据检查只针对会创建的 MCP；`${oc.env:NAME,default}` 的空凭据；真实 Doctor 视觉开、关各 5 轮 | 2026-11-20 | `8c23a217` | — | 待审查 |
 
 ## 1. 基线与 CI
 
@@ -184,3 +185,92 @@
 
 - 实际 LiveKit 通话由用户验收。第 5 节其余各项（Details 表的真实链路内容、真实 worker 数）仍待真实运行。
 - 只记录，不改：插值缺失和 `<NAME>` 缺失分两次显示（本轮已接受）；运行时提供方错误不带变量名，以后按提供方补充。
+
+## 9. 收尾二与真实 Doctor（基线 `8c23a217`）
+
+依据：用户 2026-11-20 的审查意见。`8c23a217` 的两条 CI 都通过（Quality [44701864076](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44701864076) 全量 829 passed；Linux package [44701864091](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44701864091)）。
+
+### 9.1 改动
+
+- 关闭的 MCP 不再要求凭据：`MCPConfig.creates`（`enabled` 且有 `plugin`）同时决定 `<NAME>` 的解析和空凭据检查。Host 按插值后的值，用 `MCPConfig` 校验这两项。MCP 未创建时，`Authorization` 里的引用按普通插值处理：变量为空时照常加载；未设置且没有默认值时，仍按 OmegaConf 插值失败报告。
+- 带默认值的引用：`${oc.env:NAME,default}` 也纳入扫描。补齐的顺序不变：有效进程值、`.env`、Setup 保存值。
+  - 变量未设置、默认值有效时，正常加载；
+  - 变量为空或空白，或默认值为空、空白或 `null` 时，按完整路径和变量名拒绝；
+  - 普通变量仍保留显式空值。
+- `credentials.authorizations()` 列出各 `Authorization` 头及其路径，`interpolated_credentials()` 改为复用它。
+- 文档：`docs/cli/config.md` 加入 MCP 未创建和默认值两条规则。
+
+### 9.2 离线验证
+
+| 项目 | 结果 |
+|---|---|
+| 新增回归 | `test_credentials.py`：MCP 关闭和 `plugin: null` 两种情况；默认值的 8 种组合（进程值、`.env`、保存值、默认值、空、空白、空默认值、`null` 默认值），普通变量为空时保留；`test_check.py` 的转义用例加了带默认值的普通变量 |
+| 变异 | 8 个，全部被发现：总当作已创建；不匹配默认值；忽略已设置的空值；`null` 当有效值；任何默认值都当有效；`creates` 不看 `plugin`；普通变量不看默认值；不写"默认值为空" |
+| Host 与 Agents | 490 passed（261 s） |
+| 离线全量 | 839 passed（309 s；原 829 + 新增 10） |
+| 仓库检查 | ruff check、format、`git diff --check`、`uv lock --check`、`check_workspace.py` 通过 |
+
+### 9.3 真实 Doctor
+
+- 方式：
+  - 从源码 `.venv` 运行，不另外构建安装包（磁盘只剩约 7 GB）；
+  - `env -i`，只带隔离的 `HOME`、`ALPHAAVATAR_HOME`、`PATH`、`LANG`、`TERM`，在临时目录中运行；
+  - 凭据只取 `.env.dev` 的四个变量，写入权限 600 的文件，经 `ENV_FILE` 读入；
+  - `config init accept` 用默认值（视觉 `vlm`，8 个 runner）；
+  - 每组只运行一次 `doctor accept host.doctor.external_services=true [vision.enabled=false] --rounds 5 --json`；
+  - 文本报告由 CLI 自己的渲染器从 JSON 重建。静态报告的实时文本和重建文本逐字相同；
+  - `doctor_compare.py` 对单份和两份重算，都以退出码 0 结束。
+- 结果：
+
+| 组 | 场景 | 通过 | 耗时 | runtime 启动 | 模型缓存 |
+|---|---|---|---|---|---|
+| 视觉开 | `voice_vision`（`voice` SKIP："Vision is on: voice_vision speaks to it"） | 5/5 | 3 min 21 s | 137.48 s | 净增 1,689.4 MB（空缓存） |
+| 视觉关 | `voice`（`voice_vision` SKIP："Vision is off or text only"） | 0/5，均停在 `stt.final` | 1 min 14 s | 20.13 s | 未增长 |
+
+- 指标（第 1 轮；后 4 轮中位数）：
+
+| 指标 | 视觉开 | 视觉关（全部轮） |
+|---|---|---|
+| 端到端首个音频帧 | 8,947；5,187 ms | 4,085；3,653 ms |
+| Input／Context／Output | 2,383／751／5,813；1,573／755／2,483 ms | 1,266／845／1,974；1,259／754／1,661 ms |
+| STT 终稿（等待应答头） | 1,661（1,552）；852（746）ms | 586（508）；579（485）ms |
+| 连接、TLS、上传、首事件 | 4.1、6.1、5.6、0.5；8.1、5.4、4.5、0.4 ms | 4.2、8.6、4.7、0.5；7.9、5.7、5.2、0.4 ms |
+| 请求准备、编码、client | 8.5、0.6、0.0；5.1、0.5、0.0 ms | 7.0、0.5、0.0；3.7、0.5、0.0 ms |
+| 图片、请求大小、尝试次数 | 4、65.1 KB、1 | 0、19.7 KB、1 |
+| 发送到首个流事件 | 4,495；394 ms | 698；360 ms |
+| 首个文本 delta | 4,968；1,127 ms | 1,076；777 ms |
+| TTS 首个 PCM | 706；995 ms | 667；606 ms |
+| 视觉 | 最后必需输入 2,862；2,011 ms；帧发布 0.8 ms；最旧帧 2,565；2,362 ms；最新帧到提交 26；94 ms；等帧未观测（选的都是已有帧） | — |
+
+- 核对：
+  - 10 轮的 Input、Context、Output 之和与端到端相差不到 0.01 ms，各阶段的分项之和与阶段总数相同；
+  - 首轮单独列出，失败轮保留（视觉关的 `Latency` 和 `Details` 按全部轮列出，`Failed rounds` 列出每一轮）；
+  - 缺失值写 `null` 并附原因，没有写成 0；
+  - 8 个 runner 都是配置 1 个 worker、就绪 1 个，与配置摘要 `inference` 一致；
+  - `session.cleanup` 两次都 PASS，事后没有残留进程，Avatar 的工作区没有创建；
+  - stdout 第一个字符是 `{`，stderr 为 0 字节，按值检索四个凭据，JSON、重建的文本和对照表里都没有。
+- 视觉关 0/5 是已知的 KD-19：分段 STT 在求和样本上丢第二句。终稿只含第一句，按句归因为 `lost: stt`（第 3、4 批是 1/5）。
+- 调用量：
+  - 10 个会话；
+  - STT 10 次；
+  - 模型首次请求 10 次，没有重试；
+  - TTS 每轮至少 1 次；
+  - 记忆检索 10 次；
+  - 模型下载约 1.7 GB，不计费。
+- 费用：按此前各批每轮约 0.02～0.03 美元，估计 0.2～0.5 美元，以账单为准。
+
+### 9.4 发现，未改
+
+- JSON 里阶段行与端到端用两套名称写同一组事件：阶段写 "Final speech → First audio frame"，边界为 "the Turn's first model request, one clock"；端到端写 "last voiced sample in → first answer audio frame out"，边界为 "diagnostic input to the Host's output boundary"。数值一致，文本表下有说明。
+- runner 只在服务过调用后才记录摘要，没有调用时 `calls` 为 `null`，报告不写原因。本次 `persona.face.analysis` 两组都是这样，`persona.speaker.attribute` 在视觉开时也是。卡片样本里没有人脸时 face 是否本就不调用，没有追查。
+- 文本中只有第 1 轮缺失的格子显示 `—`，表下不写原因（JSON 有原因）。例如视觉关第 1 轮的语义 addressing："no semantic addressing ran for the final, or none is traced"。
+- 已知、未变：
+  - 定时保持为 500 ms（O-23 addressing 等待超时）；
+  - Context 就绪等待约 240 ms；
+  - 第 1 轮模型首事件慢（视觉开 4.5 s，第 4 轮 2.3 s），在服务侧。
+
+### 9.5 待办
+
+- 同 SHA CI：本轮改动提交后再核对。
+- 用户验收：完整安装、setup、doctor、start，以及实际 LiveKit 通话。
+- 原始证据在会话临时目录 `real/`：`work/` 下有两份 JSON、重建的文本、核对与对照输出；`home/` 是隔离的 home 和模型缓存。不入库。

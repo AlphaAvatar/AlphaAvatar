@@ -33,7 +33,7 @@ import json
 import os
 import re
 import secrets
-from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -187,17 +187,21 @@ def _servers(data: Mapping[str, Any]) -> Mapping[str, Any]:
     return servers if isinstance(servers, Mapping) else {}
 
 
+def authorizations(data: Mapping[str, Any]) -> Iterator[tuple[tuple[str, ...], str]]:
+    """Each MCP server's ``Authorization`` header, however cased, that holds text: the keys
+    leading to it, and the text."""
+    for name, server in _servers(data).items():
+        headers = server.get("headers") if isinstance(server, Mapping) else None
+        for header, value in headers.items() if isinstance(headers, Mapping) else ():
+            if str(header).casefold() == "authorization" and isinstance(value, str):
+                yield ("tools", "mcp", "servers", str(name), "headers", str(header)), value
+
+
 def interpolated_credentials(data: Mapping[str, Any]) -> set[str]:
     """The variables a composed configuration, as written, interpolates as credentials: each
     ``${oc.env:NAME}`` of an MCP server's ``Authorization`` header, which once interpolated no
     longer says what it read. Any other interpolation reads an ordinary variable."""
-    names: set[str] = set()
-    for server in _servers(data).values():
-        headers = server.get("headers") if isinstance(server, Mapping) else None
-        for header, value in headers.items() if isinstance(headers, Mapping) else ():
-            if str(header).casefold() == "authorization" and isinstance(value, str):
-                names.update(_OC_ENV.findall(value))
-    return names
+    return {name for _, value in authorizations(data) for name in _OC_ENV.findall(value)}
 
 
 def configured_credentials(data: Mapping[str, Any]) -> set[str]:

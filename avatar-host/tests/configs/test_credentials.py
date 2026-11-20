@@ -279,6 +279,116 @@ def test_in_an_mcp_server_only_authorization_interpolates_a_credential(tmp_path:
         assert shown == "refused [redacted] and [redacted] at https://mcp.invalid/ in us-east-1"
 
 
+# An MCP that is not created: disabled, or without a plugin.
+NOT_CREATED = (
+    "mcp:\n  plugin: {plugin}\n  enabled: {enabled}\n  servers:\n"
+    "    docs:\n      url: https://mcp.invalid/\n"
+    "      headers:\n        Authorization: Bearer ${{oc.env:GITHUB_PAT}}\n"
+    "    code:\n      url: https://code.invalid/\n"
+    "      headers:\n        Authorization: Bearer <MCP_PAT>\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("plugin", "enabled"), [("default", "false"), ("null", "true")], ids=["disabled", "no-plugin"]
+)
+def test_an_mcp_not_created_requires_no_credential_of_its_servers(
+    tmp_path: Path, plugin: str, enabled: str
+) -> None:
+    """An MCP disabled, or without a plugin, is not created and sends nothing: its servers'
+    credentials load empty or unset, as ``<NAME>`` placeholders always did there. Its settings
+    still interpolate as OmegaConf reads them: one unset without a default fails."""
+    from alphaavatar.host.configs import MissingVariables, load_application, select_configuration
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True)
+    tools = paths.configs.profiles_dir / "alpha/plugins/tools/tools.yaml"
+    tools.write_text(NOT_CREATED.format(plugin=plugin, enabled=enabled))
+    with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(paths.root), "GITHUB_PAT": ""}):
+        os.environ.pop("MCP_PAT", None)
+        servers = load_application(select_configuration("alpha", ())).avatar.tools.mcp.servers
+        assert {key: server["headers"] for key, server in servers.items()} == {
+            "docs": {"Authorization": "Bearer "},
+            "code": {"Authorization": "Bearer <MCP_PAT>"},
+        }
+        del os.environ["GITHUB_PAT"]
+        with pytest.raises(MissingVariables) as refused:
+            load_application(select_configuration("alpha", ()))
+    reads = "reads GITHUB_PAT, which is not set, and ${oc.env:GITHUB_PAT} has no default"
+    assert [(item.location, item.problem) for item in refused.value.items] == [
+        ("tools.mcp.servers.docs.headers.Authorization", reads)
+    ]
+
+
+WITH_DEFAULT = (
+    "mcp:\n  plugin: default\n  enabled: true\n  servers:\n"
+    "    docs:\n      url: https://mcp.invalid/\n"
+    "      headers:\n        Authorization: Bearer ${{oc.env:AUTH_TOKEN,{default}}}\n"
+    "        X-Region: ${{oc.env:REGION,eu-west}}\n"
+)
+
+
+# AUTH_TOKEN as the process (None: unset), the .env file and the stored credentials hold it,
+# the default the header gives, and what the header sends, or why it is refused.
+DEFAULTED = [
+    ("auth-set", "auth-file", "auth-stored", "fallback-token", "Bearer auth-set"),
+    ("", "auth-file", "auth-stored", "fallback-token", "Bearer auth-file"),
+    ("  ", None, "auth-stored", "fallback-token", "Bearer auth-stored"),
+    (None, None, None, "fallback-token", "Bearer fallback-token"),
+    ("", None, None, "fallback-token", "which is empty"),
+    ("  ", None, None, "fallback-token", "which is empty"),
+    (None, None, None, "''", "which is not set, and its default is empty"),
+    (None, None, None, "null", "which is not set, and its default is empty"),
+]
+
+
+@pytest.mark.parametrize(
+    ("process", "file", "stored", "default", "outcome"),
+    DEFAULTED,
+    ids=["process", "file", "stored", "default", "empty", "blank", "empty-default", "null-default"],
+)
+def test_an_authorization_default_stands_in_only_for_an_unset_credential(
+    tmp_path: Path,
+    process: str | None,
+    file: str | None,
+    stored: str | None,
+    default: str,
+    outcome: str,
+) -> None:
+    """``${oc.env:NAME,default}`` in Authorization: a value the process holds, else the .env
+    file's, then the stored one; unset everywhere, the default, as OmegaConf takes it. Empty or
+    blank once filled, or with a default that holds none, it is refused at its setting, never
+    sent as ``Bearer ``. An ordinary variable keeps its empty value, default or not."""
+    from alphaavatar.host.configs import MissingVariables, load_application, select_configuration
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    kept = {"AUTH_TOKEN": stored} if stored else None
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=kept)
+    tools = paths.configs.profiles_dir / "alpha/plugins/tools/tools.yaml"
+    tools.write_text(WITH_DEFAULT.format(default=default))
+    lines = [f"ALPHAAVATAR_HOME={paths.root}", *([f"AUTH_TOKEN={file}"] if file else [])]
+    (tmp_path / "chosen.env").write_text("\n".join(lines))
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(tmp_path / "chosen.env"), "REGION": ""}):
+        for name in ("ALPHAAVATAR_HOME", "AUTH_TOKEN"):
+            os.environ.pop(name, None)
+        if process is not None:
+            os.environ["AUTH_TOKEN"] = process
+        settings = load_environment()
+        source = select_configuration(None, (), settings)
+        if outcome.startswith("Bearer"):
+            servers = load_application(source, (), settings).avatar.tools.mcp.servers
+            assert servers["docs"]["headers"] == {"Authorization": outcome, "X-Region": ""}
+            return
+        with pytest.raises(MissingVariables) as refused:
+            load_application(source, (), settings)
+    [item] = refused.value.items
+    assert item.location == "tools.mcp.servers.docs.headers.Authorization"
+    assert (item.variable, item.problem) == (
+        "AUTH_TOKEN",
+        f"reads the credential AUTH_TOKEN, {outcome}",
+    )
+
+
 # A variable an api_key_env names by interpolation, by TTS_KEY_NAME or else its default, as the
 # environment, the .env file and the stored credentials hold it, and what loading leaves.
 CHOSEN = [
