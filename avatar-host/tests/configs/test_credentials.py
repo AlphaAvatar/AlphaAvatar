@@ -338,6 +338,7 @@ DEFAULTED = [
     ("", None, None, "fallback-token", "which is empty"),
     ("  ", None, None, "fallback-token", "which is empty"),
     (None, None, None, "''", "which is not set, and its default is empty"),
+    (None, None, None, "", "which is not set, and its default is empty"),  # As a comma alone.
     (None, None, None, "null", "which is not set, and its default is empty"),
 ]
 
@@ -345,7 +346,17 @@ DEFAULTED = [
 @pytest.mark.parametrize(
     ("process", "file", "stored", "default", "outcome"),
     DEFAULTED,
-    ids=["process", "file", "stored", "default", "empty", "blank", "empty-default", "null-default"],
+    ids=[
+        "process",
+        "file",
+        "stored",
+        "default",
+        "empty",
+        "blank",
+        "empty-default",
+        "omitted-default",
+        "null-default",
+    ],
 )
 def test_an_authorization_default_stands_in_only_for_an_unset_credential(
     tmp_path: Path,

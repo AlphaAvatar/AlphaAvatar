@@ -210,7 +210,8 @@ def env_calls(value: str) -> Iterator[tuple[str, str, bool, bool]]:
                 name = arguments[0].getText().strip("'\"") if arguments else ""
                 if child.resolverName().getText() == "oc.env" and _VARIABLE.fullmatch(name):
                     call = value[child.start.start : child.stop.stop + 1]
-                    yield name, call, len(arguments) > 1, top
+                    # A comma gives the default, "" when nothing follows it, as OmegaConf passes.
+                    yield name, call, bool(sequence.COMMA()), top
                 yield from walk(child, False)
             else:
                 nested = isinstance(child, Grammar.InterpolationNodeContext)

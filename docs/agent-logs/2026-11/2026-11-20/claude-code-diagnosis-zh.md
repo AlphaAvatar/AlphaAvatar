@@ -17,7 +17,8 @@
 | 配置诊断与 Doctor | 缺失变量按设置路径和变量名报告；setup 提示给出 bundle 的命令；Doctor 报告先给结论，再给端到端、阶段和详细诊断 | 2026-11-20 | `4a46fcab` | `66d72583` | 已提交 |
 | 收尾修正 | `action` 脱敏；转义的 `\${oc.env:}` 不再误报；`Authorization` 凭据为空时拒绝加载；P95 说明 | 2026-11-20 | `66d72583` | `8c23a217` | 已提交 |
 | 收尾二与真实 Doctor | 空凭据检查只针对会创建的 MCP；`${oc.env:NAME,default}` 的空凭据；真实 Doctor 视觉开、关各 5 轮 | 2026-11-20 | `8c23a217` | `79147886` | 已提交 |
-| 延迟定位 | 嵌套默认值凭据；Doctor 文本收尾；提交等待与 Context 就绪定位；空记忆不做 embedding；VAD 默认 0.3 s | 2026-11-20 | `79147886` | — | 待审查 |
+| 延迟定位 | 嵌套默认值凭据；Doctor 文本收尾；提交等待与 Context 就绪定位；空记忆不做 embedding；VAD 默认 0.3 s | 2026-11-20 | `79147886` | `c6ea6c19` | 已提交 |
+| 收尾三 | `${oc.env:NAME,}` 的空默认值不再误报；寻址策略与模型限制的记录；延迟收益口径 | 2026-11-20 | `c6ea6c19` | — | 待审查 |
 
 ## 1. 基线与 CI
 
@@ -381,3 +382,40 @@
   - TTS 可以在第一个短句时就请求；
   - 预建 STT/TTS 连接，可以省下每会话首段的建连与 TLS（4～8 ms + 5～9 ms），收益小。
 - 待复验：同 SHA CI（提交后）；实际 LiveKit 通话和完整安装流程由用户验收。
+
+## 11. 收尾三（基线 `c6ea6c19`）
+
+依据：用户 2026-11-20 的任务，认可 VAD 默认 300 ms 和无候选时跳过 embedding。`c6ea6c19` 的两条 CI 都通过（Quality [44758894301](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44758894301) 全量 851 passed；Linux package [44758894342](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44758894342)）。本轮没有付费调用。
+
+### 11.1 改动
+
+- **空默认值**：OmegaConf 把 `${oc.env:OPTIONAL_NAME,}` 读成变量加一个逗号，逗号后没有元素，求值时传 `""` 作默认值。`env_calls()` 原来按元素个数判断有无默认值，漏掉了它：别的字段插值失败时，会多报 "OPTIONAL_NAME … has no default"。现在按 grammar 里的逗号判断。
+- 回归：
+  - `test_check.py` 的转义用例：单独使用时加载为空串；另一字段失败时，config check 文本、JSON 和 Doctor 都不提 OPTIONAL_NAME；
+  - `test_credentials.py`：`Authorization` 中 `${oc.env:AUTH_TOKEN,}`，未设置时按"默认值为空"拒绝。
+- 文档：`docs/cli/config.md` 注明 `${oc.env:NAME,}` 的默认值为空。
+
+### 11.2 决定与记录
+
+- 寻址策略保持现状（用户决定）：不调整全局阈值，不新增单人模式，不关闭语义寻址。约 500 ms 是实际返回 UNKNOWN 后的既定等待（第 10.2 节）。第 10.6 节的第一条建议就此关闭。
+- 模型限制与系统验收分开：
+  - KD-19 的转录丢句按已知模型限制保留；外部请求超过期限时，按已有契约恢复（第 10.4 节第 3 轮）；
+  - 系统验收看音频完整提交、跨段累计、终态与取消、超期结果隔离，以及诊断是否准确，不再为固定样本全部答对扩大模型实验。
+- 延迟收益口径（证据为第 10.2、10.4 节的真实 Doctor 运行，原始数据仍在会话临时目录 `real/`）：
+  - 明确的阶段收益：最后有声样本 → VAD 关闭少 240～260 ms，每轮都有；Turn 提交 → Context 就绪少约 240 ms，只在这些 owner、scope 下没有合格记忆候选时成立，有记忆时仍做 embedding；
+  - 终稿 → 提交的 504 ms 不变；
+  - 观察到的端到端首音频（后 4 轮中位数）视觉开 4,412 → 3,479 ms、视觉关 3,813 → 3,372 ms，是不同运行的观察，含 STT、模型和 TTS 的波动，不作为收益；各阶段中位数也不相加。
+- 后续优化项：有记忆时提前做 embedding、流式 STT、TTS 切句、预建连接。
+
+### 11.3 发现，未改
+
+- OmegaConf 2.3 对 `${oc.env:NAME,}` 发出 `UserWarning`（"some elements are missing: please replace them with empty quoted strings"），`config check` 和 Doctor 都会打到 stderr，带 site-packages 路径。语法仍被接受，结果为空串；`${oc.env:NAME,''}` 不触发警告。是否在 Host 里屏蔽，或在文档里推荐后一种写法，待用户决定。
+
+### 11.4 验证
+
+| 项目 | 结果 |
+|---|---|
+| 相关回归 | `test_check.py`、`test_credentials.py` 66 passed |
+| 变异 | 改回按元素个数判断：两个回归都失败，其中 config check 输出原样复现误报 |
+| 离线全量 | 852 passed（303 s；原 851 + 新增参数用例 1） |
+| 仓库检查 | ruff check、format（791 个文件）、`git diff --check`、`uv lock --check`、`check_workspace.py`（16 个成员）通过 |

@@ -295,12 +295,14 @@ def test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting
 ) -> None:
     """``\\${oc.env:NAME}`` is text, as OmegaConf escapes it: it loads as written and is never
     taken for a variable to set. An interpolation that fails beside it is named at its setting,
-    in config check and Doctor alike, with any variable that holds no value."""
+    in config check and Doctor alike, with any variable that holds no value; one with a default,
+    even ``${oc.env:NAME,}``'s empty one, holds one."""
     from alphaavatar.host.configs import load_application
 
     config = tmp_path / "escaped.yaml"
     loop = f"loop: {json.dumps(LOOP)}\n"
     escaped = r"Use template \${oc.env:LITERAL_NAME}"
+    optional = "${oc.env:OPTIONAL_NAME,}"  # An empty default, as a comma with nothing after it.
 
     def check(text: str) -> tuple[str, dict]:
         config.write_text(loop + text)
@@ -312,14 +314,16 @@ def test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting
         load = {c["id"]: c for c in json.loads(capsys.readouterr().out)["checks"]}["config.load"]
         assert [p["line"] for p in failure["problems"]] == load["details"][2:]
         assert load["action"] == failure["action"]
-        for name in ("LITERAL_NAME", "DEFAULTED_NAME"):
+        for name in ("LITERAL_NAME", "DEFAULTED_NAME", "OPTIONAL_NAME"):
             assert name not in shown + json.dumps(failure) + json.dumps(load)
         return shown, failure
 
     timezone = "avatar.timezone holds an interpolation that cannot be resolved"
     with mock.patch.dict(os.environ, {"COLUMNS": "1000"}):
-        for name in ("LITERAL_NAME", "REAL_NAME", "DEFAULTED_NAME"):
+        for name in ("LITERAL_NAME", "REAL_NAME", "DEFAULTED_NAME", "OPTIONAL_NAME"):
             os.environ.pop(name, None)
+        config.write_text(f"{loop}avatar:\n  id: alpha\n  introduction: '{optional}'\n")
+        assert load_application(config).avatar.avatar.introduction == ""
         config.write_text(f"{loop}avatar:\n  id: alpha\n  introduction: '{escaped}'\n")
         loaded = load_application(config)
         assert loaded.avatar.avatar.introduction == "Use template ${oc.env:LITERAL_NAME}"
@@ -330,11 +334,11 @@ def test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting
         assert f"      {timezone}" in text
         assert failure["type"] == "ConfigProblems" and failure["fields"] == ["avatar.timezone"]
         # Beside a variable an even run of backslashes leaves read, both, by their settings;
-        # one unset with a default takes it.
+        # one unset with a default takes it, an empty one too.
         text, failure = check(
             "avatar:\n  id: alpha\n  timezone: '${not_a_setting}'\n"
             f"  introduction: '{escaped} and \\\\${{oc.env:REAL_NAME}}"
-            " ${oc.env:DEFAULTED_NAME,kept}'\n"
+            f" ${{oc.env:DEFAULTED_NAME,kept}} {optional}'\n"
         )
         assert failure["type"] == "MissingVariables"
         assert failure["fields"] == ["avatar.introduction", "avatar.timezone"]
