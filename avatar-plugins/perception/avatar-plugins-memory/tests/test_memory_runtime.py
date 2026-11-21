@@ -539,8 +539,10 @@ def correct(runtime: AvatarRuntime, participant_id: str, user_id: str) -> None:
 
 @pytest.mark.parametrize("correction", ["none", "before-execution", "after-execution"])
 async def test_model_records_are_attributed_by_their_own_identity_basis(
-    correction: str, tmp_path: Path
+    correction: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="alphaavatar.plugins.memory")
+
     async def tool(prompt: str) -> MemoryDelta:
         return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers window seats")])
 
@@ -570,12 +572,21 @@ async def test_model_records_are_attributed_by_their_own_identity_basis(
         }
     ]
     owners = {(owner.kind, owner.id) for owner in item.owner_refs}
+    kept = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Memory items kept")
+    ]
     if correction == "after-execution":
         # A record admitted under a superseded identity never reaches the corrected user.
         assert ref.user_id == "alice"
         assert owners == {(MemoryOwnerKind.AVATAR, "avatar")}
         assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
+        # The log says the batch was kept in its context, and why.
+        assert kept == [
+            f"Memory items kept in their context context_id=side "
+            f"memory_type={MemoryType.TOOLS.value} items=1 reason=unattributed_input"
+        ]
     else:
+        assert kept == []
         assert ref.user_id == ("bob" if correction == "before-execution" else "alice")
         assert owners == {(MemoryOwnerKind.USER, ref.user_id)}
         assert item.scope.kind is MemoryScopeKind.OWNER

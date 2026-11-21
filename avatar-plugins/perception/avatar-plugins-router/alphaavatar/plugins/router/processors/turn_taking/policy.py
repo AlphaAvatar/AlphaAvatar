@@ -23,7 +23,6 @@ from alphaavatar.agents.router.enums import (
     TurnTakingMode,
 )
 from alphaavatar.agents.router.schemas import (
-    InteractionAddressing,
     InteractionAddressingEvidence,
     InteractionEntityRef,
     TurnTakingAssessment,
@@ -36,7 +35,6 @@ from alphaavatar.core.turn.schemas import TurnNotice
 @dataclass(frozen=True, slots=True)
 class TurnTakingPolicyResult:
     decision: TurnTakingDecision
-    addressing: InteractionAddressing | None = None
 
 
 class TurnTakingPolicy:
@@ -67,12 +65,6 @@ class TurnTakingPolicy:
             else min(assessment.confidence, assessment.addressing_confidence)
         )
 
-    @staticmethod
-    def _evidence_ids(
-        evidence: TurnTakingEvidence, addressing_ids: tuple[str, ...] = ()
-    ) -> tuple[str, ...]:
-        return tuple(dict.fromkeys((*evidence.input_observation_ids, *addressing_ids)))
-
     def _result(
         self,
         *,
@@ -80,38 +72,21 @@ class TurnTakingPolicy:
         action: TurnTakingAction,
         confidence: float,
         addressees: tuple[InteractionEntityRef, ...] = (),
-        addressing_mode: AddressingMode = AddressingMode.UNKNOWN,
-        addressing_confidence: float | None = None,
-        addressing_evidence_ids: tuple[str, ...] = (),
         reason: str | None = None,
         notices: tuple[TurnNotice, ...] = (),
     ) -> TurnTakingPolicyResult:
-        addressing = None
-        if addressees:
-            addressing = InteractionAddressing(
-                input_id=evidence.input_id,
-                revision=evidence.revision,
-                actors=evidence.actors,
-                addressees=addressees,
-                addressing_mode=addressing_mode,
-                confidence=(confidence if addressing_confidence is None else addressing_confidence),
-                evidence_observation_ids=self._evidence_ids(evidence, addressing_evidence_ids),
-            )
-
         return TurnTakingPolicyResult(
-            addressing=addressing,
             decision=TurnTakingDecision(
                 input_id=evidence.input_id,
                 revision=evidence.revision,
                 turn_mode=evidence.turn_mode,
                 action=action,
                 confidence=confidence,
-                actors=evidence.actors,
                 addressees=addressees,
                 input_observation_ids=evidence.input_observation_ids,
                 reason=reason,
                 system_notices=notices,
-            ),
+            )
         )
 
     def decide(
@@ -158,9 +133,6 @@ class TurnTakingPolicy:
             action=action,
             confidence=0.0 if notices else self._confidence(assessment),
             addressees=addressees,
-            addressing_mode=mode,
-            addressing_confidence=assessment.addressing_confidence,
-            addressing_evidence_ids=assessment.addressing_evidence_observation_ids,
             reason=reason,
             notices=notices,
         )
@@ -179,18 +151,14 @@ class TurnTakingPolicy:
                 return None
 
             addressees = (self._avatar(),)
-            addressing_mode = AddressingMode.DIRECT
             confidence = 1.0
-            addressing_ids: tuple[str, ...] = ()
         elif (
             evidence.turn_mode == TurnTakingMode.AUDIO_VISUAL
             and addressing is not None
             and self._addresses_avatar(addressing.addressees)
         ):
             addressees = addressing.addressees
-            addressing_mode = addressing.addressing_mode
             confidence = addressing.confidence
-            addressing_ids = addressing.evidence_observation_ids
         else:
             return None
 
@@ -199,8 +167,5 @@ class TurnTakingPolicy:
             action=TurnTakingAction.INTERRUPT,
             confidence=confidence,
             addressees=addressees,
-            addressing_mode=addressing_mode,
-            addressing_confidence=confidence,
-            addressing_evidence_ids=addressing_ids,
             reason="avatar_directed_speech_started",
         )

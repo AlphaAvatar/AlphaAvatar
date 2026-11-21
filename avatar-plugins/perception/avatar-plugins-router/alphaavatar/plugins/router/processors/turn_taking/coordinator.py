@@ -105,7 +105,6 @@ class TurnTakingCoordinator:
                 turn_mode=evidence.turn_mode,
                 action=action,
                 confidence=0.0 if action == TurnTakingAction.HOLD else 1.0,
-                actors=evidence.actors,
                 input_observation_ids=evidence.input_observation_ids,
                 reason=reason,
             )
@@ -306,11 +305,6 @@ class TurnTakingCoordinator:
             window.published = True
             if window.wait is not None:
                 window.wait.cancel_timer()
-
-        if result.addressing is not None:
-            self._runtime.perception.publish_annotation(
-                result.addressing.to_annotation(source=self.SOURCE, observation_id=target)
-            )
 
         annotation = decision.to_annotation(source=self.SOURCE, observation_id=target)
         deadline = self._runtime.clock.now().monotonic_ns + round(

@@ -157,7 +157,6 @@ class AddressingFusion:
                 addressing=AssessmentLabel.UNKNOWN,
                 addressing_mode=AddressingMode.UNKNOWN,
                 addressing_confidence=None,
-                addressing_evidence_observation_ids=(),
             )
 
         return replace(
@@ -166,5 +165,4 @@ class AddressingFusion:
             addressing=evidence.label,
             addressing_mode=evidence.addressing_mode,
             addressing_confidence=evidence.confidence,
-            addressing_evidence_observation_ids=evidence.evidence_observation_ids,
         )

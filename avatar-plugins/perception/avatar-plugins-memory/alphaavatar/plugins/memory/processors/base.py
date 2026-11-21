@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -41,6 +42,8 @@ from ..namespace import NAMESPACE
 from ..schemas import norm_token, norm_topic
 from ..storage.graph import build_graph_from_mentions
 from ..template import MemoryPluginsTemplate
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..runtime import MemoryRuntime
@@ -109,7 +112,8 @@ class MemoryProcessor(MemoryProcessorBase):
             or any(p.user_id not in users for p in identity.participants)
             or any(ref.kind is MemoryOwnerKind.USER and ref.id not in users for ref in owner_refs)
         )
-        if unattributed or not owner_refs:
+        kept = unattributed or not owner_refs
+        if kept:
             # Preserve unverified observations in their originating context, without publishing
             # them into another user's long-term memory or the Avatar's shared owner scope.
             owner_refs, scope = (
@@ -143,6 +147,15 @@ class MemoryProcessor(MemoryProcessorBase):
                 item=item, mentions=patch.node_mentions
             )
             items.append(item)
+        if kept and items:
+            logger.info(
+                "Memory items kept in their context context_id=%s memory_type=%s items=%d "
+                "reason=%s",
+                state.context_id,
+                memory_type.value,
+                len(items),
+                "unattributed_input" if unattributed else "no_owner",
+            )
         return items
 
     def trace_metadata(

@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from uuid import uuid4
@@ -42,6 +43,8 @@ from ...capability.enums import AvatarCapabilityName
 from .binding import ParticipantBindings
 from .schemas import ParticipantInput
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(slots=True)
 class _SegmentState:
@@ -50,7 +53,7 @@ class _SegmentState:
     observed_ns: int  # When its association was asked for, on the runtime clock
     entity: PerceptionEntityRef | None = None
     invalid: bool = False
-    settled: bool = False
+    outcome: str | None = None  # How it settled, once: bound, unbound, invalid or released
 
 
 @avatar_capability(
@@ -142,10 +145,21 @@ class ParticipantRuntime:
         """Settle the association, once: the first time it is ready, and how, is what the trace
         keeps (bound, unbound, invalid or released). Ready is not recognized: a
         failure, an eviction or a retirement settles it too."""
-        if current.settled:
+        if current.outcome is not None:
             return
-        current.settled = True
+        current.outcome = outcome
         segment, perception = current.segment, self.turn.perception
+        now_ns = perception.clock.now().monotonic_ns
+        logger.info(
+            "Speaker association settled segment_id=%s source_id=%s source_generation=%s "
+            "outcome=%s reason=%s wait_ms=%.1f",
+            segment.segment_id,
+            segment.source.source_id,
+            segment.source.source_generation,
+            outcome,
+            reason,
+            (now_ns - current.observed_ns) / 1e6,
+        )
         perception.input_trace.record(
             "participant.segment_ready",
             source_id=segment.source.source_id,
@@ -154,7 +168,7 @@ class ParticipantRuntime:
             outcome=outcome,
             reason=reason,
             start_time_ns=current.observed_ns,
-            end_time_ns=perception.clock.now().monotonic_ns,
+            end_time_ns=now_ns,
         )
 
     def _drop_source(self, source: PerceptionSourceRef) -> None:
@@ -352,13 +366,24 @@ class ParticipantRuntime:
                 self._settle(removed, "released", "evicted")
         return current.token
 
-    def finish_segment_resolution(self, segment: PerceptionSegmentRef, *, token: int) -> None:
+    def finish_segment_resolution(
+        self, segment: PerceptionSegmentRef, *, token: int, reason: str | None = None
+    ) -> None:
+        """The resolver is done with the segment; ``reason`` says why it found no entity."""
         current = self._segments.get(segment)
         if current is not None and current.token == token:
             outcome = (
                 "invalid" if current.invalid else "unbound" if current.entity is None else "bound"
             )
-            self._settle(current, outcome)
+            self._settle(current, outcome, None if outcome == "bound" else reason)
+
+    def segment_association(self, segment: PerceptionSegmentRef) -> str:
+        """Where the segment's association stands now: ``pending`` until it settles, then how
+        it settled; ``unknown`` once released or never asked for."""
+        current = self._segments.get(segment)
+        if current is None:
+            return "unknown"
+        return "invalid" if current.invalid else current.outcome or "pending"
 
     def segment_is_current(self, segment: PerceptionSegmentRef, token: int) -> bool:
         current = self._segments.get(segment)

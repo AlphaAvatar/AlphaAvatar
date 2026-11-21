@@ -310,12 +310,11 @@ async def test_a_held_input_goes_on_across_its_segments(inputs: Inputs) -> None:
     inputs.final("segment-b", "three?")
     await wait_until(lambda: inputs.decisions(COMMIT), "the input never committed")
 
-    # One input of both segments, its actor their source.
+    # One input of both segments.
     (hold,) = inputs.decisions(HOLD, "speech_incomplete")
     (commit,) = inputs.decisions(COMMIT)
     assert commit.input_id == hold.input_id and commit.revision > hold.revision
     assert inputs.texts(commit) == ["What is two plus", "three?"]
-    assert [actor.source for actor in commit.actors] == [inputs.source]
 
 
 @pytest.mark.parametrize("inputs", [{"model": {"transcript": False}}], indirect=True)

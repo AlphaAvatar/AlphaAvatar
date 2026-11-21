@@ -293,7 +293,7 @@ class AvatarEngine(LifecycleComponent):
     def _decision_actors(
         self, observations: tuple[EnvObservation, ...]
     ) -> tuple[TurnEntityRef, ...]:
-        """Resolve only owned inputs; router actor labels cannot grant a user identity."""
+        """Resolve only owned inputs; the router's input devices never grant a user identity."""
         by_segment: dict[PerceptionSegmentRef, list[EnvObservation]] = {}
         for observation in observations:
             if observation.segment is not None:
@@ -414,6 +414,31 @@ class AvatarEngine(LifecycleComponent):
         self._watchers.add(task)
         task.add_done_callback(self._watchers.discard)
         task.add_done_callback(self._observe)
+
+    def _log_participants(
+        self, snapshot: TurnSnapshot, observations: tuple[EnvObservation, ...] = ()
+    ) -> None:
+        """Whom the Turn was admitted with, and where each of its segments' association stood
+        then: a pending one settles later, as its own line says."""
+        participants = ",".join(
+            f"{actor.participant_id}/{actor.user_id or '-'}/r{actor.identity_revision}"
+            if actor.participant_id is not None
+            else "unattributed"
+            for actor in snapshot.actors
+        )
+        segments = ",".join(
+            f"{segment.segment_id}:{self._runtime.participants.segment_association(segment)}"
+            for segment in dict.fromkeys(
+                item.segment for item in observations if item.segment is not None
+            )
+        )
+        logger.info(
+            "Turn participants turn_id=%s input_id=%s participants=%s segments=%s",
+            snapshot.turn_id,
+            snapshot.input_id,
+            participants or "none",
+            segments or "none",
+        )
 
     def _trace_admission(
         self,
@@ -634,6 +659,8 @@ class AvatarEngine(LifecycleComponent):
                 },
                 system_notices=notices,
             )
+            # Sampled where the actors were resolved: nothing awaited since.
+            self._log_participants(snapshot, observations)
             self._trace_admission(
                 event,
                 decision,
@@ -668,6 +695,7 @@ class AvatarEngine(LifecycleComponent):
                 context_ids=(self._runtime.state.context_id,),
                 metadata={"source": "avatar.engine.direct"},
             )
+            self._log_participants(snapshot)
             await self._submit(snapshot)
 
     async def submit_input(self, observation: EnvObservation) -> None:

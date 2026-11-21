@@ -192,65 +192,6 @@ class InteractionAddressingEvidence:
 
 
 @dataclass(frozen=True, slots=True)
-class InteractionAddressing:
-    input_id: str
-    revision: int
-    actors: tuple[InteractionEntityRef, ...]
-    addressees: tuple[InteractionEntityRef, ...]
-    addressing_mode: AddressingMode
-    confidence: float
-    evidence_observation_ids: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        _validate_input(self.input_id, self.revision, self.confidence)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "input_id": self.input_id,
-            "revision": self.revision,
-            "actors": [actor.to_dict() for actor in self.actors],
-            "addressees": [entity.to_dict() for entity in self.addressees],
-            "addressing_mode": self.addressing_mode.value,
-            "confidence": self.confidence,
-            "evidence_observation_ids": list(self.evidence_observation_ids),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> InteractionAddressing:
-        return cls(
-            input_id=data["input_id"],
-            revision=int(data["revision"]),
-            actors=tuple(InteractionEntityRef.from_dict(actor) for actor in data["actors"]),
-            addressees=tuple(
-                InteractionEntityRef.from_dict(entity) for entity in data.get("addressees", ())
-            ),
-            addressing_mode=AddressingMode(data["addressing_mode"]),
-            confidence=float(data["confidence"]),
-            evidence_observation_ids=tuple(data.get("evidence_observation_ids", ())),
-        )
-
-    @classmethod
-    def from_annotation(cls, annotation: EnvAnnotation) -> InteractionAddressing:
-        if annotation.kind != AnnotationKind.INTERACTION_ADDRESSING:
-            raise ValueError(
-                f"Expected {AnnotationKind.INTERACTION_ADDRESSING.value}, "
-                f"got {annotation.kind.value}"
-            )
-        return cls.from_dict(annotation.data)
-
-    def to_annotation(
-        self, *, source: str, observation_id: str | None = None, frame_id: str | None = None
-    ) -> EnvAnnotation:
-        return _annotation(
-            kind=AnnotationKind.INTERACTION_ADDRESSING,
-            source=source,
-            data=self.to_dict(),
-            observation_id=observation_id,
-            frame_id=frame_id,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class TurnTakingDecision:
     input_id: str
     revision: int
@@ -258,7 +199,6 @@ class TurnTakingDecision:
     action: TurnTakingAction
     confidence: float
 
-    actors: tuple[InteractionEntityRef, ...] = ()
     addressees: tuple[InteractionEntityRef, ...] = ()
     input_observation_ids: tuple[str, ...] = ()
 
@@ -280,7 +220,6 @@ class TurnTakingDecision:
             "turn_mode": self.turn_mode.value,
             "action": self.action.value,
             "confidence": self.confidence,
-            "actors": [actor.to_dict() for actor in self.actors],
             "addressees": [entity.to_dict() for entity in self.addressees],
             "input_observation_ids": list(self.input_observation_ids),
             "system_notices": [notice.to_dict() for notice in self.system_notices],
@@ -298,7 +237,6 @@ class TurnTakingDecision:
             turn_mode=TurnTakingMode(data["turn_mode"]),
             action=TurnTakingAction(data["action"]),
             confidence=float(data["confidence"]),
-            actors=tuple(InteractionEntityRef.from_dict(actor) for actor in data["actors"]),
             addressees=tuple(
                 InteractionEntityRef.from_dict(entity) for entity in data.get("addressees", ())
             ),
@@ -367,7 +305,6 @@ class TurnTakingEvidence:
     segments: tuple[PerceptionSegmentRef, ...]
     input_observation_ids: tuple[str, ...]
 
-    actors: tuple[InteractionEntityRef, ...] = ()
     transcript: str | None = None
     audio: tuple[TurnTakingAudioEvidence, ...] = ()
 
@@ -398,7 +335,6 @@ class TurnTakingAssessment:
 
     addressees: tuple[InteractionEntityRef, ...] = ()
     addressing_mode: AddressingMode = AddressingMode.UNKNOWN
-    addressing_evidence_observation_ids: tuple[str, ...] = ()
     reason: str | None = None
 
     def __post_init__(self) -> None:

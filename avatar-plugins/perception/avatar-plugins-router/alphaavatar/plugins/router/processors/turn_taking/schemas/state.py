@@ -98,7 +98,8 @@ class InputWindow:
         return {segment.source for segment in self.segments}
 
     @property
-    def actors(self) -> tuple[InteractionEntityRef, ...]:
+    def input_devices(self) -> tuple[InteractionEntityRef, ...]:
+        """The devices and sources its speech came from, one per segment's subject."""
         return tuple(dict.fromkeys(self.subjects.values()))
 
     @property

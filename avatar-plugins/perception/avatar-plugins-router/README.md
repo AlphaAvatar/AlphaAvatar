@@ -40,7 +40,7 @@ Addressing fusion preserves provenance, detects conflicting targets and prioriti
 
 ## 🔀 Turn decisions and Engine admission
 
-TurnTakingProcessor coordinates one open temporal input window and the sealed inputs awaiting STT or admission, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. Speaker labels are actors of an input, never its boundary. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
+TurnTakingProcessor coordinates one open temporal input window and the sealed inputs awaiting STT or admission, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. A segment's speaker label adds to the input's `input_devices`, never sets its boundary. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
 
 ```text
 Speech + transcripts + addressing

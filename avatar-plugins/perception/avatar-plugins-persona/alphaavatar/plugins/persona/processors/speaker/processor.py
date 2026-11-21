@@ -148,6 +148,13 @@ class SpeakerProcessor(PersonaProcessorBase):
     def name(self) -> str:
         return "speaker"
 
+    @staticmethod
+    def _unbound_reason(state: SpeakerSegmentState) -> str:
+        """Why a segment found no speaker, for the diagnostics its association settles with."""
+        if state.inference_failed:
+            return "inference_failed"
+        return "no_vector" if state.vector is None else "no_match"
+
     def _extract_frame(self, observation: EnvObservation) -> AudioFrame | None:
         if observation.payload is None:
             return None
@@ -183,7 +190,9 @@ class SpeakerProcessor(PersonaProcessorBase):
         ) is state and self.runtime.participants.segment_is_current(state.segment, state.token)
 
     def _retire(self, state: SpeakerSegmentState) -> None:
-        self.runtime.participants.finish_segment_resolution(state.segment, token=state.token)
+        self.runtime.participants.finish_segment_resolution(
+            state.segment, token=state.token, reason=self._unbound_reason(state)
+        )
         if self._segments.get(state.segment) is state:
             self._segments.pop(state.segment)
 
@@ -210,7 +219,9 @@ class SpeakerProcessor(PersonaProcessorBase):
             state.pending -= 1
         if self._segments.get(state.segment) is state:
             state.inference_failed = True
-            self.runtime.participants.finish_segment_resolution(state.segment, token=state.token)
+            self.runtime.participants.finish_segment_resolution(
+                state.segment, token=state.token, reason=self._unbound_reason(state)
+            )
             if state.closed and state.pending == 0:
                 self._retire(state)
 
@@ -620,7 +631,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 # Missing model evidence leaves the segment unattributed, not invalidated.
                 state.inference_failed = True
                 self.runtime.participants.finish_segment_resolution(
-                    state.segment, token=state.token
+                    state.segment, token=state.token, reason=self._unbound_reason(state)
                 )
             raise
 

@@ -37,5 +37,4 @@ class AnnotationKind(StrEnum):
     FACE_DETECTION = "persona.face_detection"
 
     INTERACTION_ADDRESSING_EVIDENCE = "interaction.addressing_evidence"
-    INTERACTION_ADDRESSING = "interaction.addressing"
     INTERACTION_TURN = "interaction.turn"

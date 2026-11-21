@@ -17,7 +17,6 @@ from .semantic_addressing import (
     SemanticAddressingTranscript,
 )
 from .turn_taking import (
-    InteractionAddressing,
     InteractionAddressingEvidence,
     InteractionEntityRef,
     TurnTakingAssessment,
@@ -27,7 +26,6 @@ from .turn_taking import (
 )
 
 __all__ = [
-    "InteractionAddressing",
     "InteractionAddressingEvidence",
     "InteractionEntityRef",
     "SemanticAddressingRequest",

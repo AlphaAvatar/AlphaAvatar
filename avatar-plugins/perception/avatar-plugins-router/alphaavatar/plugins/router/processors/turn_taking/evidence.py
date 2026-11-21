@@ -68,7 +68,7 @@ class TurnEvidenceBuilder:
         )
 
     def mode(self, window: InputWindow) -> TurnTakingMode:
-        devices = {actor.device_id for actor in window.actors if actor.device_id is not None}
+        devices = {ref.device_id for ref in window.input_devices if ref.device_id is not None}
         cameras = self._runtime.perception.get_source_states(
             modality=MediaModality.VIDEO, source_kind=MediaSourceKind.CAMERA
         )
@@ -85,7 +85,6 @@ class TurnEvidenceBuilder:
             input_id=window.input_id,
             revision=window.revision,
             turn_mode=self.mode(window),
-            actors=window.actors,
             started_at=window.started_at,
             updated_at=window.updated_at,
             segments=tuple(window.segments),

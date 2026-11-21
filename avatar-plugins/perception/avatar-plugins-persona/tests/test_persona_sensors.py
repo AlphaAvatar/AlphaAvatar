@@ -453,10 +453,26 @@ async def test_a_window_that_times_out_or_fails_releases_its_association_and_say
     # Known by its voice alone, which the window never gave: released unbound, at once after
     # the window ended, its ending said; a commit waiting on it waits no longer.
     assert (window["outcome"], settled["outcome"]) == (ending, "unbound")
+    assert settled["reason"] == "inference_failed"
     assert window["end_time_ns"] <= settled["end_time_ns"] <= window["end_time_ns"] + 50_000_000
     if ending == "timeout":
         assert window["end_time_ns"] - window["start_time_ns"] >= 100_000_000
     inference.release.set()
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_voice_no_track_takes_settles_its_segment_unbound_and_says_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(SpeakerTracks, "resolve", lambda self, source, vector, seconds: None)
+    runtime = avatar_runtime(tmp_path, SensorInference())
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice")
+    await wait_until(settled(runtime, 1), "the association was held")
+    (record,) = traced(runtime, "participant.segment_ready")
+    assert (record["outcome"], record["reason"]) == ("unbound", "no_match")
     await persona.on_stop()
     await runtime.aclose()
 
@@ -491,6 +507,13 @@ async def test_speech_shorter_than_a_window_is_inferred_once_at_its_own_length(
     ):
         utter(runtime, source, segment, "alice", heard=length, spoken=audio)
         await wait_until(settled(runtime, count), f"segment {segment} was never settled")
+    # Speech with no audio of its own gives no vector: unbound, and says so. Each settled in
+    # turn: the second is the utterance under test.
+    associations = [
+        (record["outcome"], record.get("reason"))
+        for record in traced(runtime, "participant.segment_ready")
+    ]
+    assert associations[1] == (("bound", None) if jobs else ("unbound", "no_vector"))
     windows = 2 + (48000 in jobs)
     await wait_until(lambda: len(inference.searches) == 2 + bool(jobs), "a search never ran")
     await wait_until(

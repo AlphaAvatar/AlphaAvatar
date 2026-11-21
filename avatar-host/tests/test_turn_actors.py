@@ -13,10 +13,12 @@
 # limitations under the License.
 """Whose Turn it is, on the configured chain: Engine names each segment's actor from the
 association settled for that segment (Persona's part, done here by hand), never from the
-device the speech came through nor from the session's primary participant."""
+device the speech came through nor from the session's primary participant; its log says whom
+the Turn was admitted with and where each segment's association stood then."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -49,8 +51,9 @@ async def session(
 
 @pytest.mark.parametrize("case", CASES)
 async def test_a_turns_actors_are_its_segments_associations_never_its_device(
-    session: Chain, case: str
+    session: Chain, case: str, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="alphaavatar.agents")
     runtime = session.execution.runtime
     participants = runtime.participants
     # Two people heard on the device, each a participant of their own besides its owner.
@@ -77,6 +80,22 @@ async def test_a_turns_actors_are_its_segments_associations_never_its_device(
     assert [actor.participant_id for actor in turn.actors] == expected
     assert {actor.user_id for actor in turn.actors if actor.participant_id is None} <= {None}
     assert primary.participant_id not in {actor.participant_id for actor in turn.actors}
+    (line,) = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith(f"Turn participants turn_id={turn.turn_id} ")
+    ]
+    listed = ",".join(
+        f"{actor.participant_id}/{actor.user_id}/r{actor.identity_revision}"
+        if actor.participant_id
+        else "unattributed"
+        for actor in turn.actors
+    )
+    states = ",".join(
+        f"{segment}:{'bound' if associated else 'pending'}"
+        for segment, associated in zip(("segment-a", "segment-b"), CASES[case], strict=True)
+    )
+    assert line.endswith(f" participants={listed} segments={states}")
 
     # An association settled after the admission changes nothing the Turn holds.
     late = PerceptionSegmentRef(session.speech, "segment-b")
