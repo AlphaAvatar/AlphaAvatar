@@ -300,3 +300,53 @@ def test_a_run_killed_removing_a_stopped_runs_stage_leaves_it_marked_for_the_nex
     retried = run()
     assert retried.returncode == 0, retried.stderr
     assert os.listdir(prefix / "versions") == [ID]
+
+
+# rm, refusing all in a stage but its mark, as files it may not remove would be.
+REFUSING = """#!/bin/sh
+for operand; do
+  case "$operand" in
+    */.install-*/.alphaavatar-install) ;;
+    */.install-*) echo "rm: cannot remove '$operand': Permission denied" >&2; exit 1 ;;
+  esac
+done
+exec "{real}" "$@"
+"""
+
+
+@pytest.mark.parametrize("removed", ["its-own", "a-stopped-runs"])
+def test_a_stage_whose_removal_fails_keeps_its_mark_for_the_next_run(layout, removed: str) -> None:
+    """A run's own stage as its cleanup removes it, the run having failed, or a stopped run's
+    as the next removes it: the removal fails, and stops there. The stage keeps its mark and
+    what is left in it; current, the command and the data are as they were; once removing
+    works again, the next run removes it and installs."""
+    tmp_path, _, tools, run = layout
+    prefix, entry, data = tmp_path / "prefix", tmp_path / "bin/alphaavatar", tmp_path / "data"
+    other = package(tmp_path / "next", package_id=OTHER)
+    installs = ("--file", str(other), "--sha256", hashlib.sha256(other.read_bytes()).hexdigest())
+    environ = {"ALPHAAVATAR_HOME": str(data)}
+    (data / "avatars/alpha").mkdir(parents=True)
+    (data / "avatars/alpha/memory.db").write_bytes(b"memories")
+    assert run(extra=environ).returncode == 0
+    if removed == "a-stopped-runs":
+        left = prefix / "versions/.install-left"
+        (left / "tree/alphaavatar-9.9.9/bin").mkdir(parents=True)
+        (left / "package.tar.gz").write_bytes(b"part of a download")
+        (left / ".alphaavatar-install").touch()
+    (tools / "rm").write_text(REFUSING.replace("{real}", shutil.which("rm")))
+    (tools / "rm").chmod(0o755)
+    # Its own: the package fails its check, and the cleanup removes the stage it was copied to.
+    check = ("--sha256", "0" * 64) if removed == "its-own" else installs[2:]
+    failed = run(*installs[:2], *check, extra=environ)
+    stages = [path for path in (prefix / "versions").iterdir() if path.name.startswith(".")]
+    assert len(stages) == 1 and (stages[0] / ".alphaavatar-install").is_file()
+    assert any(path.name != ".alphaavatar-install" for path in stages[0].iterdir())
+    assert os.readlink(prefix / "current") == f"versions/{ID}"
+    assert runs(entry) == "AlphaAvatar 9.9.9\n"
+    assert (data / "avatars/alpha/memory.db").read_bytes() == b"memories"
+    assert failed.returncode == 1 and "Permission denied" in failed.stderr, failed.stderr
+    (tools / "rm").unlink()
+    retried = run(*installs, extra=environ)
+    assert retried.returncode == 0, retried.stderr
+    assert os.readlink(prefix / "current") == f"versions/{OTHER}"
+    assert sorted(os.listdir(prefix / "versions")) == sorted([ID, OTHER])

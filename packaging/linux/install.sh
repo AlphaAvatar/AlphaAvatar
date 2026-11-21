@@ -20,8 +20,8 @@
 # interrupted run removes only what it created, judged by where current points when it ends;
 # the current version, the command and existing data stay as they were, and a path this script
 # cannot tell it made is never removed. A signal acts between steps, never while one makes a
-# directory or link and records it; what a stopped removal leaves is a stage still marked, which
-# the next run, setup or upgrade removes.
+# directory or link and records it; what a stopped or failed removal leaves is a stage still
+# marked, which the next run, setup or upgrade removes.
 set -euo pipefail
 
 RELEASES="https://github.com/AlphaAvatar/AlphaAvatar/releases/download"
@@ -36,10 +36,12 @@ release() { trap - INT TERM HUP; [[ -z "$held" ]] || exit "$held"; }
 calm() ( trap '' INT TERM HUP; exec "$@" )  # Its commands: Ctrl-C reaches them too.
 mark=".alphaavatar-install"  # In each stage in versions/, install.sh's or upgrade's.
 remove_stage() (
-  # The mark last: stopped at any point, what is left is a stage still marked.
+  # The mark last, once all else is gone: stopped or failing at any point, what is left is a
+  # stage still marked. A removal that fails returns at once: where the cleanup calls this,
+  # set -e does not act.
   shopt -s dotglob nullglob
   for item in "$1"/*; do
-    [[ "$item" == "$1/$mark" ]] || rm -rf -- "$item"
+    [[ "$item" == "$1/$mark" ]] || rm -rf -- "$item" || return
   done
   rm -f -- "$1/$mark"
   rmdir -- "$1"

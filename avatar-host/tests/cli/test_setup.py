@@ -244,6 +244,27 @@ def test_a_session_setting_the_transport_refuses_is_named_never_shown(
     assert "TEST_CONFIG_SECRET" not in output.err + output.out + caplog.text
 
 
+def test_an_existing_bundle_with_an_stt_plugin_and_no_model_is_refused_before_installing(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    # Refused as it validates, at the field, as config check, Doctor and start refuse it (O-10).
+    assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
+    edit(profile("reference", "voice"), "stt", "model", value=" ")
+    capsys.readouterr()
+    before = home_files()
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch("sys.stdin.isatty", return_value=False),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        mock.patch.object(environment, "install") as install,
+    ):
+        assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 2
+    output = capsys.readouterr()
+    assert not install.called and home_files() == before  # Nothing installed nor enabled.
+    assert "Setup failed; nothing was enabled" in output.err
+    assert "fields: voice.stt.model" in output.err
+
+
 def test_typed_session_credentials_are_checked_before_anything_is_stored_or_installed(
     package: environment.Installation,
     capsys: pytest.CaptureFixture,

@@ -19,7 +19,8 @@
 | 收尾二与真实 Doctor | 空凭据检查只针对会创建的 MCP；`${oc.env:NAME,default}` 的空凭据；真实 Doctor 视觉开、关各 5 轮 | 2026-11-20 | `8c23a217` | `79147886` | 已提交 |
 | 延迟定位 | 嵌套默认值凭据；Doctor 文本收尾；提交等待与 Context 就绪定位；空记忆不做 embedding；VAD 默认 0.3 s | 2026-11-20 | `79147886` | `c6ea6c19` | 已提交 |
 | 收尾三 | `${oc.env:NAME,}` 的空默认值不再误报；寻址策略与模型限制的记录；延迟收益口径 | 2026-11-20 | `c6ea6c19` | `69e00be8` | 已提交 |
-| 安装中断收尾 | `install.sh` 的信号窗口与归属记录；install、setup、upgrade 的暂存目录最后删标记；ROADMAP、KD-7 状态 | 2026-11-21 | `69e00be8` | — | 待审查 |
+| 安装中断收尾 | `install.sh` 的信号窗口与归属记录；install、setup、upgrade 的暂存目录最后删标记；ROADMAP、KD-7 状态 | 2026-11-21 | `69e00be8` | `6806fa5b` | 已提交 |
+| 删除失败与 O-10 | `install.sh` 删除失败时保留标记（KD-48）；STT model 必填前移到配置校验（O-10）；O-11 延期；SIGKILL 空目录边界接受（O-26） | 2026-11-21 | `6806fa5b` | — | 待审查 |
 
 ## 1. 基线与 CI
 
@@ -459,6 +460,45 @@
 
 ### 12.3 发现，未改
 
-- SIGKILL 无法捕获。只在两处相邻系统调用之间被杀时，会留下空的、无标记的暂存目录：建目录到写标记之间，删标记到 `rmdir` 之间。按现有契约（无标记的不删）保留，不影响之后的安装；240 次注入没有碰到。
+- SIGKILL 无法捕获。只在两处相邻系统调用之间被杀时，会留下空的、无标记的暂存目录：建目录到写标记之间，删标记到 `rmdir` 之间。按现有契约（无标记的不删）保留，不影响之后的安装；240 次注入没有碰到。（用户已接受，登记为 O-26，见第 13 节）
 - 被杀后留下的带标记暂存目录，由下一次真正安装的 `install.sh`、setup、upgrade 或 `cleanup` 删除；同一构建的 upgrade 不动任何东西，也不删它们（已有契约与测试）。
-- O-10 仍可复现：`voice.stt.model` 只在 `STTConfig.get_plugin` 检查，`voice.tts.model` 在配置校验时检查。
+- O-10 仍可复现：`voice.stt.model` 只在 `STTConfig.get_plugin` 检查，`voice.tts.model` 在配置校验时检查。（已修复，见第 13 节）
+
+## 13. 删除失败与 O-10（基线 `6806fa5b`）
+
+依据：用户 2026-11-21 的任务。`6806fa5b` 的两条 CI 都通过：Quality [44800024253](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44800024253)（lint、build、install，全量 870 passed）；Linux package [44800023991](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44800023991)（build、verify）。本轮没有付费调用；VAD 300 ms、寻址策略和 embedding 实现都不变。
+
+### 13.1 改动
+
+- **`install.sh` 删除失败时保留标记（KD-48）**：
+  - 问题：review 在 `6806fa5b` 上复现。清理以 `remove_stage "$stage" || true` 调用，函数内的 `set -e` 不起作用；某个子项删除失败后仍删掉标记，留下非空、无标记的暂存目录。
+  - 修复：`remove_stage` 的每个子项删除失败即返回，标记和剩余内容保留，由下一次运行删除。
+  - 下一次运行清理旧暂存时的调用本来就受 `set -e` 约束，行为不变：删不掉时以 rm 的错误结束，标记保留。
+  - Python 一侧的 `remove_marked` 删除失败时 `rmtree` 抛出，标记本来就保留，不改。
+- **O-10**：
+  - `STTConfig.model` 改为字段校验（`validate_default`）：启用 STT 插件时，缺失、空串、全空白都拒绝；关闭时不需要。
+  - 规则与 TTS 相同，只是落在字段上，诊断定位到 `voice.stt.model`。
+  - `get_plugin` 里装配会话时的检查随之删除。
+  - config check、Doctor、setup、start 都经 `AvatarConfig` 校验，没有分别加检查。
+
+### 13.2 决定与记录
+
+- O-11 登记为已知限制，移到 bugs 的「观察与延期」，不阻塞 0.6.9。共享锁文件属于缓存管理，异常收尾不删锁文件，也不删整个缓存目录。
+- SIGKILL 的空目录边界按用户决定接受，登记为 O-26：保持「无法确认归属的目录不删除」，不扩大清理权限。
+- `bugs-zh.md`：O-10 移到已修复（foundation 节），新增 KD-48（Host 节）。
+
+### 13.3 验证
+
+| 项目 | 结果 |
+|---|---|
+| `install.sh` 回归 | 新增 `test_a_stage_whose_removal_fails_keeps_its_mark_for_the_next_run`，覆盖两条路径：本次暂存（包校验失败后由清理删除）、旧暂存（由下一次运行删除）。PATH 上的 rm 拒绝删除暂存目录里标记以外的内容。核对：暂存目录还在，带标记，剩余内容还在；current、命令、数据不变；恢复 rm 后重试，暂存被删除，安装完成。旧脚本下「本次暂存」失败，留下无标记的 `.install-*`；「旧暂存」通过，那里 `set -e` 起作用 |
+| 临时布局验证（会话临时目录 `interrupt/removal_failure.py`） | 布局同第 12 节。用只读目录造成真实的删除失败，不替换 rm。4 个场景：`install.sh` 解包后目录变只读再收到 SIGTERM，由清理删本次暂存；`install.sh` 被 SIGKILL 后留下暂存、其中目录只读，由下一次 `install.sh` 删除；setup、upgrade 各遇到一个带标记、含只读目录的旧暂存。新脚本 4/4：运行以非 0 结束，暂存带标记并保留剩余内容，current、命令、数据不变，没有未知目录；恢复写权限后重试，结果与不中断时一致。旧脚本：第 1 个场景留下无标记的 `.install-*`（只剩 `tree`），重试后仍在；其余 3 个与新脚本相同 |
+| O-10 回归 | `test_avatar_config.py`：关闭、缺失、空串、全空白、有效 5 种，拒绝时位置为 `voice.stt.model`。`test_check.py`：缺失、空串、全空白下，config check 的文本和 JSON、Doctor 的 `config.load`、start 都定位到 `voice.stt.model`；start 在子进程中运行，校验之后的第一步换成退出，规则失效时也不会启动 Host。`test_setup.py`：setup 返回 2，没有安装或启用任何东西。旧代码下 7 项失败（config check 报 OK），关闭和有效两种通过 |
+| 变异 | `install.sh`：去掉 `\|\| return`（即旧脚本）被发现。STT 规则 5 个都被发现：不校验默认值（缺失漏过）；只拒 `None`；不去空白；忽略 plugin（关闭也拒）；改为 TTS 式的模型级校验（只定位到 `voice.stt`） |
+| 离线全量 | 881 passed（310 s；原 870 + 新增 11：`install.sh` 2、`test_avatar_config.py` 5、`test_check.py` 3、`test_setup.py` 1） |
+| 仓库检查 | ruff check、format（791 个文件）、`git diff --check`、`uv lock --check`、`check_workspace.py`（16 个成员）、`bash -n` 通过 |
+
+### 13.4 发现，未改
+
+- TTS：`voice.tts.model` 缺失时，校验在模型级（`model_validator`），诊断只定位到 `voice.tts`（config check 文本为 `voice.tts is not valid`）；STT 现在定位到字段。按本轮范围不改。
+- setup、upgrade 删不掉旧暂存目录（如权限被改）时，CLI 只报 `PermissionError errno=13` 和 shutil 里的代码位置，不写是哪个目录；`install.sh` 由 rm 写出路径。本轮之前就是这样。

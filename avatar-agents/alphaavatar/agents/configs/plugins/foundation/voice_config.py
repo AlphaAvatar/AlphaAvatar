@@ -14,7 +14,7 @@
 from contextlib import AsyncExitStack
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase, VoiceBundle
 from alphaavatar.agents.runtime.inference import InferenceExecutor
@@ -31,7 +31,9 @@ class STTConfig(BaseModel):
         default=None, min_length=1, description="STT implementation used by Interaction Router."
     )
     model: str | None = Field(
-        default=None, description="Model used by the AlphaAvatar STT provider."
+        default=None,
+        validate_default=True,
+        description="Model used by the AlphaAvatar STT provider; required for an enabled plugin.",
     )
     delay: Literal["minimal", "low", "medium", "high", "xhigh"] = Field(
         default="low", description="Realtime transcription latency/quality preference."
@@ -57,6 +59,15 @@ class STTConfig(BaseModel):
         pattern=r"^[A-Z][A-Z0-9_]*$",
         description="The environment variable holding its API key; the plugin's own when unset.",
     )
+
+    @field_validator("model")
+    @classmethod
+    def check_model(cls, model: str | None, info: ValidationInfo) -> str | None:
+        # The rule TTS keeps, at the field itself: a report names voice.stt.model. The plugin,
+        # declared first, is validated before it.
+        if info.data.get("plugin") is not None and (model is None or not model.strip()):
+            raise ValueError("voice.stt.model is required for an enabled STT plugin")
+        return model
 
     @model_validator(mode="after")
     def check_key_server(self) -> "STTConfig":
@@ -87,8 +98,6 @@ class STTConfig(BaseModel):
     def get_plugin(self) -> STTBase | None:
         if self.plugin is None:
             return None
-        if self.model is None:
-            raise ValueError(f"voice.stt.model is required when voice.stt.plugin={self.plugin!r}")
 
         factory = resolve_plugin(AvatarModule.VOICE_STT, self.plugin).factory
         if problems := self.unsupported(factory):

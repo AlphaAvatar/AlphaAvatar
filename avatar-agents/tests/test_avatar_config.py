@@ -245,3 +245,29 @@ def test_a_forwarding_stt_factory_gets_only_the_settings_set_that_it_supports(
     assert hinted.unsupported(factory) == []
     with pytest.raises(TypeError, match="language"):  # Passed on as it said it would be
         hinted.get_plugin()
+
+
+@pytest.mark.parametrize(
+    ("stt", "refused"),
+    [
+        ({}, False),
+        ({"plugin": "openai_segment"}, True),
+        ({"plugin": "openai_segment", "model": ""}, True),
+        ({"plugin": "openai_segment", "model": " \t"}, True),
+        ({"plugin": "openai_segment", "model": "gpt-4o-transcribe"}, False),
+    ],
+    ids=["off", "missing", "empty", "blank", "set"],
+)
+def test_an_enabled_stt_needs_a_model_and_validation_names_its_field(
+    stt: dict[str, str], refused: bool, ambient: dict[str, str]
+) -> None:
+    """As TTS: validation refuses an STT plugin without a model, missing, empty or blank, at
+    voice.stt.model, where config check, Doctor, setup and start each validate; off, none is
+    needed. Before, the session refused it as it was assembled."""
+    value = {**SECTIONS, "avatar": {"id": "assistant"}, "voice": {"stt": stt}}
+    if not refused:
+        assert AvatarConfig.model_validate(value).voice.stt.model == stt.get("model")
+        return
+    with pytest.raises(ValidationError) as rejected:
+        AvatarConfig.model_validate(value)
+    assert [row["loc"] for row in rejected.value.errors()] == [("voice", "stt", "model")]

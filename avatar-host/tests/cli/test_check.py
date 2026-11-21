@@ -19,11 +19,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
 
 import pytest
+import yaml
 from config_samples import CONFIG, LOOP, SECRETS, files, write
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
@@ -345,6 +347,53 @@ def test_escaped_interpolation_reads_nothing_and_a_failing_one_keeps_its_setting
         assert [p["variable"] for p in failure["problems"]] == ["REAL_NAME", None]
         assert f"      {timezone}" in text
         assert failure["action"].endswith(", and fix the other fields")
+    assert sandbox == []
+
+
+# start as the command runs it, ending where it would go on to start what was validated.
+STARTS = """
+import sys
+from alphaavatar.host import configs
+from alphaavatar.host.cli.app import main
+
+
+def validated(config):
+    raise SystemExit("validated")
+
+
+configs.check_capabilities = validated
+sys.exit(main(sys.argv[1:]))
+"""
+
+
+@pytest.mark.parametrize("model", [None, "", " \t"], ids=["missing", "empty", "blank"])
+def test_an_enabled_stt_without_a_model_fails_validation_at_its_field_in_each_command(
+    model: str | None, home: Path, sandbox: list[str], capsys: pytest.CaptureFixture
+) -> None:
+    """config check, in text and JSON, Doctor's config.load and start: each refuses an STT
+    plugin without a model as it validates, at voice.stt.model (O-10); before, config check
+    and Doctor passed it and start refused it as the session was assembled."""
+    assert main(["config", "init", "alpha", "--avatar-id", "alpha"]) == 0
+    capsys.readouterr()
+    voice = home / "configs/profiles/alpha/plugins/foundation/voice.yaml"
+    settings = yaml.safe_load(voice.read_text())
+    assert settings["stt"]["plugin"] is not None
+    settings["stt"].pop("model")
+    if model is not None:
+        settings["stt"]["model"] = model
+    voice.write_text(yaml.safe_dump(settings))
+    with mock.patch.dict(os.environ, {"COLUMNS": "1000"}):
+        assert main(["config", "check"]) == 2
+        assert "    fields: voice.stt.model\n" in capsys.readouterr().err
+        assert main(["config", "check", "--json"]) == 2
+        assert json.loads(capsys.readouterr().out)["error"]["fields"] == ["voice.stt.model"]
+        assert main(["doctor", "--no-metrics", "--json"]) == 1
+        load = {c["id"]: c for c in json.loads(capsys.readouterr().out)["checks"]}["config.load"]
+        assert load["status"] == "FAIL" and "fields: voice.stt.model" in load["details"]
+    started = subprocess.run(
+        [sys.executable, "-c", STARTS, "start"], capture_output=True, text=True, timeout=120
+    )
+    assert started.returncode == 2 and "fields: voice.stt.model" in started.stderr, started.stderr
     assert sandbox == []
 
 
