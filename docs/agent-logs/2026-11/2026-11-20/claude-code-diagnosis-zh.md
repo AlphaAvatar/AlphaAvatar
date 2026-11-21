@@ -20,7 +20,8 @@
 | 延迟定位 | 嵌套默认值凭据；Doctor 文本收尾；提交等待与 Context 就绪定位；空记忆不做 embedding；VAD 默认 0.3 s | 2026-11-20 | `79147886` | `c6ea6c19` | 已提交 |
 | 收尾三 | `${oc.env:NAME,}` 的空默认值不再误报；寻址策略与模型限制的记录；延迟收益口径 | 2026-11-20 | `c6ea6c19` | `69e00be8` | 已提交 |
 | 安装中断收尾 | `install.sh` 的信号窗口与归属记录；install、setup、upgrade 的暂存目录最后删标记；ROADMAP、KD-7 状态 | 2026-11-21 | `69e00be8` | `6806fa5b` | 已提交 |
-| 删除失败与 O-10 | `install.sh` 删除失败时保留标记（KD-48）；STT model 必填前移到配置校验（O-10）；O-11 延期；SIGKILL 空目录边界接受（O-26） | 2026-11-21 | `6806fa5b` | — | 待审查 |
+| 删除失败与 O-10 | `install.sh` 删除失败时保留标记（KD-48）；STT model 必填前移到配置校验（O-10）；O-11 延期；SIGKILL 空目录边界接受（O-26） | 2026-11-21 | `6806fa5b` | `b1a51695` | 已提交 |
+| 收尾记录 | 两项诊断问题登记延期（O-27、O-28）；`b1a51695` 的 CI；开发收尾结束 | 2026-11-21 | `b1a51695` | — | 待审查 |
 
 ## 1. 基线与 CI
 
@@ -502,3 +503,25 @@
 
 - TTS：`voice.tts.model` 缺失时，校验在模型级（`model_validator`），诊断只定位到 `voice.tts`（config check 文本为 `voice.tts is not valid`）；STT 现在定位到字段。按本轮范围不改。
 - setup、upgrade 删不掉旧暂存目录（如权限被改）时，CLI 只报 `PermissionError errno=13` 和 shutil 里的代码位置，不写是哪个目录；`install.sh` 由 rm 写出路径。本轮之前就是这样。
+
+## 14. 收尾记录（基线 `b1a51695`）
+
+依据：用户 2026-11-21 的任务。本节只改文档，不改实现。
+
+### 14.1 CI
+
+`b1a51695`（第 13 节的改动）的两条 push CI 都通过：
+- Quality [44880495112](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44880495112)：`lint`、`build`、`install` 通过，全量 881 passed（462.76 s）。
+- Linux package [44880495022](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/44880495022)：`build`、`verify` 通过。
+
+### 14.2 延期登记
+
+第 13.4 节的两项按用户决定登记到 bugs 的「观察与延期」，都只影响诊断信息，不阻塞 0.6.9：
+- O-27：TTS 缺 model 时诊断只定位到 `voice.tts`。
+- O-28：setup、upgrade 删不掉旧暂存目录时不写是哪个目录。
+
+### 14.3 结论
+
+- 已登记的开发缺陷中，没有未延期的：KD-19 按模型限制接受；KD-41、KD-47、O-11、O-27、O-28 延期；O-26 接受。
+- 开发收尾按已确认的范围结束。剩下的是用户的最终验收：完整安装、setup、Doctor、start、正常停止和实际通话。
+- `multilingual-e5-small` 的独立评测另记在 [claude-code-e5-eval-zh.md](../2026-11-21/claude-code-e5-eval-zh.md)，不改生产默认配置。
