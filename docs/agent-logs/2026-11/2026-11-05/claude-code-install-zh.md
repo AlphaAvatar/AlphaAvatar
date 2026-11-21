@@ -4,6 +4,7 @@
 - 本文件是安装与首次配置流程第 1 项（干净机器安装）的主日志，按时间顺序追加。第 2–5 项各有独立主日志。
 - 统一的 KD/O 表仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`。
 - 本机升级（`alphaavatar upgrade`，原第 5 项的升级部分）记在 [claude-code-upgrade-zh.md](../2026-11-17/claude-code-upgrade-zh.md)。
+- 安装入口改为不传来源时安装最新正式版、推荐 `curl | bash`（2026-11-21）记在 [claude-code-install-latest-zh.md](../2026-11-21/claude-code-install-latest-zh.md)。
 - 交互配置（`alphaavatar setup`、`setup <bundle>`、`config init` 的下一步）从 `2fc4f398` 那一轮起记在 [claude-code-setup-zh.md](../2026-11-06/claude-code-setup-zh.md)，本文件第二至第六轮和「CLI 展示统一」第 3 节中的 setup 记录已在那里汇总；同一轮的 Doctor 改动记在 [claude-code-doctor-zh.md](../2026-11-03/claude-code-doctor-zh.md)。CLI 渲染和 HTML 预览仍记在本文件。
 
 ## 批次总览

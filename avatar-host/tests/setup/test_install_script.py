@@ -17,7 +17,9 @@ and the data as they were, and nothing the next run does not remove."""
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import http.server
 import json
 import os
 import platform
@@ -26,6 +28,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -33,7 +36,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "packaging/linux/install.sh"
 ID, OTHER = "9.9.9-test", "9.9.9-other"
-LAUNCHER = '#!/bin/sh\n{effect}[ "$1" = --version ] && echo "AlphaAvatar 9.9.9"\nexit 0\n'
+LAUNCHER = '#!/bin/sh\n{effect}[ "$1" = --version ] && echo "AlphaAvatar {version}"\nexit 0\n'
+GITHUB = "https://github.com/AlphaAvatar/AlphaAvatar/releases/"
+MANIFEST = "alphaavatar-linux-x86_64.manifest.json"
 
 pytestmark = pytest.mark.skipif(
     (platform.system(), platform.machine()) != ("Linux", "x86_64"),
@@ -41,22 +46,27 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def package(directory: Path, effect: str = "", package_id: str = ID) -> Path:
-    """A base package as install.sh reads one: one top directory, its manifest, its command."""
+def package(
+    directory: Path, effect: str = "", package_id: str = ID, version: str = "9.9.9"
+) -> Path:
+    """A base package as install.sh reads one: one top directory, its manifest as build.sh
+    writes one for a release, its command."""
     top = directory / f"alphaavatar-{package_id}"
     manifest = {
         "id": package_id,
-        "version": "9.9.9",
+        "version": version,
+        "release": f"v{version}",
+        "platform": "linux-x86_64",
         "glibc": "2.17",
         "cpu": [],
         "imports": ["json"],
     }
     (top / "share/alphaavatar").mkdir(parents=True)
-    (top / "share/alphaavatar/manifest.json").write_text(json.dumps(manifest))
+    (top / "share/alphaavatar/manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (top / "python/bin").mkdir(parents=True)
     (top / "python/bin/python3").symlink_to(sys._base_executable)
     (top / "bin").mkdir()
-    (top / "bin/alphaavatar").write_text(LAUNCHER.format(effect=effect))
+    (top / "bin/alphaavatar").write_text(LAUNCHER.format(effect=effect, version=version))
     (top / "bin/alphaavatar").chmod(0o755)
     archive = directory / f"alphaavatar-{package_id}.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
@@ -74,11 +84,22 @@ def layout(tmp_path: Path):
     tools.mkdir()
     env = {"HOME": str(home), "PATH": f"{tools}:{os.environ['PATH']}", "LANG": "C.UTF-8"}
 
-    def run(*argv: str, extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-        command = ["bash", str(SCRIPT), "--file", str(good), "--sha256", digest]
-        command += ["--prefix", str(tmp_path / "prefix"), "--bin-dir", str(tmp_path / "bin")]
+    def run(
+        *argv: str,
+        extra: dict[str, str] | None = None,
+        source: tuple[str, ...] | None = None,
+        piped: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        """install.sh with ``source`` (the good package's file by default), then ``argv``;
+        ``piped``, a script's text sent to bash's stdin, as `curl … | bash` runs it."""
+        if source is None:
+            source = ("--file", str(good), "--sha256", digest)
+        command = ["bash", "-s", "--"] if piped is not None else ["bash", str(SCRIPT)]
+        command += [*source, "--prefix", str(tmp_path / "prefix")]
+        command += ["--bin-dir", str(tmp_path / "bin")]
         return subprocess.run(
             [*command, *argv],
+            input=piped,
             capture_output=True,
             text=True,
             timeout=120,
@@ -350,3 +371,267 @@ def test_a_stage_whose_removal_fails_keeps_its_mark_for_the_next_run(layout, rem
     assert retried.returncode == 0, retried.stderr
     assert os.readlink(prefix / "current") == f"versions/{OTHER}"
     assert sorted(os.listdir(prefix / "versions")) == sorted([ID, OTHER])
+
+
+# curl, sending each GitHub release URL to the stand-in instead; any other remote URL is
+# refused, so no run reaches a network.
+CURL = """#!/bin/sh
+n=$#
+while [ "$n" -gt 0 ]; do
+  arg=$1; shift; n=$((n - 1))
+  case "$arg" in
+    {github}*) arg="{base}/${arg#{github}}" ;;
+    {base}/*) ;;
+    http://*|https://*) echo "curl: refused $arg" >&2; exit 97 ;;
+  esac
+  set -- "$@" "$arg"
+done
+exec "{real}" "$@"
+"""
+
+
+def sha(archive: Path) -> str:
+    return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def inside(archive: Path) -> bytes:
+    """The manifest a package holds, byte for byte."""
+    with tarfile.open(archive) as tar:
+        member = next(m for m in tar if m.name.endswith("/share/alphaavatar/manifest.json"))
+        return tar.extractfile(member).read()
+
+
+@pytest.fixture
+def releases(layout):
+    """GitHub's releases on loopback, laid out as GitHub serves them: a release's files under
+    /download/<tag>/, and /latest/download/<file> redirecting to the latest release's; with
+    the paths asked for."""
+    tmp_path, _, tools, _ = layout
+    root, asked = tmp_path / "github", []
+    root.mkdir()
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self) -> None:
+            asked.append(self.path)
+            name = self.path.removeprefix("/latest/download/")
+            if name != self.path and (root / "LATEST").is_file():
+                self.send_response(302)
+                self.send_header("Location", f"/download/{(root / 'LATEST').read_text()}/{name}")
+                self.end_headers()
+                return
+            super().do_GET()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(Handler, directory=str(root))
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    curl = CURL.replace("{github}", GITHUB).replace("{base}", base)
+    (tools / "curl").write_text(curl.replace("{real}", shutil.which("curl")))
+    (tools / "curl").chmod(0o755)
+
+    def publish(
+        archive: Path,
+        *,
+        latest: bool = True,
+        without: str = "",
+        manifest_of: Path | None = None,
+        at: str = "",
+    ) -> str:
+        """``archive``'s release, as release.yml publishes one: the package, its .sha256 and
+        the manifest it holds (``manifest_of``'s instead), ``without`` one of them; at ``at``
+        instead, a mirror's path. Returns the package's path on the stand-in."""
+        version = json.loads(inside(archive))["version"]
+        where = root / (at or f"download/v{version}")
+        where.mkdir(parents=True, exist_ok=True)
+        name = f"alphaavatar-{version}-linux-x86_64.tar.gz"
+        files = {
+            "package": (name, archive.read_bytes()),
+            "sha256": (f"{name}.sha256", f"{sha(archive)}  {name}\n".encode()),
+            "manifest": (MANIFEST, inside(manifest_of or archive)),
+        }
+        for kind, (file, data) in files.items():
+            if kind != without:
+                (where / file).write_bytes(data)
+        if latest:
+            (root / "LATEST").write_text(f"v{version}")
+        return f"/{where.relative_to(root)}/{name}"
+
+    yield publish, asked, base
+    server.shutdown()
+    server.server_close()
+
+
+def test_with_no_source_the_latest_release_is_installed_from_that_release_alone(
+    layout, releases
+) -> None:
+    """The latest release is named once, by its manifest; the package and its SHA-256 come
+    from that release; the run says the version and build it installed."""
+    tmp_path, good, _, run = layout
+    publish, asked, _ = releases
+    publish(package(tmp_path / "older", package_id="9.9.8-test", version="9.9.8"))
+    path = publish(good)
+    installed = run(source=())
+    assert installed.returncode == 0, installed.stderr
+    assert "The latest release is v9.9.9" in installed.stdout
+    assert f"Installed AlphaAvatar 9.9.9, build {ID}:" in installed.stdout
+    # The manifest through the redirect to v9.9.9's, then the package's files from there.
+    manifest = [f"/latest/download/{MANIFEST}", f"/download/v9.9.9/{MANIFEST}"]
+    assert asked == [*manifest, f"{path}.sha256", path]
+    assert os.readlink(tmp_path / "prefix/current") == f"versions/{ID}"
+    assert runs(tmp_path / "bin/alphaavatar") == "AlphaAvatar 9.9.9\n"
+
+
+@pytest.mark.parametrize("given", ["version", "url", "file"])
+def test_a_given_source_installs_its_package_and_asks_no_latest_release(
+    layout, releases, given: str
+) -> None:
+    """--version, --url and --file keep their meaning beside a newer latest release."""
+    tmp_path, good, _, run = layout
+    publish, asked, base = releases
+    older = package(tmp_path / "older", package_id="9.9.8-test", version="9.9.8")
+    path = publish(older, latest=False, at="mirror" if given == "url" else "")
+    publish(package(tmp_path / "newer", package_id="9.9.10-test", version="9.9.10"))
+    source = {
+        "version": ("--version", "9.9.8"),
+        "url": ("--url", f"{base}{path}"),
+        "file": ("--file", str(older), "--sha256", sha(older)),
+    }[given]
+    installed = run(source=source)
+    assert installed.returncode == 0, installed.stderr
+    assert "Installed AlphaAvatar 9.9.8, build 9.9.8-test:" in installed.stdout
+    assert asked == ([] if given == "file" else [f"{path}.sha256", path])
+    assert os.readlink(tmp_path / "prefix/current") == "versions/9.9.8-test"
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        ("--version", "--file"),
+        ("--file", "--url"),
+        ("--version", "--url"),
+        ("--version", "--file", "--url"),
+        ("--version",),  # Each given an empty value from here on.
+        ("--file",),
+        ("--url",),
+    ],
+)
+def test_sources_are_one_at_most_and_the_latest_only_when_none_is_given(
+    layout, releases, sources: tuple[str, ...]
+) -> None:
+    """Two sources are refused before anything is made or asked; so is a source given an
+    empty value, which is never taken for none given, the latest release."""
+    tmp_path, good, _, run = layout
+    _, asked, base = releases
+    value = {"--version": "9.9.9", "--file": str(good), "--url": f"{base}/x.tar.gz"}
+    empty = len(sources) == 1
+    refused = run(*(i for flag in sources for i in (flag, "" if empty else value[flag])), source=())
+    if empty:
+        assert refused.returncode == 1 and f"{sources[0]} needs a value" in refused.stderr
+    else:
+        assert refused.returncode == 2 and refused.stderr.startswith("usage: install.sh")
+    assert not (tmp_path / "prefix").exists() and asked == []
+
+
+@pytest.mark.parametrize(
+    "broken", ["no release", "development build", "package", "sha256", "build"]
+)
+def test_a_latest_release_that_cannot_be_installed_is_refused_and_no_other_is_tried(
+    layout, releases, broken: str
+) -> None:
+    """No latest release, one whose manifest names no release (a development build's), one
+    without its package or .sha256, or whose package holds another build than its manifest
+    names: the run says which and ends; no older release is tried; the installation, the
+    command and the data stay as they were, and nothing of the run is left."""
+    tmp_path, good, _, run = layout
+    publish, asked, _ = releases
+    prefix, entry, data = tmp_path / "prefix", tmp_path / "bin/alphaavatar", tmp_path / "data"
+    (data / "avatars/alpha").mkdir(parents=True)
+    (data / "avatars/alpha/memory.db").write_bytes(b"memories")
+    environ = {"ALPHAAVATAR_HOME": str(data)}
+    assert run(extra=environ).returncode == 0
+    publish(package(tmp_path / "older", package_id="9.9.8-test", version="9.9.8"))
+    newer = package(tmp_path / "newer", package_id="9.9.10-test", version="9.9.10")
+    if broken == "development build":  # As build.sh writes one for a commit: no release.
+        path = publish(newer, without="manifest")
+        manifest = inside(newer).replace(b'"v9.9.10"', b"null")
+        (tmp_path / "github/download/v9.9.10" / MANIFEST).write_bytes(manifest)
+    elif broken == "build":
+        other = package(tmp_path / "other", package_id="9.9.10-other", version="9.9.10")
+        path = publish(newer, manifest_of=other)
+    elif broken != "no release":
+        path = publish(newer, without=broken)
+    if broken == "no release":
+        (tmp_path / "github/LATEST").unlink()
+    asked.clear()
+    failed = run(source=(), extra=environ)
+    expected = {
+        "no release": f"Cannot download {GITHUB}latest/download/{MANIFEST}",
+        "development build": "The latest release's manifest names no release of AlphaAvatar",
+        "package": f"Cannot download {GITHUB}download/v9.9.10/alphaavatar-9.9.10-linux",
+        "sha256": f"No SHA-256 at {GITHUB}download/v9.9.10/alphaavatar-9.9.10-linux",
+        "build": "The package of v9.9.10 holds another build than the manifest published",
+    }[broken]
+    assert failed.returncode == 1 and expected in failed.stderr, failed.stderr
+    assert not any("v9.9.8" in path for path in asked), asked
+    if broken == "sha256":  # Told before the package downloads.
+        manifest = [f"/latest/download/{MANIFEST}", f"/download/v9.9.10/{MANIFEST}"]
+        assert asked == [*manifest, f"{path}.sha256"]
+    assert os.readlink(prefix / "current") == f"versions/{ID}"
+    assert runs(entry) == "AlphaAvatar 9.9.9\n"
+    assert os.listdir(prefix / "versions") == [ID]
+    assert (data / "avatars/alpha/memory.db").read_bytes() == b"memories"
+
+
+def test_the_latest_release_being_the_build_current_runs_keeps_its_setup_environment(
+    layout, releases
+) -> None:
+    """Installing the build already there again keeps the setup environment over it current,
+    with the capabilities setup installed; nothing is unpacked again."""
+    tmp_path, good, _, run = layout
+    publish, _, _ = releases
+    prefix, entry = tmp_path / "prefix", tmp_path / "bin/alphaavatar"
+    assert run().returncode == 0
+    environment = prefix / "envs/plan-1"
+    (environment / "share/alphaavatar").mkdir(parents=True)
+    (environment / ".alphaavatar-setup").touch()
+    (environment / "share/alphaavatar/plan.json").write_text(json.dumps({"base": ID}))
+    (environment / "bin").mkdir()
+    (environment / "bin/alphaavatar").write_text(
+        LAUNCHER.format(effect="", version="9.9.9") + "# the environment's\n"
+    )
+    (environment / "bin/alphaavatar").chmod(0o755)
+    (prefix / "current.new").symlink_to("envs/plan-1")
+    (prefix / "current.new").rename(prefix / "current")
+    publish(good)
+    again = run(source=())
+    assert again.returncode == 0, again.stderr
+    assert f"AlphaAvatar {ID} is already installed" in again.stdout
+    assert "Next: alphaavatar setup" not in again.stdout
+    assert os.readlink(prefix / "current") == "envs/plan-1"
+    assert "# the environment's" in (prefix / "current/bin/alphaavatar").read_text()
+    assert runs(entry) == "AlphaAvatar 9.9.9\n"
+    assert os.listdir(prefix / "versions") == [ID]
+
+
+@pytest.mark.parametrize("cut", ["half", "all but its end"])
+def test_piped_to_bash_it_runs_once_whole_and_a_script_cut_short_runs_nothing(
+    layout, releases, cut: str
+) -> None:
+    """`curl … | bash`: bash reads the whole script before running any of it, so a download
+    cut short makes and asks nothing; the whole one installs the latest release."""
+    tmp_path, good, _, run = layout
+    publish, asked, _ = releases
+    publish(good)
+    text = SCRIPT.read_text()
+    short = text[: len(text) // 2] if cut == "half" else text[: text.rindex("}")]
+    stopped = run(source=(), piped=short)
+    assert stopped.returncode == 2 and "syntax error" in stopped.stderr, stopped.stderr
+    assert not (tmp_path / "prefix").exists() and asked == []
+    assert not (tmp_path / "bin").exists()
+    installed = run(source=(), piped=text)
+    assert installed.returncode == 0, installed.stderr
+    assert os.readlink(tmp_path / "prefix/current") == f"versions/{ID}"

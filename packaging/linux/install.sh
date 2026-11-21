@@ -2,12 +2,17 @@
 # Install AlphaAvatar's Linux x86_64 base package, as CI builds it with packaging/linux/build.sh;
 # then `alphaavatar setup` installs the capabilities a person chooses.
 #
+#   bash install.sh                      # the latest release's package
 #   bash install.sh --version 0.6.9      # the package of a GitHub release
 #   bash install.sh --file PACKAGE       # one already downloaded, such as a CI build of a commit
 #   bash install.sh --url URL            # one from a mirror
+#   curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash
 #
-# The package's SHA-256 comes from --sha256, or else from the .sha256 file beside it. Needs
-# tar, gzip and coreutils, and curl to download; the package brings its own Python.
+# The latest release is named once, by the manifest it publishes beside its package; the
+# package and its .sha256 come from that release, and the package must hold that manifest. A
+# latest release without them is an error: no other release is tried. The package's SHA-256
+# comes from --sha256, or else from the .sha256 file beside it. Needs tar, gzip and coreutils,
+# and curl to download; the package brings its own Python.
 #
 # Program files only; ALPHAAVATAR_HOME, Avatar workspaces and model caches live elsewhere:
 #   <prefix>/versions/<version>-<commit>/        each package unpacked and checked before use
@@ -22,9 +27,15 @@
 # cannot tell it made is never removed. A signal acts between steps, never while one makes a
 # directory or link and records it; what a stopped or failed removal leaves is a stage still
 # marked, which the next run, setup or upgrade removes.
+
+# Read whole before anything runs: piped to bash, a download cut short runs nothing.
+{
 set -euo pipefail
 
 RELEASES="https://github.com/AlphaAvatar/AlphaAvatar/releases/download"
+LATEST="https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download"
+MANIFEST="alphaavatar-linux-x86_64.manifest.json"  # Beside a release's package (build.sh).
+VERSION='^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
 
 die() { echo "Error: $*" >&2; exit 1; }
 
@@ -49,8 +60,9 @@ remove_stage() (
 
 usage() {
   cat <<EOF
-usage: install.sh (--version X.Y.Z | --file PACKAGE | --url URL) [--sha256 HEX]
+usage: install.sh [--version X.Y.Z | --file PACKAGE | --url URL] [--sha256 HEX]
                   [--prefix DIR] [--bin-dir DIR]
+  none of --version, --file, --url: the latest release
   --prefix   program files (default: \$ALPHAAVATAR_INSTALL_DIR or ~/.local/lib/alphaavatar)
   --bin-dir  where the alphaavatar command goes (default: \$ALPHAAVATAR_BIN_DIR or ~/.local/bin)
 EOF
@@ -76,13 +88,14 @@ while [[ $# -gt 0 ]]; do
     *) usage >&2; exit 2 ;;
   esac
 done
-(( (${#version} > 0) + (${#file} > 0) + (${#url} > 0) == 1 )) || { usage >&2; exit 2; }
+(( (${#version} > 0) + (${#file} > 0) + (${#url} > 0) <= 1 )) || { usage >&2; exit 2; }
 if [[ -n "$version" ]]; then
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || die "Invalid version"
+  [[ "$version" =~ $VERSION ]] || die "Invalid version"
   url="$RELEASES/v$version/alphaavatar-$version-linux-x86_64.tar.gz"
 fi
 [[ -z "$sha256" || "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "--sha256 takes 64 hex digits"
-for cmd in tar gzip sha256sum flock realpath mktemp getconf sort grep cut cmp ${url:+curl}; do
+for cmd in tar gzip sha256sum flock realpath mktemp getconf sort grep cut cmp \
+    $([[ -n "$file" ]] || echo curl); do
   command -v "$cmd" >/dev/null 2>&1 || die "Missing command: $cmd"
 done
 [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || die "This package is for Linux x86_64"
@@ -167,13 +180,37 @@ stage="$(calm mktemp -d "$prefix/versions/.install-XXXXXX")"
 calm touch -- "$stage/$mark"
 release
 
+# No source given: the latest release, as its manifest names it, read once. Its package and
+# SHA-256 are that release's, whatever is published meanwhile.
+published=""
+if [[ -z "$version$file$url" ]]; then
+  echo "Finding the latest release"
+  published="$stage/$MANIFEST"
+  curl -fsSL --retry 3 -o "$published" "$LATEST/$MANIFEST" \
+    || die "Cannot download $LATEST/$MANIFEST:" \
+      "the latest release publishes no Linux x86_64 package, or GitHub cannot be reached"
+  text="$(< "$published")" tag=""
+  pattern='"version": *"([^"]+)"'
+  [[ "$text" =~ $pattern ]] && version="${BASH_REMATCH[1]}"
+  pattern='"release": *"([^"]+)"'
+  [[ "$text" =~ $pattern ]] && tag="${BASH_REMATCH[1]}"
+  [[ "$version" =~ $VERSION && "$tag" == "v$version" ]] \
+    || die "The latest release's manifest names no release of AlphaAvatar"
+  echo "The latest release is $tag"
+  url="$RELEASES/$tag/alphaavatar-$version-linux-x86_64.tar.gz"
+fi
+
 # The package is this run's own copy: what is checked is what unpacks and runs, whatever
 # happens to the source meanwhile.
 package="$stage/package.tar.gz"
 if [[ -n "$url" ]]; then
+  if [[ -z "$sha256" ]]; then
+    sha256="$(curl -fsSL --retry 3 "$url.sha256" | cut -d' ' -f1)" || true
+    [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "No SHA-256 at $url.sha256"
+  fi
   echo "Downloading $url"
-  curl -fL --retry 3 $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$package" "$url"
-  [[ -n "$sha256" ]] || sha256="$(curl -fsSL --retry 3 "$url.sha256" | cut -d' ' -f1)"
+  curl -fL --retry 3 $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$package" "$url" \
+    || die "Cannot download $url"
 else
   [[ -f "$file" ]] || die "No package at $file"
   if [[ -z "$sha256" ]]; then
@@ -194,6 +231,8 @@ unpacked=("$stage/tree"/*)
   || die "Not an AlphaAvatar package: expected one top-level directory"
 candidate="${unpacked[0]}"
 manifest="$candidate/share/alphaavatar/manifest.json"
+[[ -z "$published" ]] || cmp -s "$published" "$manifest" \
+  || die "The package of $tag holds another build than the manifest published beside it"
 installed=""
 for dir in "$prefix/versions"/*; do
   [[ -d "$dir" && ! -L "$dir" ]] || continue
@@ -280,7 +319,7 @@ if ! (cd / && [[ "$("$entry" --version)" == "AlphaAvatar $package_version" ]]); 
   die "$entry does not run AlphaAvatar $package_version; the previous version stays current"
 fi
 
-echo "Installed AlphaAvatar $id: $entry -> $prefix/current -> $switch"
+echo "Installed AlphaAvatar $package_version, build $id: $entry -> $prefix/current -> $switch"
 if [[ "$previous" == envs/* && "$switch" != "$previous" ]]; then
   echo "The capabilities \`alphaavatar setup\` installed belong to the previous version."
 fi
@@ -290,3 +329,4 @@ case ":$PATH:" in
   *) echo "Add $bin_dir to PATH to run alphaavatar from any directory, e.g. in ~/.profile:"
      echo "  export PATH=\"$bin_dir:\$PATH\"" ;;
 esac
+}

@@ -1,8 +1,15 @@
 # AlphaAvatar Deployment Guide
 
 Run the native AlphaAvatar Host on a Linux server and connect a browser client through
-LiveKit. Install a tested source revision using the [README](../README.md) before following
-this guide. This development line targets standard CPython 3.13 on Linux. Complete the
+LiveKit. Install a tested source revision before following this guide: a release's tag, set up
+as in the [README](../README.md), rather than the default branch the README clones, which holds
+changes not yet in a release:
+
+```bash
+git clone --branch v<version> --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
+```
+
+This development line targets standard CPython 3.13 on Linux. Complete the
 [Python migration checks](../CONTRIBUTING.md#python-313-development-environment), including
 a newly resolved and reviewed Python 3.13 lockfile, before deploying. Changing package
 metadata alone is not an installation or model-compatibility result.
@@ -68,11 +75,28 @@ installs exactly what a bundle needs, from a catalog in the package with each ar
 version and SHA-256, checks it, then enables it. Neither needs Python, Node or a compiler:
 
 ```bash
-curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v<version>/install.sh
-bash install.sh --version <version>     # or --file <package> for a downloaded CI build
+curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash
 alphaavatar setup                       # a new bundle, asked part by part
 alphaavatar doctor
 ```
+
+Given no source, `install.sh` installs the latest release. The manifest the release publishes
+beside its package names the release once; the package and its `.sha256` come from that
+release, the package must hold that manifest, and the run prints the version and build it
+installed. A latest release without these files is an error, never a step back to an older
+release: this entry needs a release that publishes them, as releases do from v0.6.9 on. Bash
+reads the whole script before it runs any of it, so a download cut short runs nothing. One
+source at most:
+
+```bash
+curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v<version>/install.sh
+bash install.sh --version <version>     # that release
+bash install.sh --file <package>        # a downloaded package, such as a CI build, its .sha256 beside it
+bash install.sh --url <url>             # from a mirror, its .sha256 beside it
+```
+
+`--sha256 <hex>` gives the package's SHA-256 in place of its `.sha256` file; piped, the
+installer takes its arguments after `bash -s --`.
 
 Asked, setup starts from `config init`'s reference configuration: voice, vision, memory and
 persona, with turn taking, addressing, face and speaker models on this machine (about 515 MB

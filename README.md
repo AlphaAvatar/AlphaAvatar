@@ -278,20 +278,24 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 <h3>🖥️ Server</h3>
 
-Linux x86_64 with glibc 2.28 or newer:
+Linux x86_64 with glibc 2.28 or newer, the latest release:
 
 ```bash
-curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v0.6.9/install.sh
-bash install.sh --version 0.6.9
+curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash
 alphaavatar setup    # choose what the Avatar runs with; or config init <bundle> --avatar-id <id>, then setup <bundle>
 alphaavatar doctor   # static checks, then the runtime diagnosis in rounds, once you agree to it
 alphaavatar start    # runs the bundle setup enabled
 ```
 
-From source, for development:
+The installer needs Bash, and the latest release to publish its Linux files, as releases do from
+v0.6.9 on. A given version, a downloaded package or a mirror: see
+[DEPLOY.md](docs/DEPLOY.md#or-install-the-linux-package-then-choose-capabilities).
+
+From source, for development, the default branch: it holds changes not yet released, while the
+package above is the latest release. To check out a release's source, see [DEPLOY.md](docs/DEPLOY.md).
 
 ```bash
-git clone --branch v0.6.9 --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
+git clone --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
 cd AlphaAvatar && uv sync --all-packages --locked && source .venv/bin/activate
 cp .env.template .env.dev    # then fill in the credentials
 ENV_FILE=.env.dev alphaavatar config init my-avatar --avatar-id my-avatar
