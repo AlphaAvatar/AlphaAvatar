@@ -1,16 +1,16 @@
 # Memory 修复：一轮未归属导致整批记忆只留在 context（KD-49）— Claude Code 日志
 
-- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批）；日期为 CST。
+- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批），第三批基线 `90883e9f`（第二批）；日期为 CST。
 - 依据：用户 2026-11-21 的两次真实对话，记忆全部只写进了 `contexts/`；定位后登记为 [KD-49](../../../bugs-zh.md)，用户决定逐步修复。
-- 范围：第一批只加诊断，并做 Router 侧的改名和删减，不改行为；第二批按用户的方案实现。改动留在工作区，由用户提交。
+- 范围：第一批只加诊断，并做 Router 侧的改名和删减，不改行为；第二批按用户的方案实现；第三批整理 Engine 的准入，不改行为。改动留在工作区，由用户提交。
 
 ## 批次总览
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | 第一批：诊断 | 每段关联结束、每轮准入、Memory 整批降级各记一行日志；Router 侧 `actors` 改为 `input_devices`，删掉判定上没人读的字段和从未被读取的 `InteractionAddressing` | 2026-11-21 | `b2b4af8b` | `be32fbda` | 已提交 |
-| 第二批：使用时读取参与者 | Turn 不在准入时固定参与者，`ParticipantRuntime.of_turn()` 在使用时读取；段关联保留整个会话；Memory、Persona 改为使用时读取，profiler 在会话结束时分配 | 2026-11-21 | `be32fbda` | — | 待审查 |
-| 第三批：整理准入 | Engine `_admit_decision` 的重复拒绝分支与重复来源检查 | — | — | — | 未开始 |
+| 第二批：使用时读取参与者 | Turn 不在准入时固定参与者，`ParticipantRuntime.of_turn()` 在使用时读取；段关联保留整个会话；Memory、Persona 改为使用时读取，profiler 在会话结束时分配 | 2026-11-21 | `be32fbda` | `90883e9f` | 已提交 |
+| 第三批：整理准入 | Engine `_admit_decision` 的重复拒绝分支并为一处，去掉重复的来源检查；先补准入各分支的测试 | 2026-11-22 | `90883e9f` | — | 待审查 |
 
 ## 1. 问题
 
@@ -175,4 +175,71 @@
 
 - 没有用真实通话验证。下次通话后，可以用第一批的日志确认空说话人属于"晚到"还是"根本没有关联"，前者此后应进入用户的长期记忆。
 - 没有覆盖的部分，见 KD-49：段没有声纹、没匹配上跟踪或推理失败时仍未归属；一批里含未归属输入时整批降级的规则未改。
-- 第三批：整理 Engine `_admit_decision`。
+- 第三批：整理 Engine `_admit_decision`，见第 8 节。
+
+## 8. 第三批：整理准入（基线 `90883e9f`）
+
+### 8.1 范围
+
+- 不改行为。各种判定的检查顺序、每种原因记下的 trace（结果、原因、计数）、日志行，以及输入被标成已关闭的方式，都和原来一样。
+- 只改 `engine.py` 里准入的这一段和 `_submit`。打断判定（`_handle_decision`）没有动。
+- 拿原代码做对照时，从仓库外加载原版 `engine.py`（pytest 插件在导入时替换模块），不在工作区里替换文件。
+
+### 8.2 先补测试
+
+- 改动前，我用 `sys.monitoring` 记录了全量测试执行到的 `engine.py` 行（907 passed，319.82 s）。结果是：`_admit_decision` 的所有拒绝分支，以及整条直接输入路径（`submit_input`、`_admit_input`），没有一个测试执行到。
+- 所以先新增 `avatar-host/tests/test_turn_admission.py`。它在 configured chain 上先完成一句真实对话，再像轮次判断那样，把这一轮的语音和转写作为另一个输入发布判定：
+
+| 测试 | 覆盖 |
+|---|---|
+| `test_a_stale_decision_is_ignored_and_closes_its_input` × 5 | 过了截止时间、截止时间不是整数、换了 context、语音来源已退役、语音开始于之后一条打字消息提交之前：结果为 ignored，原因分别对应，计数为 0，不冻结 trace，没有新的 Turn；再发一次同一输入，原因为 `input_terminal` |
+| `test_a_decision_a_later_turn_was_cut_off_after_is_skipped_as_committed` | 判定发布后、Engine 读到前，打字消息已提交，截止覆盖了这条判定：原因为 `superseded`，写 `Skipped superseded turn decision` 日志，之后再发为 `input_terminal` |
+| `test_a_committed_input_is_never_admitted_again` | 已提交的输入再发一次：`input_terminal` |
+| `test_a_decision_without_usable_evidence_is_rejected_and_freezes_the_trace` × 6 | 证据丢了一部分（2/1）、没有证据（0/0）：`evidence_unavailable`；只有语音、只有带段的不确定性通知、通知不针对任何段、通知针对别的段：`no_usable_input`。断言结果为 rejected、计数、trace 被冻结、日志行，以及之后再发为 `input_terminal` |
+| `test_untranscribed_speech_is_admitted_on_its_notices_only_while_it_can_be_answered` × 8 | 只有"没转写出来"的通知时：对 Avatar 说、可能对 Avatar 说、同段的其他通知、不针对段的转写缺失通知，都会提交为 `SYSTEM` 轮；对别人说、有人正在说话、Avatar 没有输出方式、participants 已不认这个来源，都是 `notice_superseded` |
+| `test_a_decision_with_words_is_admitted_as_its_mode_heard_it` × 3 | 有文字的判定按轮次模式得出模态：仅音频为 `AUDIO`，仅视觉为 `IMAGE`，音视频为 `MULTIMODAL` |
+| `test_a_new_turn_stops_the_answer_still_under_way` | 上一轮的回复还在输出时提交新的一轮：上一轮的输出以 `superseded` 被打断 |
+| `test_an_interrupt_stops_the_answer_unless_its_input_was_committed` | 被拒绝的输入（标为 CANCEL）之后的打断判定仍会打断当前回复；被后一轮覆盖的输入（标为 COMMIT）的打断被忽略 |
+
+- 前 24 个在原代码上先通过（前 21 个连续跑三次），然后才改代码。
+- 后 2 个是变异测试发现缺口后补的，也在原代码上通过。
+- 26 个在原代码和改后的代码上都通过。
+
+### 8.3 改动
+
+| 位置 | 改动 |
+|---|---|
+| 拒绝分支 | 8 处"标记关闭 → 记 trace → 返回"并为 `_refuse`：标记为 CANCEL，按 ignored 或 rejected 记 trace，rejected 时冻结 trace。每个分支从 3～10 行变为 2 行，`_admission_expired` 也改用它 |
+| 只有通知的轮 | 原来是一大段嵌套条件，拆成两个函数：`_untranscribed`（静态方法，判断这段输入是不是只有"没转写出来"的通知）和 `_answerable`（判断这一轮现在还能不能回应） |
+| 重复的来源检查 | `_answerable` 只检查 participants 的来源。perception 的来源前面已经检查过（`speech_source_retired`），两处之间没有 `await`，那半个条件恒为真，所以删掉 |
+| 常量 | 视觉输入的种类、轮次模式到模态的映射提成模块常量 `_VISUAL_INPUTS`、`_MODALITIES` |
+| `_submit` | 两处手写的"先取消当前回复，再打断输出"，改为调用已有的 `_interrupt_foreground`，二者等价 |
+| 其他 | 分区注释的错字 `Turn Actio` 改为 `Turn Action`；只用于类型标注的 `TurnNotice` 放进 `TYPE_CHECKING` |
+
+- `_admit_decision` 从 184 行减到 121 行。engine.py 从 796 行减到 791 行，因为新增的三个辅助函数和两个常量约占 55 行。
+- 用户审查时在 `_admit_decision` 里加了两个空行：`observations = tuple(` 前一个，`started_at` 前一个。
+
+### 8.4 保留原样的部分
+
+- **第二次截止时间检查**：两次检查之间没有 `await`，但时钟是真实时间。删掉它，在极少数情况下就会在截止之后才提交，这算行为变化。测试也无法稳定地构造这种情况。
+- **日志**：`evidence_unavailable` 的 WARNING、`no_usable_input` 的 INFO 和 `Skipped superseded` 都原样保留。我之前说这些日志"和 trace 重复"，这不准确：input trace 只保存在内存里，供 Doctor 读取，不写日志。
+- **被后一轮覆盖的判定标为 COMMIT，而不是 CANCEL**：之后同一输入的打断会被忽略。这一支保持原样，没有并进 `_refuse`。
+- **打断判定的 context 检查**：写法和准入的相同，但没有合并。它不在这批的范围内，打断路径也没有测试。
+
+### 8.5 验证
+
+- **变异测试**：共 26 个，最终全部被发现，跑完都已恢复。
+  - 涉及的部分：`_refuse` 的结果、计数和关闭标记；截止时间检查；`_answerable` 的四个条件；`_untranscribed` 的四条规则；模态映射；context、来源退役、打字消息、已覆盖判定各分支；日志格式；`_submit` 打断上一轮。
+  - 第一轮有两个存活：
+    - "拒绝时标成 COMMIT"：CANCEL 和 COMMIT 只在之后的打断判定上有区别，而 Engine 的打断路径原来没有测试；
+    - "新的一轮不打断上一轮"：host、agents、foundation 共 626 个测试都没有发现。
+  - 这两种行为原来就没有测试覆盖。补了两个打断用例后，再跑时都被对应的用例发现。
+- **离线全量**：按 AGENTS.md 第 19 节的方式运行，933 passed（335.38 s；原 907 加新增 26），测试前后工作区一致。
+- **仓库规范**：都通过，包括 `ruff check .`、`ruff format --check .`（792 个文件）、`check_workspace.py`、`git diff --check`、`pre-commit validate-config`，以及改动文件的 pre-commit。
+- **没有覆盖的**：
+  - 判定的输入里带图片或视频帧的情况（`_VISUAL_INPUTS`）：configured chain 没开视觉，没有用例；
+  - 第二次截止时间检查：没法稳定构造；
+  - 打断判定自身的 context 检查。
+- **证据**：
+  - 改动前的行覆盖、第一轮变异和改动前的全量：会话临时目录 `admission/` 下的 `lines-before.json`、`mutate.py`、`mutate.txt`、`full-before.txt`；
+  - 从仓库外加载原版 Engine 的插件、两个存活变异的重跑结果、改后的全量与工作区对比：`~/alphaavatar-kd49-check/`。

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
     from alphaavatar.core.perception.schemas import PerceptionEvent
     from alphaavatar.core.session import SessionRuntime
-    from alphaavatar.core.turn.schemas import TurnSnapshot
+    from alphaavatar.core.turn.schemas import TurnNotice, TurnSnapshot
 
     from .loop import LoopHandle
     from .loop.base import ToolAuthorizer
@@ -49,6 +49,14 @@ if TYPE_CHECKING:
 _UNCERTAINTY_NOTICES = frozenset(
     ("router.speech_completion_uncertain", "router.addressing_uncertain")
 )
+_VISUAL_INPUTS = frozenset(
+    (ObservationKind.IMAGE_INPUT, ObservationKind.VIDEO_FRAME, ObservationKind.SCREEN_FRAME)
+)
+# A Turn's modality by its turn-taking mode; any other mode is multimodal.
+_MODALITIES = {
+    TurnTakingMode.AUDIO_ONLY: TurnInputModality.AUDIO,
+    TurnTakingMode.VISUAL_ONLY: TurnInputModality.IMAGE,
+}
 
 
 @dataclass(slots=True)
@@ -158,6 +166,23 @@ class AvatarEngine(LifecycleComponent):
             and observation.payload.text.strip()
         ]
         return " ".join(parts) or None
+
+    @staticmethod
+    def _untranscribed(
+        observations: tuple[EnvObservation, ...], notices: tuple[TurnNotice, ...]
+    ) -> bool:
+        """Whether the input is speech its notices say no transcript came from."""
+        segments = {
+            item.segment.segment_id
+            for item in observations
+            if item.kind == ObservationKind.SPEECH_SEGMENT and item.segment is not None
+        }
+        return bool(segments) and any(
+            notice.code not in _UNCERTAINTY_NOTICES
+            and (notice.code == "voice.transcription_unavailable" or notice.segment_ids)
+            and set(notice.segment_ids) <= segments
+            for notice in notices
+        )
 
     @staticmethod
     def _observe_close(task: asyncio.Task[None]) -> None:
@@ -273,7 +298,7 @@ class AvatarEngine(LifecycleComponent):
             )
         # Loop owns records and FINISHED facts. Never reconstruct either from this result.
 
-    """Turn Actio - Interrupt"""
+    """Turn Action - Interrupt"""
 
     async def _interrupt_foreground(self, foreground: _Foreground | None, reason: str) -> None:
         self._cancel_foreground(foreground, reason)
@@ -300,9 +325,7 @@ class AvatarEngine(LifecycleComponent):
             _Foreground(snapshot.turn_id, context_id, snapshot.cutoff.sequence),
         )
         self._foreground = foreground
-        self._cancel_foreground(previous, "superseded")
-        if previous is not None:
-            await self._runtime.output.interrupt(turn_id=previous.turn_id, reason="superseded")
+        await self._interrupt_foreground(previous, "superseded")
 
         await self._runtime.output.start_turn(turn_id=snapshot.turn_id)
         if foreground.interrupted or self._close_task is not None:
@@ -327,10 +350,7 @@ class AvatarEngine(LifecycleComponent):
 
         # A different Loop implementation may suspend while accepting the request.
         if foreground.interrupted or self._close_task is not None:
-            self._cancel_foreground(foreground, "interrupted_during_admission")
-            await self._runtime.output.interrupt(
-                turn_id=foreground.turn_id, reason="interrupted_during_admission"
-            )
+            await self._interrupt_foreground(foreground, "interrupted_during_admission")
 
         task = asyncio.create_task(self._watch(handle), name=f"avatar_run:{handle.identity.run_id}")
         self._watchers.add(task)
@@ -393,6 +413,28 @@ class AvatarEngine(LifecycleComponent):
         if outcome == "rejected":
             trace.freeze(reason=reason)
 
+    def _refuse(
+        self,
+        event: PerceptionEvent,
+        decision: TurnTakingDecision,
+        flags: set[TurnTakingAction],
+        reason: str,
+        *,
+        rejected: bool = False,
+        evidence: tuple[EnvObservation | None, ...] = (),
+    ) -> None:
+        """Close the input this decision cannot admit. A stale decision is ignored; one whose
+        evidence is lost or says nothing is rejected, which freezes the trace."""
+        flags.add(TurnTakingAction.CANCEL)
+        self._trace_admission(
+            event,
+            decision,
+            outcome="rejected" if rejected else "ignored",
+            reason=reason,
+            evidence_count=len(evidence),
+            missing_count=sum(value is None for value in evidence),
+        )
+
     def _admission_expired(
         self, event: PerceptionEvent, decision: TurnTakingDecision, flags: set[TurnTakingAction]
     ) -> bool:
@@ -401,33 +443,48 @@ class AvatarEngine(LifecycleComponent):
             return False
         if type(deadline) is int and self._runtime.clock.now().monotonic_ns < deadline:
             return False
-        flags.add(TurnTakingAction.CANCEL)
-        self._trace_admission(
-            event,
-            decision,
-            outcome="ignored",
-            reason="admission_expired" if type(deadline) is int else "admission_deadline_invalid",
-        )
+        reason = "admission_expired" if type(deadline) is int else "admission_deadline_invalid"
+        self._refuse(event, decision, flags, reason)
         return True
+
+    def _answerable(
+        self, decision: TurnTakingDecision, observations: tuple[EnvObservation, ...]
+    ) -> bool:
+        """Whether a Turn of notices alone can still be answered: the Avatar has output, no one
+        is speaking, the speech was or may have been for the Avatar, and its source is still the
+        participants' current one. Admission has already refused a retired speech source."""
+        interaction = self._runtime.state.interaction_method
+        return (
+            (interaction.text_output or interaction.audio_output)
+            and not self._runtime.perception.has_active_speech
+            and (
+                "router.addressing_uncertain" in {notice.code for notice in decision.system_notices}
+                or any(ref.kind == InteractionEntityKind.AVATAR for ref in decision.addressees)
+            )
+            and all(
+                self._runtime.participants.source_is_current(item.segment.source)
+                for item in observations
+                if item.kind == ObservationKind.SPEECH_SEGMENT and item.segment is not None
+            )
+        )
 
     async def _admit_decision(self, event: PerceptionEvent, decision: TurnTakingDecision) -> None:
         async with self._admission_lock:
             if self._close_task is not None:
                 raise TurnAdmissionRejected("Engine closed before Turn admission")
 
+            # A stale decision: its input is closed, its deadline or context has passed, or a
+            # later Turn covers it already.
             flags = self._input_flags(decision.input_id)
             if flags.intersection((TurnTakingAction.COMMIT, TurnTakingAction.CANCEL)):
                 self._trace_admission(event, decision, outcome="ignored", reason="input_terminal")
                 return
             if self._admission_expired(event, decision, flags):
                 return
-
             context_id = event.annotation.data.get("context_id", self._runtime.state.context_id)
             if self._runtime.state.context_id != context_id:
-                flags.add(TurnTakingAction.CANCEL)
-                self._trace_admission(event, decision, outcome="ignored", reason="context_changed")
+                self._refuse(event, decision, flags, "context_changed")
                 return
-
             latest = self._runtime.turn.latest
             if latest is not None and event.sequence <= latest.cutoff.sequence:
                 flags.add(TurnTakingAction.COMMIT)
@@ -435,44 +492,35 @@ class AvatarEngine(LifecycleComponent):
                 self._trace_admission(event, decision, outcome="ignored", reason="superseded")
                 return
 
-            observations = tuple(
+            # Its evidence. This is a proposed Turn, not an admitted one: reject the proposed
+            # input; never substitute newer evidence or kill a healthy session after retention loss.
+            evidence = tuple(
                 self._runtime.perception.timeline.get_observation(observation_id=value)
                 for value in dict.fromkeys(decision.input_observation_ids)
             )
-            if not observations or any(value is None for value in observations):
-                # This is a proposed Turn, not an admitted one. Reject the proposed input;
-                # never substitute newer evidence or kill a healthy session after retention loss.
-                flags.add(TurnTakingAction.CANCEL)
+            if not evidence or any(value is None for value in evidence):
                 logger.warning(
                     "Turn admission rejected input_id=%s reason=evidence_unavailable "
                     "decision_sequence=%s evidence_count=%s missing_count=%s",
                     decision.input_id,
                     event.sequence,
-                    len(observations),
-                    sum(value is None for value in observations),
+                    len(evidence),
+                    sum(value is None for value in evidence),
                 )
-                self._trace_admission(
-                    event,
-                    decision,
-                    outcome="rejected",
-                    reason="evidence_unavailable",
-                    evidence_count=len(observations),
-                    missing_count=sum(value is None for value in observations),
+                self._refuse(
+                    event, decision, flags, "evidence_unavailable", rejected=True, evidence=evidence
                 )
                 return
 
             observations = tuple(
-                sorted(observations, key=lambda value: value.time_range.start.monotonic_ns)
+                sorted(evidence, key=lambda value: value.time_range.start.monotonic_ns)
             )
             if any(
                 item.segment is not None
                 and not self._runtime.perception.speech_source_is_current(item.segment.source)
                 for item in observations
             ):
-                flags.add(TurnTakingAction.CANCEL)
-                self._trace_admission(
-                    event, decision, outcome="ignored", reason="speech_source_retired"
-                )
+                self._refuse(event, decision, flags, "speech_source_retired")
                 return
 
             started_at = observations[0].time_range.start
@@ -481,85 +529,30 @@ class AvatarEngine(LifecycleComponent):
                 and latest.metadata.get("source") == "avatar.engine.direct"
                 and started_at.monotonic_ns < latest.committed_at.monotonic_ns
             ):
-                flags.add(TurnTakingAction.CANCEL)
-                self._trace_admission(event, decision, outcome="ignored", reason="superseded")
+                self._refuse(event, decision, flags, "superseded")
                 return
 
-            notices = decision.system_notices
+            # What it says: words or pictures, or else the notices of speech no transcript came
+            # from, while those can still be answered.
             text = self._text(observations)
             has_input = text is not None or any(
-                value.kind
-                in (
-                    ObservationKind.IMAGE_INPUT,
-                    ObservationKind.VIDEO_FRAME,
-                    ObservationKind.SCREEN_FRAME,
-                )
-                for value in observations
+                item.kind in _VISUAL_INPUTS for item in observations
             )
-            speech_segments = {
-                item.segment.segment_id
-                for item in observations
-                if item.kind == ObservationKind.SPEECH_SEGMENT and item.segment is not None
-            }
-            transcription_missing = any(
-                notice.code not in _UNCERTAINTY_NOTICES
-                and (notice.code == "voice.transcription_unavailable" or notice.segment_ids)
-                and set(notice.segment_ids) <= speech_segments
-                for notice in notices
+            notice_only = not has_input and self._untranscribed(
+                observations, decision.system_notices
             )
-            notice_only = not has_input and bool(speech_segments) and transcription_missing
-            if notice_only:
-                perception = self._runtime.perception
-                interaction = self._runtime.state.interaction_method
-                if (
-                    not (interaction.text_output or interaction.audio_output)
-                    or perception.has_active_speech
-                    or (
-                        not any(notice.code == "router.addressing_uncertain" for notice in notices)
-                        and not any(
-                            ref.kind == InteractionEntityKind.AVATAR for ref in decision.addressees
-                        )
-                    )
-                    or any(
-                        item.kind == ObservationKind.SPEECH_SEGMENT
-                        and item.segment is not None
-                        and not (
-                            perception.speech_source_is_current(item.segment.source)
-                            and self._runtime.participants.source_is_current(item.segment.source)
-                        )
-                        for item in observations
-                    )
-                ):
-                    flags.add(TurnTakingAction.CANCEL)
-                    self._trace_admission(
-                        event, decision, outcome="ignored", reason="notice_superseded"
-                    )
-                    return
-
-            if not notice_only and not has_input:
-                flags.add(TurnTakingAction.CANCEL)
+            if notice_only and not self._answerable(decision, observations):
+                self._refuse(event, decision, flags, "notice_superseded")
+                return
+            if not (has_input or notice_only):
                 logger.info(
                     "Turn admission rejected input_id=%s reason=no_usable_input", decision.input_id
                 )
-                self._trace_admission(
-                    event,
-                    decision,
-                    outcome="rejected",
-                    reason="no_usable_input",
-                    evidence_count=len(observations),
+                self._refuse(
+                    event, decision, flags, "no_usable_input", rejected=True, evidence=observations
                 )
                 return
 
-            mode = decision.turn_mode
-            modality = (
-                TurnInputModality.SYSTEM
-                if notice_only
-                else TurnInputModality.AUDIO
-                if mode == TurnTakingMode.AUDIO_ONLY
-                else TurnInputModality.IMAGE
-                if mode == TurnTakingMode.VISUAL_ONLY
-                else TurnInputModality.MULTIMODAL
-            )
             addressees = tuple(self._entity(ref) for ref in decision.addressees)
             if self._admission_expired(event, decision, flags):
                 return
@@ -567,7 +560,9 @@ class AvatarEngine(LifecycleComponent):
             flags.add(TurnTakingAction.COMMIT)
             snapshot = self._runtime.turn.commit_event_input(
                 input_id=decision.input_id,
-                modality=modality,
+                modality=TurnInputModality.SYSTEM
+                if notice_only
+                else _MODALITIES.get(decision.turn_mode, TurnInputModality.MULTIMODAL),
                 text=text,
                 started_at=started_at,
                 committed_at=event.time_range.end,
@@ -582,7 +577,7 @@ class AvatarEngine(LifecycleComponent):
                     "decision_annotation_id": event.annotation.annotation_id,
                     "reason": decision.reason,
                 },
-                system_notices=notices,
+                system_notices=decision.system_notices,
             )
             self._log_participants(snapshot)
             self._trace_admission(
