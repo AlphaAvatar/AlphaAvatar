@@ -44,7 +44,6 @@ class FaceTracks:
         self.margin = margin
 
         self._tracks: dict[EntityId, FaceTrack] = {}
-        self._retired: list[PerceptionEntityRef] = []
 
     @staticmethod
     def _seen(
@@ -109,10 +108,5 @@ class FaceTracks:
 
         return tuple(result)
 
-    def drain_retired(self) -> tuple[PerceptionEntityRef, ...]:
-        retired, self._retired = tuple(self._retired), []
-        return retired
-
     def clear(self) -> None:
-        self._retired.extend(track.entity for track in self._tracks.values())
         self._tracks.clear()

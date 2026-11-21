@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import pathlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 
 from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
@@ -45,6 +45,16 @@ from .messages import MemoryMessage, memory_message, same_message
 from .schemas import MemoryIdentitySnapshot
 
 type MemoryContextItem = MemoryMessage | TurnSnapshot
+
+
+def _identity(
+    participant_id: str | None, user_id: str | None, identity_revision: int | None
+) -> TurnEntityRef:
+    """An input's participant by its identity alone: inputs from one person are one entry,
+    whatever device or entity named them, and all anonymous ones another."""
+    return TurnEntityRef(
+        participant_id=participant_id, user_id=user_id, identity_revision=identity_revision
+    )
 
 
 def _deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
@@ -243,14 +253,25 @@ class MemoryContextState:
         self._session_sequence = snapshot.sequence
 
     def capture_identity(
-        self, messages: Sequence[MemoryContextItem] | None = None
+        self,
+        messages: Sequence[MemoryContextItem] | None = None,
+        *,
+        of_turn: Callable[[TurnSnapshot], tuple[TurnEntityRef, ...]] | None = None,
     ) -> MemoryIdentitySnapshot:
-        participants = tuple(self._participants.values())
+        """Whom the messages are from: each user input by its Turn's participants as they
+        stand now (``of_turn``), each model or tool record by the identity it was admitted
+        with. Without messages, the context's participants."""
         owner_refs, participant_refs = self.owner_refs, self.participant_refs
-        actors: dict[TurnEntityRef, None] = {}
-        unattributed = messages is None and any(p.user_id is None for p in participants)
-        if messages is not None:
-            selected: dict[str, Participant] = {}
+        if messages is None:
+            found = {
+                _identity(p.participant_id, p.user_id, p.identity_revision): None
+                for p in self._participants.values()
+            }
+            unattributed = any(p.user_id is None for p in self._participants.values())
+        else:
+            if of_turn is None:
+                raise ValueError("A batch's participants are read from its Turns")
+            found, selected, unattributed = {}, {}, False
             for item in messages:
                 turn = (
                     item
@@ -259,63 +280,60 @@ class MemoryContextState:
                 )
                 basis = None if isinstance(item, TurnSnapshot) else self._message_bases.get(item.id)
                 if basis is not None:
-                    item_actors = tuple(
-                        TurnEntityRef(
-                            participant_id=ref.participant_id,
-                            user_id=ref.user_id,
-                            identity_revision=ref.identity_revision,
-                        )
+                    entries = tuple(
+                        _identity(ref.participant_id, ref.user_id, ref.identity_revision)
                         for ref in basis.participants
                     )
-                else:
-                    item_actors = (
-                        turn.actors
-                        if turn is not None and turn.modality is not TurnInputModality.SYSTEM
-                        else ()
+                elif turn is not None and turn.modality is not TurnInputModality.SYSTEM:
+                    entries = tuple(
+                        _identity(entry.participant_id, entry.user_id, entry.identity_revision)
+                        for entry in of_turn(turn)
                     )
-                if not item_actors:
+                else:
+                    entries = ()
+                if not entries:
                     unattributed = True
                     continue
 
-                for actor in item_actors:
-                    actors[actor] = None
-                    participant = self._participants.get(actor.participant_id)
+                for entry in entries:
+                    found[entry] = None
+                    participant = self._participants.get(entry.participant_id)
                     if (
                         participant is None
-                        or actor.user_id != participant.user_id
-                        or actor.identity_revision != participant.identity_revision
+                        or entry.user_id != participant.user_id
+                        or entry.identity_revision != participant.identity_revision
                     ):
                         unattributed = True
                     else:
                         selected[participant.participant_id] = participant
 
-            participants = tuple(selected.values())
             # Extraction does not assign each patch to a particular speaker. A mixed or
             # uncertain batch stays context-scoped rather than publishing it to every user.
             unattributed = (
                 unattributed
-                or any(p.user_id is None for p in participants)
-                or len({p.user_id for p in participants}) != 1
+                or any(p.user_id is None for p in selected.values())
+                or len({p.user_id for p in selected.values()}) != 1
             )
             owner_refs = [ref for ref in self._owner_refs if ref.kind is not MemoryOwnerKind.USER]
             owner_refs.extend(
-                MemoryOwnerRef.user(p.user_id) for p in participants if p.user_id is not None
+                MemoryOwnerRef.user(p.user_id) for p in selected.values() if p.user_id is not None
             )
             participant_refs = [
                 ref for ref in self._participant_refs if ref.kind is not MemoryParticipantKind.USER
             ]
             participant_refs.extend(
-                MemoryParticipantRef.user(p.user_id) for p in participants if p.user_id is not None
+                MemoryParticipantRef.user(p.user_id)
+                for p in selected.values()
+                if p.user_id is not None
             )
 
         return MemoryIdentitySnapshot(
             sequence=self._session_sequence,
-            participants=participants,
+            participants=tuple(found),
             owner_refs=tuple(ref.model_copy(deep=True) for ref in deduplicate_refs(owner_refs)),
             participant_refs=tuple(
                 ref.model_copy(deep=True) for ref in deduplicate_refs(participant_refs)
             ),
-            actors=tuple(actors),
             unattributed=unattributed,
         )
 

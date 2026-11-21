@@ -38,7 +38,7 @@ from alphaavatar.agents.memory.schemas import (
     MemorySearchHit,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.session import Participant
+from alphaavatar.core.turn.schemas import TurnEntityRef
 
 from ..namespace import NAMESPACE
 from .export import MemoryExportSink
@@ -113,15 +113,22 @@ class MemoryStore:
     def _scope_keys(context: MemoryContextRef) -> list[str]:
         return list(MemoryScope.applicable_keys(context))
 
-    def _read_owners(
-        self, owners: list[MemoryOwnerRef], participants: tuple[Participant, ...]
-    ) -> list[MemoryOwnerRef]:
-        users = {
-            participant.user_id
-            for participant in participants
-            if participant.user_id is not None
-            and self._runtime.participants.accepts_identity(participant)
+    def _users(self, participants: tuple[TurnEntityRef, ...], *, current: bool = True) -> set[str]:
+        """The users the entries name with an accepted identity: the current one, or for a
+        write, the one it was captured with."""
+        runtime = self._runtime.participants
+        return {
+            identity.user_id
+            for entry in participants
+            if (identity := runtime.identity_of(entry)) is not None
+            and identity.user_id is not None
+            and runtime.accepts_identity(identity, current=current)
         }
+
+    def _read_owners(
+        self, owners: list[MemoryOwnerRef], participants: tuple[TurnEntityRef, ...]
+    ) -> list[MemoryOwnerRef]:
+        users = self._users(participants)
         return [
             ref.model_copy(deep=True)
             for ref in owners
@@ -129,7 +136,7 @@ class MemoryStore:
         ]
 
     def _readable_items(
-        self, items: list[MemoryItem], participants: tuple[Participant, ...]
+        self, items: list[MemoryItem], participants: tuple[TurnEntityRef, ...]
     ) -> list[MemoryItem]:
         return [item for item in items if self._read_owners(item.owner_refs, participants)]
 
@@ -161,7 +168,7 @@ class MemoryStore:
         memory_type: MemoryType | None = None,
         timeout: float = 3.0,
         trace_id: str | None = None,
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[MemoryItem]:
         owner_refs = self._read_owners(owner_refs, participants)
         if top_k <= 0 or not context_str.strip() or not owner_refs:
@@ -236,7 +243,7 @@ class MemoryStore:
         node_type: str | None = None,
         top_k: int = 50,
         timeout: float = 3.0,
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[MemoryItem]:
         owner_refs = self._read_owners(owner_refs, participants)
         if top_k <= 0 or not owner_refs:
@@ -277,7 +284,7 @@ class MemoryStore:
         kind: MemoryKind | None = None,
         top_k: int,
         timeout: float = 5.0,
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[list[MemorySearchHit]]:
         owner_refs = self._read_owners(owner_refs, participants)
         if not texts:
@@ -332,16 +339,11 @@ class MemoryStore:
         processor: str,
         idempotency_key: str,
         checkpoint: MemoryCheckpointAdvance | None = None,
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> MemoryCommitResult:
-        # A commit owns its accepted identity snapshot even if another Turn rebinds the actor.
+        # A commit owns its accepted identity snapshot even if a later Turn rebinds the person.
         items = [item.model_copy(deep=True) for item in items]
-        users = {
-            participant.user_id
-            for participant in participants
-            if participant.user_id is not None
-            and self._runtime.participants.accepts_identity(participant, current=False)
-        }
+        users = self._users(participants, current=False)
         if any(
             ref.kind is MemoryOwnerKind.USER and ref.id not in users
             for item in items
@@ -363,7 +365,7 @@ class MemoryStore:
         return result
 
     async def get_many(
-        self, memory_ids: list[str], *, participants: tuple[Participant, ...] = ()
+        self, memory_ids: list[str], *, participants: tuple[TurnEntityRef, ...] = ()
     ) -> list[MemoryItem]:
         return self._readable_items(await self._backend.get_many(memory_ids), participants)
 
@@ -373,7 +375,7 @@ class MemoryStore:
         *,
         owner_refs: list[MemoryOwnerRef],
         context: MemoryContextRef,
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[MemoryItem]:
         owner_refs = self._read_owners(owner_refs, participants)
         if not owner_refs:
@@ -387,7 +389,7 @@ class MemoryStore:
         *,
         owner_refs: list[MemoryOwnerRef],
         context: MemoryContextRef,
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[MemoryItem]:
         owner_refs = self._read_owners(owner_refs, participants)
         if not owner_refs:
@@ -405,7 +407,7 @@ class MemoryStore:
         memory_type: MemoryType | None = None,
         kind: MemoryKind | None = None,
         limit: int = 100,
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[MemoryItem]:
         owner_refs = self._read_owners(owner_refs, participants)
         if not owner_refs:

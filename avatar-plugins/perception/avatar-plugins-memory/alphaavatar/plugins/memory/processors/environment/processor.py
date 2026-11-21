@@ -203,8 +203,8 @@ class EnvironmentProcessor(MemoryProcessor):
             context_state=state,
             initial_cutoff=initial_cutoff,
             process=self._process_batch,
-            render_messages=lambda messages: (
-                MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
+            render_messages=lambda messages: MemoryPluginsTemplate.apply_update_template(
+                messages, state.cache_type, of_turn=self.runtime.participants.of_turn
             ),
             include_audio=self._config.include_audio,
             config=self._config.scheduler,

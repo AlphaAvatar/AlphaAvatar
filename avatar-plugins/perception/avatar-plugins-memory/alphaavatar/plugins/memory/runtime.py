@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pathlib
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
 from alphaavatar.agents.avatar.provider.records import MODEL_RECORD_SCHEMA
@@ -44,7 +44,7 @@ from alphaavatar.core.session import Participant
 from alphaavatar.core.session.schemas import IdentityBasis
 from alphaavatar.core.turn import TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
-from alphaavatar.core.turn.schemas import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
 
 from .processors.base import MemoryProcessor
 from .schemas import MemoryIdentitySnapshot
@@ -141,8 +141,8 @@ class MemoryRuntime(MemoryBase):
         if context_id is None:
             return ""
         state = self.context_state(context_id)
-        current = self._runtime.participants.project_turn(snapshot)
-        return self._render_content(state.capture_identity([current]), state.context)
+        identity = state.capture_identity([snapshot], of_turn=self._runtime.participants.of_turn)
+        return self._render_content(identity, state.context)
 
     def visible_items(
         self,
@@ -151,14 +151,9 @@ class MemoryRuntime(MemoryBase):
         identity: MemoryIdentitySnapshot | None = None,
         context: MemoryContextRef | None = None,
     ) -> list[MemoryItem]:
-        users = {
-            participant.user_id
-            for participant in (
-                () if identity is None or identity.unattributed else identity.participants
-            )
-            if participant.user_id is not None
-            and self._runtime.participants.accepts_identity(participant)
-        }
+        users = self.accepted_users(
+            () if identity is None or identity.unattributed else identity.participants
+        )
         scopes = set(MemoryScope.applicable_keys(context)) if context is not None else None
         return [
             item
@@ -179,18 +174,29 @@ class MemoryRuntime(MemoryBase):
             )
         ]
 
+    def accepted_users(
+        self, participants: Iterable[TurnEntityRef], *, current: bool = True
+    ) -> set[str]:
+        """The users the entries name with an accepted identity: the current one, or for a
+        write, the one it was captured with."""
+        runtime = self._runtime.participants
+        return {
+            identity.user_id
+            for entry in participants
+            if (identity := runtime.identity_of(entry)) is not None
+            and identity.user_id is not None
+            and runtime.accepts_identity(identity, current=current)
+        }
+
     def identity_is_current(self, identity: MemoryIdentitySnapshot) -> bool:
+        runtime = self._runtime.participants
         return all(
-            self._runtime.participants.accepts_identity(participant)
-            for participant in identity.participants
-        ) and all(
-            actor.participant_id is None
+            entry.participant_id is None
             or (
-                (current := self._runtime.participants.get(actor.participant_id)) is not None
-                and current.user_id == actor.user_id
-                and current.identity_revision == actor.identity_revision
+                (accepted := runtime.identity_of(entry)) is not None
+                and runtime.accepts_identity(accepted)
             )
-            for actor in identity.actors
+            for entry in identity.participants
         )
 
     def bind_processors(self, processors: Sequence[MemoryProcessor]) -> None:

@@ -1073,9 +1073,10 @@ class _Turn:
     def _association(self, final: dict | None) -> Metric:
         """The speaker association of the Turn's final segment: when it was first ready, from
         its speech closed (before it, when its subject came with the speech). Nothing waits
-        for it: Engine resolves the Turn's actors as it admits it, so one ready after that
-        left its segment unattributed in the Turn. Ready is not recognized: a failure or a
-        retirement releases it too, which the evidence says."""
+        for it: a Turn's participants are read whenever they are needed, so one ready after
+        the admission counts only for what reads them later, such as Memory at the session's
+        end. Ready is not recognized: a failure or a retirement releases it too, which the
+        evidence says."""
         segment = final.get("segment_id") if final is not None else None
         closed = self._trace("perception.speech_closed", segment_id=segment) if segment else None
         ready = self._trace("participant.segment_ready", segment_id=segment) if segment else None
@@ -1087,7 +1088,8 @@ class _Turn:
             ("speaker association ready", ready.get("end_time_ns") if ready else None),
             "the speaker association of the Turn's final segment",
             "not measured: no association asked for the segment, or no resolver records one",
-            note="ready after the Turn's admission: its segment stayed unattributed"
+            note="ready after the Turn's admission: what read its participants before then found"
+            " the segment unattributed"
             if late
             else None,
         )

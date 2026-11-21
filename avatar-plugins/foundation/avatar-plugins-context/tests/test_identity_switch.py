@@ -31,6 +31,8 @@ from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.workspace import WorkspacePaths
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output.schemas import OutputScope
 from alphaavatar.core.session import (
     IdentityOutcome,
@@ -38,8 +40,9 @@ from alphaavatar.core.session import (
     IdentitySource,
     SessionRuntime,
 )
+from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
-from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 class UserScopedSource:
@@ -49,8 +52,8 @@ class UserScopedSource:
         self._runtime = runtime
 
     def content_for(self, snapshot: TurnSnapshot) -> str:
-        actors = self._runtime.participants.project_turn(snapshot).actors
-        return " ".join(f"profile-of-{actor.user_id}" for actor in actors)
+        participants = self._runtime.participants.of_turn(snapshot)
+        return " ".join(f"profile-of-{entry.user_id}" for entry in participants)
 
 
 def runtime_with_context(tmp_path: Path) -> tuple[AvatarRuntime, ContextManager]:
@@ -71,19 +74,19 @@ def runtime_with_context(tmp_path: Path) -> tuple[AvatarRuntime, ContextManager]
 
 
 def commit(runtime: AvatarRuntime, input_id: str, text: str) -> TurnSnapshot:
-    person = runtime.session.primary_participant
+    """Typed on the primary participant's keyboard: the Turn's participant is read from it."""
+    runtime.participants.bind_device("keyboard", runtime.session.primary_participant_id)
+    observation = EnvObservation.text_input(
+        time_range=RuntimeTimeRange.point(runtime.perception.clock.now()),
+        source=runtime.perception.next_source("keyboard"),
+        payload=TextPayload.create(text=text),
+        device_id="keyboard",
+    )
     return runtime.turn.commit_input(
         input_id=input_id,
         modality=TurnInputModality.TEXT,
         text=text,
-        actors=(
-            TurnEntityRef(
-                kind="person",
-                participant_id=person.participant_id,
-                identity_revision=person.identity_revision,
-                user_id=person.user_id,
-            ),
-        ),
+        final_observations=(observation,),
         context_ids=(runtime.state.context_id,),
     )
 
@@ -142,8 +145,9 @@ async def test_identity_correction_rebuilds_the_prefix_but_keeps_accepted_histor
         assert history == [texts(prefix)[1], "Hello B."] and "My name is B." in history[0]
         assert 'input_id="input-2"' in turn_input
         assert context.build(current).items == current.items
-        assert runtime.turn.get("input-1").actors == first.actors
-        assert first.actors[0].user_id == "user-b"
+        # The Turn fixes no identity: read now, its participant is the corrected user.
+        (entry,) = runtime.participants.of_turn(first)
+        assert entry.user_id == "user-a"
     finally:
         await context.aclose()
         await runtime.aclose()

@@ -53,13 +53,18 @@ from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.output.schemas import OutputScope
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
-from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.enums import EntityKind, IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityBasis, IdentityRequest
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
@@ -191,11 +196,21 @@ async def checkpoint(runtime: AvatarRuntime, context_id: str, processor: str) ->
 
 
 def commit_turn(runtime: AvatarRuntime, actor: TurnEntityRef, index: int, text: str, *contexts):
+    """Typed on the participant's own device: the Turn's participant is read from it."""
+    device = f"device-{actor.participant_id}"
+    runtime.participants.bind_device(device, actor.participant_id)
+    observation = EnvObservation(
+        kind=ObservationKind.TEXT_INPUT,
+        time_range=RuntimeTimeRange.point(runtime.perception.clock.now()),
+        source=PerceptionSourceRef(device, 1),
+        payload=TextPayload.create(text=text),
+        device_id=device,
+    )
     return runtime.turn.commit_input(
         input_id=f"input-{index}",
         modality=TurnInputModality.TEXT,
         text=text,
-        actors=(actor,),
+        final_observations=(observation,),
         context_ids=contexts,
     )
 
@@ -564,7 +579,7 @@ async def test_model_records_are_attributed_by_their_own_identity_basis(
     (item,) = memory.memory_state.get(memory_type=MemoryType.TOOLS)
     (ref,) = basis.participants
     # Durable evidence keeps the record's own basis, not the Turn's or the current identity.
-    assert item.extra_data["session_identity"]["actors"] == [
+    assert item.extra_data["session_identity"]["participants"] == [
         {
             "participant_id": ref.participant_id,
             "user_id": ref.user_id,
@@ -591,6 +606,73 @@ async def test_model_records_are_attributed_by_their_own_identity_basis(
         assert owners == {(MemoryOwnerKind.USER, ref.user_id)}
         assert item.scope.kind is MemoryScopeKind.OWNER
         assert "unattributed_input" not in item.extra_data
+    await runtime.aclose()
+
+
+def spoken(runtime: AvatarRuntime, text: str) -> tuple[TurnSnapshot, PerceptionSegmentRef, int]:
+    """A transcribed utterance committed as Engine admits it: its speaker association, which
+    Persona settles, still pending."""
+    perception = runtime.perception
+    segment = PerceptionSegmentRef(perception.next_source("microphone"), "segment-1")
+    token = runtime.participants.observe_segment(segment)
+    now = perception.clock.now()
+    transcript = EnvObservation.transcript_segment(
+        time_range=RuntimeTimeRange.point(now),
+        source=segment.source,
+        segment=segment,
+        payload=TextPayload.create(text=text),
+    )
+    perception.publish_observation(transcript)
+    turn = runtime.turn.commit_event_input(
+        input_id="input-0",
+        modality=TurnInputModality.AUDIO,
+        text=text,
+        started_at=now,
+        committed_at=now,
+        cutoff_sequence=perception.latest_event_sequence,
+        input_observation_ids=(transcript.observation_id,),
+        context_ids=(runtime.state.context_id,),
+    )
+    return turn, segment, token
+
+
+@pytest.mark.parametrize("bound", [True, False], ids=["bound-after-admission", "never-bound"])
+async def test_speech_whose_speaker_is_known_only_after_admission_is_the_users_memory(
+    bound: bool, tmp_path: Path
+) -> None:
+    """KD-49: Memory reads a Turn's participants when it extracts, at the session's end, not
+    as Engine admitted it. An utterance whose association settled after its admission, its
+    microphone retired since, is the user's memory; one never associated stays in its
+    context."""
+
+    async def remember(prompt: str) -> MemoryDelta:
+        return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers green tea")])
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=remember, tool=empty))
+    alice = runtime.participants.join(user_id="alice", primary=True)
+    memory = memory_for(runtime)
+    await memory.on_start()
+    turn, segment, token = spoken(runtime, "I prefer green tea")
+    assert [entry.participant_id for entry in runtime.participants.of_turn(turn)] == [None]
+    if bound:
+        voice = PerceptionEntityRef("voice-alice")
+        runtime.participants.ensure_entity(
+            segment.source, voice, kind=EntityKind.SPEAKER, participant_id=alice.participant_id
+        )
+        assert runtime.participants.bind_segment(segment, voice, token=token)
+    runtime.participants.retire_source(segment.source)  # The microphone ends with the session.
+    await memory.on_stop()
+
+    (item,) = memory.memory_state.get(memory_type=MemoryType.CONVERSATION)
+    owners = {(owner.kind, owner.id) for owner in item.owner_refs}
+    if bound:
+        assert item.scope.kind is MemoryScopeKind.OWNER
+        assert owners == {(MemoryOwnerKind.USER, "alice")}
+        assert "unattributed_input" not in item.extra_data
+    else:
+        assert item.scope.kind is MemoryScopeKind.CONTEXT
+        assert owners == {(MemoryOwnerKind.AVATAR, "avatar")}
+        assert item.extra_data["unattributed_input"]
     await runtime.aclose()
 
 

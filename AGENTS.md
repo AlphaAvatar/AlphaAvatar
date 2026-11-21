@@ -279,12 +279,13 @@ Keep transport identity, perceived entities, session participants and durable us
 | Speaker/face evidence | [Persona processors](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/processors/). |
 | Segment association and readiness | [ParticipantRuntime](avatar-agents/alphaavatar/agents/runtime/modules/participants/). |
 | Accepted participant/user binding | [SessionRuntime](avatar-core/alphaavatar/core/session/). |
-| Actor resolution at Turn admission | `AvatarEngine._decision_actors()`; current-identity projection uses `ParticipantRuntime.project_turn()`. |
+| A Turn's participants | `ParticipantRuntime.of_turn()`, read whenever needed from the Turn's input observations and the associations settled for them; nothing is fixed at admission. |
 | Snapshot-scoped Persona access | [persona/runtime.py](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/runtime.py). |
 
 - A microphone, device or primary participant alone does not prove who spoke a segment.
 - An entity label does not independently establish a durable user identity.
-- One temporal Turn can contain multiple actors or unattributed segments.
+- One temporal Turn can contain multiple participants or unattributed segments.
+- A settled association is kept for the session, after its source retires and its Persona processor stops, so later readers such as Memory at the session's end see it.
 - Conflicting evidence must not grant a private user identity.
 - Association readiness, identity inference and attribute extraction have separate completion times.
 - Start independent annotation work early; await only dependencies required by the consuming operation.
@@ -580,7 +581,7 @@ Use this table to avoid starting in a convenient but non-owning module.
 | VAD or segment timing | Voice VAD → Router audio activity → source/segment evidence → timing tests. |
 | STT request/terminal state | Voice STT → Router transcription → turn-taking deadline/admission → Doctor. |
 | Natural pause or premature Turn | Turn-taking window/evidence/model/policy → Engine admission → multi-segment tests. |
-| Speaker readiness/private identity | Persona processor → ParticipantRuntime → Session binding → Turn actor/context checks. |
+| Speaker readiness/private identity | Persona processor → ParticipantRuntime → Session binding → Turn participant/context checks. |
 | Prompt/history/media replay | Context manager/builder/history → Provider model input → next-query history tests. |
 | Tool authorization/result ownership | Capability registry → Loop tools/execution → provider records → identity checks. |
 | TTS/caption interruption | Router speech → OutputRuntime exact scope → RTC playback feedback → close/cancel tests. |

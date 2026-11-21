@@ -23,11 +23,14 @@ from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryOwnerRef
 from alphaavatar.agents.runtime.modules.participants import ParticipantBindings, ParticipantRuntime
 from alphaavatar.agents.runtime.modules.participants.schemas import ParticipantInput
 from alphaavatar.agents.workspace import WorkspacePaths
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import (
@@ -38,9 +41,10 @@ from alphaavatar.core.session import (
     Participant,
     SessionRuntime,
 )
+from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
-from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 from alphaavatar.plugins.memory.state import MemoryContextState
 
 
@@ -77,19 +81,26 @@ def correct(
 
 
 def commit(runtime: ParticipantRuntime, input_id: str, *people: Participant) -> TurnSnapshot:
+    """What each person typed on a device of their own: the Turn's participants are read
+    from those devices."""
+    inputs = []
+    for person in people:
+        device = f"device-{person.participant_id}"
+        runtime.bind_device(device, person.participant_id)
+        inputs.append(
+            EnvObservation(
+                kind=ObservationKind.TEXT_INPUT,
+                time_range=RuntimeTimeRange.point(runtime.turn.perception.clock.now()),
+                source=PerceptionSourceRef(device, 1),
+                payload=TextPayload.create(text=f"text for {input_id}"),
+                device_id=device,
+            )
+        )
     return runtime.turn.commit_input(
         input_id=input_id,
         modality=TurnInputModality.TEXT,
         text=f"text for {input_id}",
-        actors=tuple(
-            TurnEntityRef(
-                kind="person",
-                participant_id=person.participant_id,
-                identity_revision=person.identity_revision,
-                user_id=person.user_id,
-            )
-            for person in people
-        ),
+        final_observations=tuple(inputs),
         context_ids=("context-1",),
     )
 
@@ -126,7 +137,9 @@ def test_device_participant_and_user_identifiers_stay_separate(tmp_path: Path) -
     assert not (tmp_path / "workspace").exists()
 
 
-def test_turn_history_keeps_its_accepted_identity_across_corrections(tmp_path: Path) -> None:
+def test_a_turn_reads_its_current_identity_and_a_captured_basis_keeps_its_own(
+    tmp_path: Path,
+) -> None:
     runtime = participants(tmp_path)
     person = runtime.join(user_id="user-b", primary=True)
     turn = commit(runtime, "input-1", person)
@@ -138,8 +151,8 @@ def test_turn_history_keeps_its_accepted_identity_across_corrections(tmp_path: P
     )
 
     assert runtime.turn.get("input-1") is turn
-    assert (turn.actors[0].user_id, turn.actors[0].identity_revision) == ("user-b", 0)
-    projected = runtime.project_turn(turn).actors[0]
+    # The Turn fixes no identity: read now, its participant is the corrected user.
+    (projected,) = runtime.of_turn(turn)
     assert (projected.participant_id, projected.user_id, projected.identity_revision) == (
         person.participant_id,
         "user-c",
@@ -156,8 +169,7 @@ def test_turn_history_keeps_its_accepted_identity_across_corrections(tmp_path: P
     assert correct(runtime, runtime.get(person.participant_id), None) is IdentityOutcome.APPLIED
     with pytest.raises(PermissionError):
         runtime.user_path(runtime.get(person.participant_id))
-    assert runtime.project_turn(turn).actors[0].user_id is None
-    assert runtime.turn.get("input-1").actors == turn.actors
+    assert runtime.of_turn(turn)[0].user_id is None
 
 
 async def test_agent_identity_decisions_use_their_own_turn_and_version(tmp_path: Path) -> None:
@@ -205,7 +217,7 @@ async def test_agent_identity_decisions_use_their_own_turn_and_version(tmp_path:
         await runtime.invoke(
             ParticipantInput(
                 user_id="user-x",
-                reason="Not an actor of this Turn",
+                reason="Not a participant of this Turn",
                 participant_id=runtime.session.get_participant(user_id="user-e").participant_id,
             ),
             input_id="input-1",
@@ -302,13 +314,6 @@ def test_a_participant_has_one_entity_of_each_kind(tmp_path: Path) -> None:
         runtime.ensure_entity(camera, PerceptionEntityRef("hand-a"), kind="hand")
     assert runtime.resolve(entity=PerceptionEntityRef("hand-a")) is None
 
-    # Released, its kind is free again.
-    runtime.release_entity(voice)
-    assert (
-        runtime.ensure_entity(microphone, other, kind=EntityKind.SPEAKER, participant_id=named)
-        == person
-    )
-
 
 def test_bindings_keep_an_entitys_participant_and_kind_and_one_entity_of_each_kind() -> None:
     bindings = ParticipantBindings()
@@ -328,16 +333,10 @@ def test_bindings_keep_an_entitys_participant_and_kind_and_one_entity_of_each_ki
         None,
     )
 
-    # Released, an entity frees its kind; the participant stays bound by the other.
-    assert bindings.release_entity("speaker-a") == "participant-1"
-    bindings.bind_entity("speaker-b", "participant-1", speaker)
-    assert bindings.release_entity("speaker-b") == "participant-1"
-    assert bindings.has_participant("participant-1")
-    assert bindings.release_entity("face-a") == "participant-1"
-    assert not bindings.has_participant("participant-1")
 
-
-def test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user(tmp_path: Path) -> None:
+def test_memory_reads_earlier_turns_as_their_participants_corrected_user(tmp_path: Path) -> None:
+    """The Session's identity is the one that counts: once corrected, a participant's earlier
+    Turns read as the corrected user too."""
     runtime = participants(tmp_path)
     person = runtime.join(user_id="user-b", primary=True)
     state = MemoryContextState(
@@ -351,7 +350,11 @@ def test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user(tmp_pat
     state.sync_identity(runtime.session.snapshot())
     spoken_by_b = commit(runtime, "input-1", person)
     state.add_turn(spoken_by_b)
-    assert MemoryOwnerRef.user("user-b") in state.capture_identity([spoken_by_b]).owner_refs
+    of_turn = runtime.of_turn
+    assert (
+        MemoryOwnerRef.user("user-b")
+        in state.capture_identity([spoken_by_b], of_turn=of_turn).owner_refs
+    )
 
     assert correct(runtime, person, "user-a") is IdentityOutcome.APPLIED
     state.sync_identity(runtime.session.snapshot())
@@ -359,5 +362,7 @@ def test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user(tmp_pat
     state.add_turn(spoken_by_a)
 
     assert state.messages == [spoken_by_b, spoken_by_a]
-    assert MemoryOwnerRef.user("user-a") not in state.capture_identity([spoken_by_b]).owner_refs
-    assert MemoryOwnerRef.user("user-a") in state.capture_identity([spoken_by_a]).owner_refs
+    for turn in (spoken_by_b, spoken_by_a):
+        owners = state.capture_identity([turn], of_turn=of_turn).owner_refs
+        assert MemoryOwnerRef.user("user-a") in owners
+        assert MemoryOwnerRef.user("user-b") not in owners

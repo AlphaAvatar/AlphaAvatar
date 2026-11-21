@@ -48,6 +48,8 @@ from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.modules.foundation import FoundationRuntime
 from alphaavatar.agents.workspace import WorkspacePaths
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output.enums import OutputControlType, OutputKind
 from alphaavatar.core.session import (
     IdentityOutcome,
@@ -56,8 +58,9 @@ from alphaavatar.core.session import (
     Participant,
     SessionRuntime,
 )
+from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
-from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 from alphaavatar.plugins.loop.config import RealtimeLoopConfig
 from alphaavatar.plugins.loop.execution import LoopExecution
 from alphaavatar.plugins.loop.loop import AvatarLoop
@@ -103,8 +106,8 @@ class UserScopedSource:
         self._runtime, self.revision = runtime, 0
 
     def content_for(self, snapshot: TurnSnapshot) -> str:
-        actors = self._runtime.participants.project_turn(snapshot).actors
-        return " ".join(f"profile-of-{actor.user_id}@{self.revision}" for actor in actors)
+        participants = self._runtime.participants.of_turn(snapshot)
+        return " ".join(f"profile-of-{entry.user_id}@{self.revision}" for entry in participants)
 
 
 class Query(BaseModel):
@@ -239,17 +242,19 @@ async def start(
 async def submit(runtime: AvatarRuntime, user_id: str) -> tuple[Participant, TurnSnapshot, object]:
     participant = runtime.participants.join(user_id=user_id, primary=True)
     context_id = runtime.state.context_id
-    actor = TurnEntityRef(
-        kind="person",
-        participant_id=participant.participant_id,
-        identity_revision=participant.identity_revision,
-        user_id=participant.user_id,
+    # Typed on the participant's keyboard: the Turn's participant is read from it.
+    runtime.participants.bind_device("keyboard", participant.participant_id)
+    observation = EnvObservation.text_input(
+        time_range=RuntimeTimeRange.point(runtime.perception.clock.now()),
+        source=runtime.perception.next_source("keyboard"),
+        payload=TextPayload.create(text="Who am I talking to?"),
+        device_id="keyboard",
     )
     turn = runtime.turn.commit_input(
         input_id="input-1",
         modality=TurnInputModality.TEXT,
         text="Who am I talking to?",
-        actors=(actor,),
+        final_observations=(observation,),
         context_ids=(context_id,),
     )
     await runtime.output.start_turn(turn_id=turn.turn_id)
@@ -304,7 +309,6 @@ async def test_agent_rebinding_lets_its_own_run_continue_under_the_new_identity(
         assert "profile-of-user-c@0" in second and "profile-of-user-a" not in second
         assert record.call.arguments in second and record.output.text in second
         assert await delivered_text(runtime) == ["Nice to meet you, C."]
-        assert runtime.turn.get(turn.input_id).actors == turn.actors
         event = runtime.session.identity_history(participant.participant_id)[-1]
         assert (event.source, event.previous_user_id, event.participant.user_id) == (
             IdentitySource.AGENT,
@@ -354,7 +358,6 @@ async def test_late_model_output_for_the_previous_identity_is_never_delivered(
         # What B already heard remains accepted history, marked as interrupted.
         (spoken,) = (item for item in result.items if item.id == "early")
         assert (spoken.text, spoken.interrupted) == ("Hello B, ", True)
-        assert runtime.turn.get(turn.input_id).actors == turn.actors
     finally:
         await runtime.aclose()
 

@@ -25,12 +25,6 @@ from alphaavatar.agents.router.schemas import TurnTakingDecision
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
-from alphaavatar.core.env.schemas import (
-    DeviceId,
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
 from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import TextPayload
@@ -249,92 +243,20 @@ class AvatarEngine(LifecycleComponent):
             self._runtime.output.revoke_run(run_id)
             self._loop.interrupt(run_id=run_id, reason=reason)
 
-    def _participant_entity(
-        self,
-        device_id: DeviceId | None,
-        *,
-        kind: str = "person",
-        entity: PerceptionEntityRef | None = None,
-        source: PerceptionSourceRef | None = None,
-        segment: PerceptionSegmentRef | None = None,
-        by_device: bool = False,
-    ) -> TurnEntityRef:
+    def _entity(self, ref: InteractionEntityRef) -> TurnEntityRef:
+        """An addressee, as admission finds it."""
         participant = self._runtime.participants.resolve(
-            device_id, source=source, entity=entity, segment=segment, by_device=by_device
+            ref.device_id, source=ref.source, entity=ref.entity
         )
-        if entity is None and segment is not None:
-            entity = self._runtime.participants.entity_for_segment(segment)
-
         # Perception labels are evidence; only the Session owns accepted user bindings.
         return TurnEntityRef(
-            kind=kind,
+            kind=ref.kind.value,
             participant_id=participant.participant_id if participant is not None else None,
             identity_revision=participant.identity_revision if participant is not None else None,
             user_id=participant.user_id if participant is not None else None,
-            device_id=device_id,
-            entity=entity,
-        )
-
-    def _entity(
-        self,
-        ref: InteractionEntityRef,
-        *,
-        source: PerceptionSourceRef | None = None,
-        segment: PerceptionSegmentRef | None = None,
-    ) -> TurnEntityRef:
-        return self._participant_entity(
-            ref.device_id,
-            kind=ref.kind.value,
+            device_id=ref.device_id,
             entity=ref.entity,
-            source=ref.source if ref.source is not None else source,
-            segment=segment,
         )
-
-    def _decision_actors(
-        self, observations: tuple[EnvObservation, ...]
-    ) -> tuple[TurnEntityRef, ...]:
-        """Resolve only owned inputs; the router's input devices never grant a user identity."""
-        by_segment: dict[PerceptionSegmentRef, list[EnvObservation]] = {}
-        for observation in observations:
-            if observation.segment is not None:
-                by_segment.setdefault(observation.segment, []).append(observation)
-
-        actors: dict[tuple[object, ...], TurnEntityRef] = {}
-        visited: set[PerceptionSegmentRef] = set()
-        for observation in observations:
-            segment = observation.segment
-            source = segment.source if segment is not None else observation.source
-            if segment is not None:
-                if segment in visited:
-                    continue
-                visited.add(segment)
-                owned = by_segment[segment]
-                devices = {item.device_id for item in owned if item.device_id is not None}
-                device_id = next(iter(devices)) if len(devices) == 1 else None
-                if not self._runtime.perception.speech_source_is_current(source):
-                    actor = TurnEntityRef(kind="person", device_id=device_id)
-                else:
-                    # A shared microphone or primary participant is never proof of a speaker:
-                    # the segment's association, as Persona settled it, is.
-                    actor = self._participant_entity(device_id, source=source, segment=segment)
-            else:
-                actor = self._participant_entity(
-                    observation.device_id,
-                    source=source,
-                    by_device=observation.kind
-                    in (ObservationKind.TEXT_INPUT, ObservationKind.IMAGE_INPUT),
-                )
-
-            if actor.participant_id is not None:
-                key = ("participant", actor.participant_id)
-            elif actor.entity is not None:
-                key = ("entity", source, actor.entity)
-            else:
-                # Keep anonymous inputs visible alongside recognized people in this Turn.
-                key = ("unattributed", segment or observation.observation_id)
-            actors.setdefault(key, actor)
-
-        return tuple(actors.values())
 
     async def _own_admission(self, operation: Coroutine[Any, Any, object]) -> object:
         return await wait_for_cleanup(self._schedule_admission(operation))
@@ -415,28 +337,33 @@ class AvatarEngine(LifecycleComponent):
         task.add_done_callback(self._watchers.discard)
         task.add_done_callback(self._observe)
 
-    def _log_participants(
-        self, snapshot: TurnSnapshot, observations: tuple[EnvObservation, ...] = ()
-    ) -> None:
-        """Whom the Turn was admitted with, and where each of its segments' association stood
-        then: a pending one settles later, as its own line says."""
-        participants = ",".join(
-            f"{actor.participant_id}/{actor.user_id or '-'}/r{actor.identity_revision}"
-            if actor.participant_id is not None
+    def _log_participants(self, snapshot: TurnSnapshot) -> None:
+        """The Turn's participants as admission finds them, and where each of its segments'
+        association stands then: a pending one settles later, as its own line says, and
+        counts for whoever reads the Turn's participants after that."""
+        participants = self._runtime.participants
+        listed = ",".join(
+            f"{entry.participant_id}/{entry.user_id or '-'}/r{entry.identity_revision}"
+            if entry.participant_id is not None
             else "unattributed"
-            for actor in snapshot.actors
+            for entry in participants.of_turn(snapshot)
         )
+        inputs = set(snapshot.input_observation_ids)
         segments = ",".join(
-            f"{segment.segment_id}:{self._runtime.participants.segment_association(segment)}"
+            f"{segment.segment_id}:{participants.segment_association(segment)}"
             for segment in dict.fromkeys(
-                item.segment for item in observations if item.segment is not None
+                event.observation.segment
+                for event in snapshot.perception_events
+                if event.observation is not None
+                and event.observation.observation_id in inputs
+                and event.observation.segment is not None
             )
         )
         logger.info(
             "Turn participants turn_id=%s input_id=%s participants=%s segments=%s",
             snapshot.turn_id,
             snapshot.input_id,
-            participants or "none",
+            listed or "none",
             segments or "none",
         )
 
@@ -633,7 +560,6 @@ class AvatarEngine(LifecycleComponent):
                 if mode == TurnTakingMode.VISUAL_ONLY
                 else TurnInputModality.MULTIMODAL
             )
-            actors = self._decision_actors(observations)
             addressees = tuple(self._entity(ref) for ref in decision.addressees)
             if self._admission_expired(event, decision, flags):
                 return
@@ -647,7 +573,6 @@ class AvatarEngine(LifecycleComponent):
                 committed_at=event.time_range.end,
                 cutoff_sequence=event.sequence,
                 input_observation_ids=decision.input_observation_ids,
-                actors=actors,
                 addressees=addressees,
                 context_ids=(context_id,),
                 metadata={
@@ -659,8 +584,7 @@ class AvatarEngine(LifecycleComponent):
                 },
                 system_notices=notices,
             )
-            # Sampled where the actors were resolved: nothing awaited since.
-            self._log_participants(snapshot, observations)
+            self._log_participants(snapshot)
             self._trace_admission(
                 event,
                 decision,
@@ -687,11 +611,6 @@ class AvatarEngine(LifecycleComponent):
                 else TurnInputModality.IMAGE,
                 text=self._text((observation,)),
                 final_observations=(observation,),
-                actors=(
-                    self._participant_entity(
-                        observation.device_id, source=observation.source, by_device=True
-                    ),
-                ),
                 context_ids=(self._runtime.state.context_id,),
                 metadata={"source": "avatar.engine.direct"},
             )

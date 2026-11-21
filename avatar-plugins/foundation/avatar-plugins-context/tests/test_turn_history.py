@@ -53,7 +53,7 @@ from alphaavatar.core.perception.schemas import MediaSourceStateEvent
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
-from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 from alphaavatar.plugins.provider.openai.adapters.responses import ResponsesAdapter
 from alphaavatar.plugins.provider.openai.llms.config import ResponsesInputConfig
 
@@ -76,29 +76,21 @@ def start(tmp_path: Path, **sections: object) -> tuple[AvatarRuntime, ContextMan
     return runtime, config.context.get_plugin(runtime=runtime, avatar_config=config)
 
 
-def actor(runtime: AvatarRuntime) -> TurnEntityRef:
-    person = runtime.session.primary_participant
-    return TurnEntityRef(
-        kind="person",
-        participant_id=person.participant_id,
-        identity_revision=person.identity_revision,
-        user_id=person.user_id,
-    )
-
-
 def typed(runtime: AvatarRuntime, input_id: str, text: str) -> TurnSnapshot:
+    """Typed on the primary participant's keyboard: the Turn's participant is read from it."""
     perception = runtime.perception
+    runtime.participants.bind_device("keyboard", runtime.session.primary_participant_id)
     observation = EnvObservation.text_input(
         time_range=RuntimeTimeRange.point(perception.clock.now()),
         source=perception.next_source("keyboard"),
         payload=TextPayload.create(text=text),
+        device_id="keyboard",
     )
     return runtime.turn.commit_input(
         input_id=input_id,
         modality=TurnInputModality.TEXT,
         text=text,
         final_observations=(observation,),
-        actors=(actor(runtime),),
         context_ids=(runtime.state.context_id,),
     )
 
@@ -335,7 +327,6 @@ async def test_fixed_slices_keep_speech_beside_typing_in_the_request_and_its_his
             committed_at=began.shifted(2.5),
             cutoff_sequence=perception.latest_event_sequence,
             input_observation_ids=[observation.observation_id for observation in inputs],
-            actors=(actor(runtime),),
             context_ids=(runtime.state.context_id,),
         )
         sent = await prepare(context, first)

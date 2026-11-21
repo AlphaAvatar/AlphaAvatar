@@ -142,24 +142,13 @@ class PersonaRuntime(PersonaBase):
         if self._runtime.turn.get(snapshot.input_id) is not snapshot:
             raise ValueError("Persona context requires a Turn owned by this runtime")
 
-        try:
-            actors = self._runtime.participants.project_turn(snapshot).actors
-        except ValueError:
-            return ""
-
-        # Private profiles require every actor to name an accepted identity of one user.
+        # Private profiles require every participant to name an accepted identity of one user;
+        # the Turn's participants are read with their current ones.
+        runtime = self._runtime.participants
         participants = {}
-        for actor in actors:
-            if actor.participant_id is None or actor.user_id is None:
-                return ""
-
-            participant = self._runtime.participants.get(actor.participant_id)
-            if (
-                participant is None
-                or actor.user_id != participant.user_id
-                or actor.identity_revision != participant.identity_revision
-                or not self._runtime.participants.accepts_identity(participant)
-            ):
+        for entry in runtime.of_turn(snapshot):
+            participant = runtime.identity_of(entry)
+            if participant is None or participant.user_id is None:
                 return ""
 
             participants[participant.participant_id] = participant

@@ -44,7 +44,8 @@ class TurnSnapshot:
     perception_gap: bool = False
     missed_perception_events: int = 0
 
-    actors: tuple[TurnEntityRef, ...] = ()
+    # Whom the input is for. Its participants are not fixed here: they are read from its
+    # input observations when needed (ParticipantRuntime.of_turn).
     addressees: tuple[TurnEntityRef, ...] = ()
     context_ids: tuple[str, ...] = ()
 

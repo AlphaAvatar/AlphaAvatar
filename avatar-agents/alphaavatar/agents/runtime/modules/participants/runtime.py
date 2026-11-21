@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from uuid import uuid4
 
 from alphaavatar.agents.workspace import UserPath, WorkspacePaths
+from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import (
     DeviceId,
     PerceptionEntityRef,
@@ -36,7 +37,7 @@ from alphaavatar.core.session.schemas import (
     validate_identity,
 )
 from alphaavatar.core.turn import TurnRuntime
-from alphaavatar.core.turn.schemas import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
 
 from ...capability import avatar_capability
 from ...capability.enums import AvatarCapabilityName
@@ -44,6 +45,9 @@ from .binding import ParticipantBindings
 from .schemas import ParticipantInput
 
 logger = logging.getLogger(__name__)
+
+# Inputs a person gives through a device of theirs, rather than speech an association names.
+_DIRECT_INPUTS = frozenset((ObservationKind.TEXT_INPUT, ObservationKind.IMAGE_INPUT))
 
 
 @dataclass(slots=True)
@@ -83,7 +87,7 @@ class ParticipantRuntime:
         workspace: WorkspacePaths,
         turn: TurnRuntime,
         max_participants: int = 1024,
-        max_segments: int = 1024,
+        max_segments: int = 16384,
         max_sources: int = 256,
     ) -> None:
         if any(
@@ -114,6 +118,8 @@ class ParticipantRuntime:
         # Each source's latest generation, and whether that generation is still current.
         self._generations: dict[SourceId, tuple[int, bool]] = {}
 
+        # Each segment's association, kept for the session once settled: a Turn's participants
+        # are read from it whenever they are needed, after the source retires too.
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
         self._next_segment_token = 0
 
@@ -172,9 +178,10 @@ class ParticipantRuntime:
         )
 
     def _drop_source(self, source: PerceptionSourceRef) -> None:
-        # Entities outlive a source generation: only its segments are released.
-        for segment in tuple(self._segments):
-            if segment.source == source:
+        # Entities outlive a source generation, and so do its settled associations: only the
+        # segments still waiting for one are released.
+        for segment, current in tuple(self._segments.items()):
+            if segment.source == source and current.outcome is None:
                 self._settle(self._segments.pop(segment), "released", "source_retired")
 
     def _admit_participant(self, participant_id: ParticipantId) -> None:
@@ -182,13 +189,6 @@ class ParticipantRuntime:
             if len(self._active_participants) >= self._max_participants:
                 raise RuntimeError("Active participant capacity reached")
             self._active_participants.add(participant_id)
-
-    def _release_participant(self, participant_id: ParticipantId) -> None:
-        if not self._bindings.has_participant(participant_id):
-            # Session retains accepted identity versions for old Turns and admitted writes.
-            self._active_participants.discard(participant_id)
-            if participant_id != self.session.primary_participant_id:
-                self._association_kinds.pop(participant_id, None)
 
     def join(
         self,
@@ -217,36 +217,72 @@ class ParticipantRuntime:
     def get(self, participant_id: ParticipantId) -> Participant | None:
         return self.session.get_participant(participant_id=participant_id)
 
-    def project_turn(self, snapshot: TurnSnapshot) -> TurnSnapshot:
-        """Read current identities for this Turn without rewriting its accepted history."""
-        if self.turn.get(snapshot.input_id) is not snapshot:
-            raise ValueError("Identity projection requires a Turn owned by this runtime")
+    def of_turn(self, snapshot: TurnSnapshot) -> tuple[TurnEntityRef, ...]:
+        """The Turn's participants as they stand now, read from its input observations: each
+        speech segment by the association settled for it, each direct input by its device's
+        participant, and one anonymous entry for each input attributed to no one. Identities
+        are the Session's current ones. Nothing is fixed when the Turn is admitted: an
+        association that settles later counts from then on."""
+        if any(event.session_id != self.session.session_id for event in snapshot.perception_events):
+            raise ValueError("Turn participants are read only from this session's Turns")
 
-        actors = []
-        for actor in snapshot.actors:
-            if actor.participant_id is None:
-                actors.append(actor)
+        inputs = set(snapshot.input_observation_ids)
+        found: dict[tuple[object, ...], TurnEntityRef] = {}
+        for event in snapshot.perception_events:
+            observation = event.observation
+            if observation is None or observation.observation_id not in inputs:
                 continue
 
-            participant = self.get(actor.participant_id)
-            if participant is None or not self.accepts_identity(participant):
-                raise ValueError("Turn participant no longer has an accepted identity")
+            entity, participant_id = None, None
+            if observation.segment is not None:
+                # A shared microphone or the primary participant never names who spoke: the
+                # segment's association, as Persona settled it, does.
+                current = self._segments.get(observation.segment)
+                if current is not None and not current.invalid:
+                    entity = current.entity
+                if entity is not None:
+                    participant_id = self._bindings.get_entity(entity.entity_id)
+            elif observation.kind in _DIRECT_INPUTS and observation.device_id is not None:
+                participant_id = self._bindings.get_device(observation.device_id)
 
-            actors.append(
-                replace(
-                    actor,
-                    user_id=participant.user_id,
-                    identity_revision=participant.identity_revision,
-                )
+            participant = self.get(participant_id) if participant_id is not None else None
+            if participant is not None:
+                key: tuple[object, ...] = ("participant", participant.participant_id)
+            elif entity is not None:
+                key = ("entity", entity)
+            else:
+                # Each anonymous input once: a segment's speech and transcript are one input.
+                key = ("unattributed", observation.segment or observation.observation_id)
+            found.setdefault(
+                key,
+                TurnEntityRef(
+                    kind="person",
+                    participant_id=participant.participant_id if participant else None,
+                    identity_revision=participant.identity_revision if participant else None,
+                    user_id=participant.user_id if participant else None,
+                    device_id=observation.device_id,
+                    entity=entity,
+                ),
             )
+        return tuple(found.values())
 
-        return replace(snapshot, actors=tuple(actors))
+    def identity_of(self, entry: TurnEntityRef) -> Participant | None:
+        """The accepted identity a participant entry names: the Session's version at its
+        revision, when it is that user's; None for an anonymous entry or any other."""
+        if entry.participant_id is None or entry.identity_revision is None:
+            return None
+        participant = self.session.get_identity(entry.participant_id, entry.identity_revision)
+        return (
+            participant
+            if participant is not None and participant.user_id == entry.user_id
+            else None
+        )
 
     def identity_basis(self, snapshot: TurnSnapshot) -> IdentityBasis:
         return IdentityBasis.from_participants(
-            self._require_participant(actor.participant_id)
-            for actor in self.project_turn(snapshot).actors
-            if actor.participant_id is not None
+            self._require_participant(entry.participant_id)
+            for entry in self.of_turn(snapshot)
+            if entry.participant_id is not None
         )
 
     def identity_basis_is_current(self, basis: IdentityBasis) -> bool:
@@ -323,15 +359,6 @@ class ParticipantRuntime:
                 peers.add(participant.participant_id)
 
         return participant
-
-    def release_entity(self, entity: PerceptionEntityRef) -> None:
-        participant_id = self._bindings.release_entity(entity.entity_id)
-        for current in self._segments.values():
-            if current.entity is not None and current.entity.entity_id == entity.entity_id:
-                current.invalid = True
-                self._settle(current, "invalid", "entity_released")
-        if participant_id is not None:
-            self._release_participant(participant_id)
 
     def retire_source(self, source: PerceptionSourceRef) -> None:
         if self.source_is_current(source):
@@ -493,27 +520,19 @@ class ParticipantRuntime:
         if snapshot is None:
             raise ValueError("Identity decisions require the calling execution's committed input")
 
-        snapshot = self.project_turn(snapshot)
-
+        entries = self.of_turn(snapshot)
         participant_id = request.participant_id
         if participant_id is None:
-            participant_ids = {actor.participant_id for actor in snapshot.actors}
+            participant_ids = {entry.participant_id for entry in entries}
             participant_id = next(iter(participant_ids)) if len(participant_ids) == 1 else None
             if participant_id is None:
-                raise ValueError("Select a participant_id from the current Turn's actors")
+                raise ValueError("Select a participant_id from the current Turn's participants")
 
-        actors = tuple(actor for actor in snapshot.actors if actor.participant_id == participant_id)
-        if not actors or len({(actor.user_id, actor.identity_revision) for actor in actors}) != 1:
-            raise ValueError("The participant must have one identity in the current Turn")
-
-        actor = actors[0]
-        participant = self.session.get_identity(participant_id, actor.identity_revision)
-        if (
-            actor.identity_revision is None
-            or participant is None
-            or participant.user_id != actor.user_id
-        ):
-            raise ValueError("The Turn actor must reference an accepted participant identity")
+        entry = next((entry for entry in entries if entry.participant_id == participant_id), None)
+        if entry is None:
+            raise ValueError("The participant is not one of the current Turn's participants")
+        if self.identity_of(entry) is None:
+            raise ValueError("The Turn participant must reference an accepted participant identity")
 
         # The execution supplies input_id separately from model arguments; binding uses one CAS.
         outcome = self.bind_user(
@@ -522,7 +541,7 @@ class ParticipantRuntime:
                 user_id=request.user_id,
                 source=IdentitySource.AGENT,
                 expected_revision=(
-                    actor.identity_revision
+                    entry.identity_revision
                     if request.expected_revision is None
                     else request.expected_revision
                 ),

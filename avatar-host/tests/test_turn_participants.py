@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Whose Turn it is, on the configured chain: Engine names each segment's actor from the
-association settled for that segment (Persona's part, done here by hand), never from the
-device the speech came through nor from the session's primary participant; its log says whom
-the Turn was admitted with and where each segment's association stood then."""
+"""Whose Turn it is, on the configured chain: a Turn's participants are read from the
+association settled for each of its segments (Persona's part, done here by hand), never from
+the device the speech came through nor from the session's primary participant. Nothing is
+fixed at admission: an association that settles later counts from then on, after its source
+retires too. Admission's log says whom the Turn had then and where each association stood."""
 
 from __future__ import annotations
 
@@ -50,7 +51,7 @@ async def session(
 
 
 @pytest.mark.parametrize("case", CASES)
-async def test_a_turns_actors_are_its_segments_associations_never_its_device(
+async def test_a_turns_participants_are_its_segments_associations_never_its_device(
     session: Chain, case: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="alphaavatar.agents")
@@ -77,19 +78,20 @@ async def test_a_turns_actors_are_its_segments_associations_never_its_device(
         "known-and-unknown": [people[ALICE].participant_id, None],
         "device-only": [None, None],
     }[case]
-    assert [actor.participant_id for actor in turn.actors] == expected
-    assert {actor.user_id for actor in turn.actors if actor.participant_id is None} <= {None}
-    assert primary.participant_id not in {actor.participant_id for actor in turn.actors}
+    admitted = participants.of_turn(turn)
+    assert [entry.participant_id for entry in admitted] == expected
+    assert {entry.user_id for entry in admitted if entry.participant_id is None} <= {None}
+    assert primary.participant_id not in {entry.participant_id for entry in admitted}
     (line,) = [
         record.getMessage()
         for record in caplog.records
         if record.getMessage().startswith(f"Turn participants turn_id={turn.turn_id} ")
     ]
     listed = ",".join(
-        f"{actor.participant_id}/{actor.user_id}/r{actor.identity_revision}"
-        if actor.participant_id
+        f"{entry.participant_id}/{entry.user_id}/r{entry.identity_revision}"
+        if entry.participant_id
         else "unattributed"
-        for actor in turn.actors
+        for entry in admitted
     )
     states = ",".join(
         f"{segment}:{'bound' if associated else 'pending'}"
@@ -97,8 +99,12 @@ async def test_a_turns_actors_are_its_segments_associations_never_its_device(
     )
     assert line.endswith(f" participants={listed} segments={states}")
 
-    # An association settled after the admission changes nothing the Turn holds.
+    # A segment still pending at admission, bound after it, counts from then on; and what
+    # settled is still read once the source retires, as at a session's end.
     late = PerceptionSegmentRef(session.speech, "segment-b")
     if case == "known-and-unknown":
         participants.bind_segment(late, BOB, token=participants.observe_segment(late))
-    assert runtime.turn.get(turn.input_id).actors == turn.actors
+        expected = [people[ALICE].participant_id, people[BOB].participant_id]
+    assert [entry.participant_id for entry in participants.of_turn(turn)] == expected
+    participants.retire_source(session.speech)
+    assert [entry.participant_id for entry in participants.of_turn(turn)] == expected

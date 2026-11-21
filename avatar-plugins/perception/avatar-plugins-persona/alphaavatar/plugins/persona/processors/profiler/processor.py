@@ -14,6 +14,7 @@
 import asyncio
 import logging
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, get_args, get_origin
 from uuid import uuid4
@@ -64,9 +65,28 @@ class ProfilerProcessor(PersonaProcessorBase):
         self._provider = ProfilerProvider(config.provider, service=runtime.foundation.provider)
         self._consumer_task: asyncio.Task[None] | None = None
 
+        # The session's user Turns, kept until it ends: only then are they given to their
+        # participants, so an association that settled after a Turn's admission counts.
+        self._turns: list[TurnSnapshot] = []
+
     @property
     def name(self) -> str:
         return "profiler"
+
+    @staticmethod
+    def _kept(snapshot: TurnSnapshot) -> TurnSnapshot:
+        """The Turn as kept until the session ends: its input observations alone, without
+        their media, which is all its participants are read from."""
+        inputs = set(snapshot.input_observation_ids)
+        return replace(
+            snapshot,
+            perception_events=tuple(
+                replace(event, payload=replace(event.observation, payload=None))
+                for event in snapshot.perception_events
+                if event.observation is not None and event.observation.observation_id in inputs
+            ),
+            metadata={},
+        )
 
     @staticmethod
     def _is_list_field(name: str) -> bool:
@@ -194,19 +214,24 @@ class ProfilerProcessor(PersonaProcessorBase):
     async def _record_turn(self, snapshot: TurnSnapshot) -> None:
         if snapshot.modality == TurnInputModality.SYSTEM or not (snapshot.text or "").strip():
             return
+        self._turns.append(self._kept(snapshot))
 
-        # A claimed user_id is not a physical speaker; only explicit participant references count.
-        for participant_id in dict.fromkeys(actor.participant_id for actor in snapshot.actors):
-            if participant_id is None:
-                continue
-
-            participant = self.session_runtime.get_participant(participant_id=participant_id)
-            if participant is None:
-                continue
-
-            cache = self.persona.cache_for(participant_id)
-            if cache is not None:
-                cache.add_turn(snapshot)
+    def _assign_turns(self) -> None:
+        """Each kept Turn to its participants as they stand at the session's end."""
+        for snapshot in self._turns:
+            # A claimed user_id is not a physical speaker; only the inputs' participants count.
+            for entry in self.runtime.participants.of_turn(snapshot):
+                if entry.participant_id is None:
+                    continue
+                if (
+                    self.session_runtime.get_participant(participant_id=entry.participant_id)
+                    is None
+                ):
+                    continue
+                cache = self.persona.cache_for(entry.participant_id)
+                if cache is not None:
+                    cache.add_turn(snapshot)
+        self._turns.clear()
 
     async def _consume_turns(self) -> None:
         stream = self.runtime.turn.events
@@ -271,6 +296,8 @@ class ProfilerProcessor(PersonaProcessorBase):
 
         if finalize:
             await self._drain_turns()
+            self._assign_turns()
+        self._turns.clear()
 
         self.runtime.turn.events.clear_consumer(self.CONSUMER_ID)
 

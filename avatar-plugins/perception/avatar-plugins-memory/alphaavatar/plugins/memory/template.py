@@ -13,6 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelFunctionCall,
     ModelFunctionOutput,
@@ -21,7 +23,7 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelTextPart,
 )
 from alphaavatar.agents.memory.enums.cache_type import MemoryCacheType
-from alphaavatar.core.turn.schemas import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
 
 from .state import MemoryContextItem
 
@@ -41,8 +43,14 @@ def _content(parts: tuple) -> str:
 class MemoryPluginsTemplate:
     @classmethod
     def apply_update_template(
-        cls, chat_context: list[MemoryContextItem], cache_type: MemoryCacheType
+        cls,
+        chat_context: list[MemoryContextItem],
+        cache_type: MemoryCacheType,
+        *,
+        of_turn: Callable[[TurnSnapshot], tuple[TurnEntityRef, ...]],
     ) -> str:
+        """The records as extraction reads them; each user input names its Turn's participants
+        as they stand now (``of_turn``)."""
         if not chat_context:
             return ""
 
@@ -56,12 +64,12 @@ class MemoryPluginsTemplate:
         for item in chat_context:
             if isinstance(item, TurnSnapshot):
                 if item.text:
-                    actors = "; ".join(
-                        f"participant={actor.participant_id or 'unknown'}, "
-                        f"user={actor.user_id or 'unknown'}"
-                        for actor in item.actors
+                    participants = "; ".join(
+                        f"participant={entry.participant_id or 'unknown'}, "
+                        f"user={entry.user_id or 'unknown'}"
+                        for entry in of_turn(item)
                     )
-                    blocks.append(f"### user [{actors or 'unattributed'}]:\n{item.text}")
+                    blocks.append(f"### user [{participants or 'unattributed'}]:\n{item.text}")
             elif isinstance(item, ModelInputMessage):
                 phase = item.phase.value if item.phase is not None else "unspecified"
                 blocks.append(

@@ -335,7 +335,11 @@ def ready_at(at: float, segment: str, trace_sequence: int) -> dict:
         # Its subject came with the speech: ready before it closed.
         (1200, -100.0, None),
         # Ready only after Engine admitted the Turn: its actors were resolved without it.
-        (1720, 420.0, "ready after the Turn's admission: its segment stayed unattributed"),
+        (
+            1720,
+            420.0,
+            "ready after the Turn's admission: what read its participants before then found the segment unattributed",
+        ),
     ],
     ids=["before-the-admission", "after-the-admission"],
 )

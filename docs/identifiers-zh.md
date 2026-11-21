@@ -86,25 +86,25 @@ flowchart LR
 | --- | --- | --- | --- |
 | `Participant.identity_revision` | 一个参与者当前已接受身份的版本，由 Session 管理。 | 单个 `participant_id` 内解释，初始为 `0`；接受不同身份时递增，不等于 Session 事件序号。 | [SessionRuntime.join() / request_identity()](../avatar-core/alphaavatar/core/session/runtime.py) 创建初始快照并更新版本。 |
 | `IdentityRequest.expected_revision` | 身份判断所依据的参与者版本，由调用方捕获。 | 一次判断的比较依据；当前版本已变化时返回 `STALE`，不得强行覆盖。 | 读取 `Participant.identity_revision` 后构造 [IdentityRequest](../avatar-core/alphaavatar/core/session/schemas/__init__.py)。 |
-| `TurnEntityRef.participant_id / user_id / identity_revision` | 某 Turn 捕获的身份事实与版本引用，由准入及 Session 投影维护。 | 归属于该 Turn；历史快照不随之后的身份更正而原地改写。 | [AvatarEngine._decision_actors()](../avatar-agents/alphaavatar/agents/avatar/engine.py) 按实际拥有的输入解析，写入 `TurnSnapshot.actors`。 |
+| `TurnEntityRef.participant_id / user_id / identity_revision` | 一个输入的参与者及其身份版本，由 `ParticipantRuntime.of_turn()` 在使用时按输入观测解析；Turn 本身不保存。 | 每次读取时按当时已结的段关联、设备绑定和 Session 当前身份给出；准入之后才结的关联从那时起算。 | [ParticipantRuntime.of_turn()](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 读取 `TurnSnapshot` 的输入观测：语音段按段关联，直接输入按设备，其余为匿名条目。 |
 | 片段关联 `token` | `ParticipantRuntime` 内部片段登记版本，防止过期推理重新打开关联。 | 一个 Runtime 内的片段登记生命周期；与用户身份、接入凭据均无关。 | [ParticipantRuntime.observe_segment()](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 分配，绑定和完成时验证。 |
 
 - `bind_user()` 接受声明、感知、Agent 和独立决策模型的判断；不限制只识别一次，也不要求 Agent 的目标用户先被感知模块提名。
 - `user_id=None` 表示明确解绑，不恢复初始用户、不重新分配 UUID。自动分配仅发生在业务入口创建新参与者时；Core `SessionRuntime.join()` 本身允许未绑定用户。
-- `Participant` 是不可变快照。新的读取使用当前接受版本；已捕获的写入可通过 `accepts_identity(..., current=False)` 核验历史，并固定原写入目标。身份更正不会自动迁移用户目录或历史 Memory。
+- `Participant` 是不可变快照。新的读取使用当前接受版本；已捕获的写入可通过 `accepts_identity(..., current=False)` 核验历史，并固定原写入目标。身份更正不会自动迁移用户目录或已写入的 Memory；尚未提取的 Turn 在提取时按参与者的当前身份读取。
 - `identity_history(participant_id)` 保存当前 Session 生命周期内全部已接受身份事件，独立于有界 Session 事件流；它不是持久恢复协议。
 
 ### 3.1 主动身份判断使用所属输入
 
 - 能力名为 `participant.identity`，由 Engine 注册当前 `runtime.participants`；处理入口是 `ParticipantRuntime.invoke(request, *, input_id=...)`。
 - `input_id` 来自 Loop／Registry 的显式调用上下文，不属于模型参数。读取 `TurnRuntime.get(input_id)`，缺失时拒绝，不回退到 `latest`。
-- `invoke()` 先投影该 Turn 的当前接受身份。省略 `expected_revision` 时使用投影后的身份版本；显式传入版本仍执行比较检查。
+- `invoke()` 先用 `of_turn()` 读该 Turn 的参与者及其当前接受身份。省略 `expected_revision` 时使用读到的身份版本；显式传入版本仍执行比较检查。
 - 多参与者输入不能隐式挑一个人，需明确选择目标 `participant_id`。
 
 ### 3.2 事实归属与私有资料读取分开
 
-- 多人时序窗口保留逐段实际 actors；未知语音不回退到设备或 primary，单段证据冲突只使该段保持未知。
-- Persona 先通过 `project_turn(snapshot)` 投影 actors 的当前接受身份；任一 actor 匿名、未绑定／无法取得有效身份，或包含不同用户时，不向该 Turn 提供私有 Persona。同一已接受用户的多个参与者可使用对应资料；后台资料加载与该 Turn 的私有内容准入分别处理。Memory 另按其 identity/scope 规则控制读取。
+- 多人时序窗口保留逐段的输入；未知语音不回退到设备或 primary，单段证据冲突只使该段保持未知。已结的段关联在整个会话内保留，来源退役、Persona 处理器停止后仍可读。
+- Persona 先通过 `of_turn(snapshot)` 读取参与者的当前接受身份；任一参与者匿名、未绑定／无法取得有效身份，或包含不同用户时，不向该 Turn 提供私有 Persona。同一已接受用户的多个参与者可使用对应资料；后台资料加载与该 Turn 的私有内容准入分别处理。Memory 另按其 identity/scope 规则控制读取。
 - 人物识别、关联与属性推理由 Persona 等处理器完成。轮次判断消费标注，不绑定用户，不因同一窗口含不同 entity 而使语音段无效。
 - 身份变化后的资料加载不能覆盖新身份。已冻结的模型输入和历史保持不变；运行中的身份检查及输出投递保护按既有执行契约处理。
 
@@ -162,14 +162,14 @@ flowchart LR
 | `revision` | 同一输入证据的修订版本，由输入窗口维护，随 evidence／assessment／decision 传递。 | 只在所属 `input_id` 内比较；用于丢弃异步返回的旧评估，不表示身份版本。 | `InputWindow` 从 `0` 开始；接收语音段、终稿、有效标注或上下文变化时递增，构造模型证据前已有有效版本。 |
 | `input_observation_ids` | 一次决定／Turn 明确拥有的输入观测引用集合。 | 固定实际提交成员，不等于轮次判断模型看到的全部背景音频，也不等于 cutoff 范围内全部事件。 | [TurnEvidenceBuilder.build()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/evidence.py) 收集，Policy 写入决定，Engine 逐项核验并传入 `TurnRuntime`。 |
 | `system_notices[].segment_ids` | 一条 [TurnNotice](../avatar-core/alphaavatar/core/turn/schemas/notice.py) 所针对的原语音段引用，沿用已有 segment ID；缺失转录的通知按代码列出受影响的段，不针对语音段的通知（如 `router.speech_completion_uncertain`）为空。 | 属于同一决定拥有的语音输入；不生成新的故障语音段。一个 Turn 最多 8 条不同通知，重复的合并。 | 转录期限或不可用结算时，由 [TurnTakingCoordinator._notice()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/coordinator.py) 按通知代码分组投影。 |
-| `turn_id` | Core 真正提交后生成的 Turn 标识，对应固定输入、cutoff 和 actors 快照。 | 一个已提交 Turn；同一输入 ID 在保留的快照范围内重复接纳会返回既有快照。 | [TurnRuntime.commit_input() / commit_event_input()](../avatar-core/alphaavatar/core/turn/runtime.py) 生成 UUID。 |
+| `turn_id` | Core 真正提交后生成的 Turn 标识，对应固定输入和 cutoff；参与者不固定在快照里，使用时由 `of_turn()` 读取。 | 一个已提交 Turn；同一输入 ID 在保留的快照范围内重复接纳会返回既有快照。 | [TurnRuntime.commit_input() / commit_event_input()](../avatar-core/alphaavatar/core/turn/runtime.py) 生成 UUID。 |
 | 轮次判断诊断 `decision_id` | `input.decision` / `turn.admission` 中指向本次决定标注的关联引用。 | 对应一条决定的 `EnvAnnotation.annotation_id`；不同于第 8 节的展示决定 ID。 | 决定通过 `TurnTakingDecision.to_annotation()` 创建标注，发布及准入 trace 复用其 `annotation_id`。 |
 | `decision_event_id / decision_event_sequence` | Turn metadata 中指向决定感知事件的引用和全局顺序。 | 固定到本次准入使用的决定事件，不另外创建事件。 | [AvatarEngine._admit_decision()](../avatar-agents/alphaavatar/agents/avatar/engine.py) 复制该 `PerceptionEvent` 的 ID 和 sequence。 |
 
 - `segment_id` 标识一段 VAD 输入，`input_id` 标识待决策输入，`turn_id` 标识已提交快照。三者的对象和生命周期不同，不能互换。
 - 轮次判断按时序消费观测和语义／视觉 addressing 标注；不按人物创建候选表，不识别人或绑定用户。
 - 语义 addressing 同样按时序窗口判断：上一次实际提交之后的全部转录按媒体时间排列，`observation_id` 用于定位、去重和标注目标，段引用用于关联，entity 只表示主体，三者都不把连续文本切成不同状态。
-- 当前未结束的窗口可跨 segment、跨 entity。有效且尚未实际确认的已封闭窗口，其音频也继续进入轮次判断模型共享的音频上下文，包括等待转录和已发布 COMMIT 尚待确认两种状态；实际拥有的输入引用仍各属原窗口。模型按支持的时间长度裁剪音频；不同人物出现在上下文中不意味着同人，也不会被强制归给一个 actor。
+- 当前未结束的窗口可跨 segment、跨 entity。有效且尚未实际确认的已封闭窗口，其音频也继续进入轮次判断模型共享的音频上下文，包括等待转录和已发布 COMMIT 尚待确认两种状态；实际拥有的输入引用仍各属原窗口。模型按支持的时间长度裁剪音频；不同人物出现在上下文中不意味着同人，也不会被强制归给一个参与者。
 - 带身份、来源、接入状态的准入核验在相应权威入口执行。决定过期、来源取消／换代或证据丢失时，Engine 可以拒绝提出的 COMMIT。
 
 ### 6.1 提出决定、封闭输入与实际提交

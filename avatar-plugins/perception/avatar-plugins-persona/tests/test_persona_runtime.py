@@ -34,16 +34,24 @@ from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.modules.participants.schemas import ParticipantInput
 from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
-from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.enums import EntityKind, IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest, Participant
-from alphaavatar.core.time import RuntimeClock
+from alphaavatar.core.time import RuntimeClock, RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime, TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
-from alphaavatar.core.turn.schemas import TurnEntityRef
+from alphaavatar.core.turn.schemas import TurnSnapshot
 from alphaavatar.plugins.persona.cache import DefaultPersonaCache
 from alphaavatar.plugins.persona.processors.profiler import ProfilerConfig, ProfilerProcessor
 from alphaavatar.plugins.persona.processors.profiler.op import PatchOp, ProfileDelta
@@ -189,17 +197,35 @@ def persona_for(runtime: AvatarRuntime, *extra: type[PersonaProcessorBase]):
     return persona, processors
 
 
+def typed(runtime: AvatarRuntime, input_id: str, text: str, *people) -> TurnSnapshot:
+    """One Turn of what each participant typed on a device of their own; None types on a
+    device bound to nobody. The Turn's participants are read from those devices."""
+    inputs = []
+    for person in people:
+        device = "phone-1" if person is None else f"device-{person.participant_id}"
+        if person is not None:
+            runtime.participants.bind_device(device, person.participant_id)
+        inputs.append(
+            EnvObservation(
+                kind=ObservationKind.TEXT_INPUT,
+                time_range=RuntimeTimeRange.point(runtime.perception.clock.now()),
+                source=PerceptionSourceRef(device, 1),
+                payload=TextPayload.create(text=text),
+                device_id=device,
+            )
+        )
+    return runtime.turn.commit_input(
+        input_id=input_id,
+        modality=TurnInputModality.TEXT,
+        text=text,
+        final_observations=tuple(inputs),
+    )
+
+
 def join(runtime: AvatarRuntime, *texts: str):
     participant = runtime.participants.join(user_id="alice", primary=True)
-    actor = TurnEntityRef(
-        participant_id=participant.participant_id,
-        user_id=participant.user_id,
-        identity_revision=participant.identity_revision,
-    )
     for index, text in enumerate(texts):
-        runtime.turn.commit_input(
-            input_id=f"input-{index}", modality=TurnInputModality.TEXT, text=text, actors=(actor,)
-        )
+        typed(runtime, f"input-{index}", text, participant)
     return participant
 
 
@@ -250,13 +276,13 @@ async def test_only_a_completed_start_finalizes_profiles_and_saves(
     runtime = avatar_runtime(tmp_path, providers, inference)
     extra = (BlockingProcessor,) if stop == "cancelled-start" else ()
     persona, processors = persona_for(runtime, *extra)
-    participant = join(runtime, "please call me Ally")
+    join(runtime, "please call me Ally")
 
     if stop == "normal":
         await persona.on_start()
         await wait_until(
-            lambda: len(persona.cache_for(participant.participant_id).turns) == 1,
-            "The profiler never recorded the Turn",
+            lambda: runtime.turn.events.consumer_cursor(ProfilerProcessor.CONSUMER_ID) == 1,
+            "The profiler never consumed the Turn",
         )
         await persona.on_stop()
         (prompt,) = providers.llm.prompts
@@ -308,9 +334,13 @@ async def test_profile_delta_is_discarded_when_a_provider_swallows_cancellation(
     participant = join(runtime, "my name is Mallory")
     await persona.on_start()
     cache = persona.cache_for(participant.participant_id)
-    await wait_until(lambda: len(cache.turns) == 1, "The profiler never recorded the Turn")
+    await wait_until(
+        lambda: runtime.turn.events.consumer_cursor(ProfilerProcessor.CONSUMER_ID) == 1,
+        "The profiler never consumed the Turn",
+    )
 
-    await profiler.stop(finalize=True)
+    await profiler.stop(finalize=True)  # Gives the Turn to its participant's cache.
+    assert len(cache.turns) == 1
     finalizing = asyncio.create_task(profiler.finalize_caches())
     async with asyncio.timeout(HANG_GUARD):
         await entered.wait()
@@ -335,17 +365,7 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
     if consumer == "running":
         await persona.on_start()
     newcomer = runtime.participants.join(primary=True)  # A generated, unresolved user.
-    actor = TurnEntityRef(
-        participant_id=newcomer.participant_id,
-        user_id=newcomer.user_id,
-        identity_revision=newcomer.identity_revision,
-    )
-    runtime.turn.commit_input(
-        input_id="input-0",
-        modality=TurnInputModality.TEXT,
-        text="please call me Ally",
-        actors=(actor,),
-    )
+    typed(runtime, "input-0", "please call me Ally", newcomer)
     # The identity resolves in the same tick, so the profiler can only consume afterwards.
     if resolution == "perception":
         outcome = runtime.participants.bind_user(
@@ -368,8 +388,11 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
     assert stream.consumer_cursor(ProfilerProcessor.CONSUMER_ID) == 0
     if consumer == "before-start":
         await persona.on_start()
-    cache = persona.cache_for(newcomer.participant_id)
-    await wait_until(lambda: len(cache.turns) == 1, "The pre-resolution Turn was never recorded")
+    # Consumed, the Turn waits for the session's end to be given to its participant.
+    await wait_until(
+        lambda: stream.consumer_cursor(ProfilerProcessor.CONSUMER_ID) == 1,
+        "The pre-resolution Turn was never consumed",
+    )
     await persona.on_stop()
 
     # Not skipped: the Turn is profiled for the participant's resolved user and saved there.
@@ -380,9 +403,59 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
     assert [item["metadata"]["path"] for item in saved["details_items"]] == ["/name"]
     assert runtime_state_file(runtime).is_file()
     assert not runtime.workspace.users.get(newcomer.user_id).root.exists()
-    # The committed Turn keeps the identity it was accepted with.
-    (frozen,) = runtime.turn.get("input-0").actors
-    assert (frozen.user_id, frozen.identity_revision) == (newcomer.user_id, 0)
+    # The Turn fixes no identity: its participant reads as the resolved user.
+    (entry,) = runtime.participants.of_turn(runtime.turn.get("input-0"))
+    assert (entry.participant_id, entry.user_id) == (newcomer.participant_id, "alice")
+    await runtime.aclose()
+
+
+async def test_speech_whose_speaker_is_known_only_after_it_was_consumed_is_profiled(
+    tmp_path: Path,
+) -> None:
+    """KD-49: the profiler gives a Turn to its participants at the session's end, so speech
+    whose association settled after the profiler consumed it, its microphone retired since,
+    still updates the speaker's profile."""
+    providers, inference = ScriptedProviders(name_ally), PersonaInference()
+    runtime = avatar_runtime(tmp_path, providers, inference)
+    persona, _ = persona_for(runtime)
+    await persona.on_start()
+    alice = runtime.participants.join(user_id="alice", primary=True)
+    perception = runtime.perception
+    segment = PerceptionSegmentRef(perception.next_source("microphone"), "segment-1")
+    token = runtime.participants.observe_segment(segment)
+    now = perception.clock.now()
+    transcript = EnvObservation.transcript_segment(
+        time_range=RuntimeTimeRange.point(now),
+        source=segment.source,
+        segment=segment,
+        payload=TextPayload.create(text="please call me Ally"),
+    )
+    perception.publish_observation(transcript)
+    runtime.turn.commit_event_input(
+        input_id="input-0",
+        modality=TurnInputModality.AUDIO,
+        text="please call me Ally",
+        started_at=now,
+        committed_at=now,
+        cutoff_sequence=perception.latest_event_sequence,
+        input_observation_ids=(transcript.observation_id,),
+    )
+    await wait_until(
+        lambda: runtime.turn.events.consumer_cursor(ProfilerProcessor.CONSUMER_ID) == 1,
+        "The profiler never consumed the Turn",
+    )
+    voice = PerceptionEntityRef("voice-alice")
+    runtime.participants.ensure_entity(
+        segment.source, voice, kind=EntityKind.SPEAKER, participant_id=alice.participant_id
+    )
+    assert runtime.participants.bind_segment(segment, voice, token=token)
+    runtime.participants.retire_source(segment.source)
+    await persona.on_stop()
+
+    (prompt,) = providers.llm.prompts
+    assert "please call me Ally" in prompt
+    (saved,) = inference.saved
+    assert saved["user_id"] == "alice"
     await runtime.aclose()
 
 
@@ -391,27 +464,16 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
     [("alice",), ("alice", "alice"), ("alice", "bob"), ("alice", None)],
     ids=["one-user", "one-user-twice", "two-users", "known-and-unknown"],
 )
-async def test_a_turns_private_profile_needs_its_every_actor_to_be_one_accepted_user(
+async def test_a_turns_private_profile_needs_its_every_participant_to_be_one_accepted_user(
     people: tuple[str | None, ...], tmp_path: Path
 ) -> None:
     runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), PersonaInference())
     persona, _ = persona_for(runtime)
-    actors = []
-    for user in people:
-        if user is None:  # An unattributed segment: heard through the device, nobody's.
-            actors.append(TurnEntityRef(kind="person", device_id="phone-1"))
-            continue
-        participant = runtime.participants.join(user_id=user)
-        actors.append(
-            TurnEntityRef(
-                participant_id=participant.participant_id,
-                user_id=participant.user_id,
-                identity_revision=participant.identity_revision,
-            )
-        )
-    snapshot = runtime.turn.commit_input(
-        input_id="input-0", modality=TurnInputModality.TEXT, text="hello", actors=tuple(actors)
-    )
+    # None: an input through a device bound to nobody.
+    speakers = [
+        None if user is None else runtime.participants.join(user_id=user) for user in people
+    ]
+    snapshot = typed(runtime, "input-0", "hello", *speakers)
 
     shown = persona.content_for(snapshot)
     # One user, if across two participants: theirs. Anyone else in the Turn: nobody's.
@@ -633,17 +695,7 @@ async def test_a_users_participants_are_profiled_and_saved_once_with_all_their_t
         return ProfileDelta(ops=[PatchOp(op="set", path="/name", value=value)])
 
     def said(input_id: str, text: str, *speakers) -> None:
-        actors = tuple(
-            TurnEntityRef(
-                participant_id=speaker.participant_id,
-                user_id=speaker.user_id,
-                identity_revision=speaker.identity_revision,
-            )
-            for speaker in speakers
-        )
-        runtime.turn.commit_input(
-            input_id=input_id, modality=TurnInputModality.TEXT, text=text, actors=actors
-        )
+        typed(runtime, input_id, text, *speakers)
 
     providers, inference = ScriptedProviders(name), PersonaInference()
     runtime = avatar_runtime(tmp_path, providers, inference)

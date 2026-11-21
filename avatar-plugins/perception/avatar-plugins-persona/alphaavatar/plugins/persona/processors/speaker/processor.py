@@ -127,7 +127,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             threshold=config.track_match_threshold, margin=config.track_match_margin
         )
 
-        # Three lanes: windows and the association Engine resolves a Turn's actors from; each
+        # Three lanes: windows and the association a Turn's participants are read from; each
         # bound segment's identity, which its Turn's Context waits for within its bound; and
         # its speaker's attributes, which nothing waits for.
         self._inference_queue: asyncio.Queue[SpeakerWindow | SpeakerSegmentState] = asyncio.Queue(
@@ -208,10 +208,6 @@ class SpeakerProcessor(PersonaProcessorBase):
     def _invalidate(self, state: SpeakerSegmentState) -> None:
         state.invalid = True
         self.runtime.participants.bind_segment(state.segment, None, token=state.token)
-
-    def _release_tracks(self) -> None:
-        for entity in self._tracks.drain_retired():
-            self.runtime.participants.release_entity(entity)
 
     def _discard_job(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
         state = job.state if isinstance(job, SpeakerWindow) else job
@@ -765,8 +761,8 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._segments.clear()
         self._retired_segments.clear()
         self._shorts.clear()
+        # The entities stay bound: Turns read their participants until the session closes.
         self._tracks.clear()
-        self._release_tracks()
         self._profile_caches.clear()
         self.perception_runtime.clear_observation_consumer(
             self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}

@@ -198,10 +198,6 @@ class FaceProcessor(PersonaProcessorBase):
             return None
         return VectorOps.norm(vector)
 
-    def _release_tracks(self) -> None:
-        for entity in self._tracks.drain_retired():
-            self.runtime.participants.release_entity(entity)
-
     """Annotation operations"""
 
     def _safe_face_annotations(
@@ -635,8 +631,8 @@ class FaceProcessor(PersonaProcessorBase):
         )
 
         self._last_sample_ts.clear()
+        # The entities stay bound: Turns read their participants until the session closes.
         self._tracks.clear()
-        self._release_tracks()
         self._profile_caches.clear()
 
         logger.info("Persona Face stopped consumer_id=%s", self.CONSUMER_ID)

@@ -38,4 +38,4 @@ class MemoryBase(LifecycleComponent):
 
     @abstractmethod
     def content_for(self, snapshot: TurnSnapshot) -> str:
-        """Project shared memory for the actual actors of one committed Turn."""
+        """Project shared memory for the participants of one committed Turn."""

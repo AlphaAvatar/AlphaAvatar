@@ -101,15 +101,14 @@ class MemoryProcessor(MemoryProcessorBase):
         identity: MemoryIdentitySnapshot | None = None,
     ) -> list[MemoryItem]:
         identity = identity or state.capture_identity()
-        users = {
-            p.user_id
-            for p in identity.participants
-            if p.user_id is not None
-            and self.runtime.participants.accepts_identity(p, current=False)
-        }
+        users = self.memory_runtime.accepted_users(identity.participants, current=False)
         unattributed = (
             identity.unattributed
-            or any(p.user_id not in users for p in identity.participants)
+            or any(
+                entry.user_id not in users
+                for entry in identity.participants
+                if entry.participant_id is not None
+            )
             or any(ref.kind is MemoryOwnerKind.USER and ref.id not in users for ref in owner_refs)
         )
         kept = unattributed or not owner_refs
@@ -190,8 +189,11 @@ class MemoryProcessor(MemoryProcessorBase):
         *,
         identity: MemoryIdentitySnapshot | None = None,
     ) -> str:
-        identity = identity or state.capture_identity(messages)
-        content = MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
+        of_turn = self.runtime.participants.of_turn
+        identity = identity or state.capture_identity(messages, of_turn=of_turn)
+        content = MemoryPluginsTemplate.apply_update_template(
+            messages, state.cache_type, of_turn=of_turn
+        )
         env_memory = "\n".join(
             item.render_line()
             for item in self.memory_runtime.visible_items(

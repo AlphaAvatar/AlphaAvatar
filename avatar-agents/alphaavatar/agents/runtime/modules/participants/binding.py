@@ -50,9 +50,6 @@ class ParticipantBindings:
     def get_device(self, device_id: DeviceId) -> ParticipantId | None:
         return self._devices.get(device_id)
 
-    def has_participant(self, participant_id: ParticipantId) -> bool:
-        return participant_id in self._devices.values() or participant_id in self._kinds
-
     def check_entity(
         self, entity_id: EntityId, kind: EntityKind, participant_id: ParticipantId | None = None
     ) -> None:
@@ -84,17 +81,6 @@ class ParticipantBindings:
     def get_entity(self, entity_id: EntityId) -> ParticipantId | None:
         bound = self._entities.get(entity_id)
         return None if bound is None else bound[0]
-
-    def release_entity(self, entity_id: EntityId) -> ParticipantId | None:
-        bound = self._entities.pop(entity_id, None)
-        if bound is None:
-            return None
-        participant_id, kind = bound
-        kinds = self._kinds[participant_id]
-        del kinds[kind]
-        if not kinds:
-            del self._kinds[participant_id]
-        return participant_id
 
     def clear(self) -> None:
         self._devices.clear()

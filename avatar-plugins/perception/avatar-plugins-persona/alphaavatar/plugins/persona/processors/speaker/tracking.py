@@ -39,7 +39,6 @@ class SpeakerTracks:
         self.margin = margin
 
         self._tracks: dict[EntityId, SpeakerTrack] = {}
-        self._retired: list[PerceptionEntityRef] = []
 
     def resolve(
         self, source: PerceptionSourceRef, vector: np.ndarray, seconds: float
@@ -70,10 +69,4 @@ class SpeakerTracks:
         return entity
 
     def clear(self) -> None:
-        self._retired.extend(track.entity for track in self._tracks.values())
         self._tracks.clear()
-
-    def drain_retired(self) -> tuple[PerceptionEntityRef, ...]:
-        retired = tuple(self._retired)
-        self._retired.clear()
-        return retired

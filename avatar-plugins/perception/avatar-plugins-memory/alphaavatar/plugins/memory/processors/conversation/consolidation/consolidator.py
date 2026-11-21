@@ -21,7 +21,7 @@ from typing import Any
 
 from alphaavatar.agents.memory.enums import MemoryKind
 from alphaavatar.agents.memory.schemas import MemoryItem, MemorySearchHit
-from alphaavatar.core.session import Participant
+from alphaavatar.core.turn.schemas import TurnEntityRef
 
 from .candidates import RecalledCandidateCache, consolidated_from_hits, merge_candidates
 from .config import CandidateSource, ConsolidationConfig, ConsolidationMode
@@ -131,7 +131,7 @@ class MemoryConsolidator:
         updated_at: datetime,
         trace_metadata: dict[str, Any],
         identity_is_current: Callable[[], bool],
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[MemoryItem]:
         return (
             await self._consolidate_session(
@@ -152,7 +152,7 @@ class MemoryConsolidator:
         updated_at: datetime,
         trace_metadata: dict[str, Any],
         identity_is_current: Callable[[], bool],
-        participants: tuple[Participant, ...] = (),
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> ConsolidationResult:
         if not items:
             return ConsolidationResult(source_items=[], to_insert=[], to_rewrite=[])
@@ -207,7 +207,7 @@ class MemoryConsolidator:
         return result
 
     async def _collect_candidates(
-        self, items: list[MemoryItem], *, participants: tuple[Participant, ...] = ()
+        self, items: list[MemoryItem], *, participants: tuple[TurnEntityRef, ...] = ()
     ) -> list[MemoryItem]:
         first = _validate_batch(items)
 

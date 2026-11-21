@@ -659,9 +659,6 @@ def test_a_track_is_one_voice_on_every_source_and_generation_it_is_heard_on() ->
     # Every source and generation it was heard on, in order: a new generation replaces none.
     (track,) = tracks._tracks.values()
     assert track.sources == [first, later, laptop]
-    assert tracks.drain_retired() == ()
-    tracks.clear()
-    assert tracks.drain_retired() == (entity,)
 
 
 async def test_one_voice_is_one_participant_across_devices_and_a_cancelled_source(

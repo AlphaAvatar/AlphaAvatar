@@ -1,15 +1,16 @@
 # Memory 修复：一轮未归属导致整批记忆只留在 context（KD-49）— Claude Code 日志
 
-- 分支：`dev/v0.6.9`，基线 `b2b4af8b`（KD-49 的登记）；日期为 CST。
+- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批）；日期为 CST。
 - 依据：用户 2026-11-21 的两次真实对话，记忆全部只写进了 `contexts/`；定位后登记为 [KD-49](../../../bugs-zh.md)，用户决定逐步修复。
-- 范围：第一批只加诊断，并做 Router 侧的改名和删减，不改行为。改动留在工作区，由用户提交。
+- 范围：第一批只加诊断，并做 Router 侧的改名和删减，不改行为；第二批按用户的方案实现。改动留在工作区，由用户提交。
 
 ## 批次总览
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| 第一批：诊断 | 每段关联结束、每轮准入、Memory 整批降级各记一行日志；Router 侧 `actors` 改为 `input_devices`，删掉判定上没人读的字段和从未被读取的 `InteractionAddressing` | 2026-11-21 | `b2b4af8b` | — | 待审查 |
-| 第二批：方案 | Turn 不在准入时固定参与者；只写方案，不写代码 | — | — | — | 未开始 |
+| 第一批：诊断 | 每段关联结束、每轮准入、Memory 整批降级各记一行日志；Router 侧 `actors` 改为 `input_devices`，删掉判定上没人读的字段和从未被读取的 `InteractionAddressing` | 2026-11-21 | `b2b4af8b` | `be32fbda` | 已提交 |
+| 第二批：使用时读取参与者 | Turn 不在准入时固定参与者，`ParticipantRuntime.of_turn()` 在使用时读取；段关联保留整个会话；Memory、Persona 改为使用时读取，profiler 在会话结束时分配 | 2026-11-21 | `be32fbda` | — | 待审查 |
+| 第三批：整理准入 | Engine `_admit_decision` 的重复拒绝分支与重复来源检查 | — | — | — | 未开始 |
 
 ## 1. 问题
 
@@ -121,3 +122,57 @@
 - `mutate_diag.py`：变异脚本；
 - `full.txt`、`full2.txt`：删除前后两次离线全量的输出；
 - `checkout-diff.txt`、`checkout-diff2.txt`：对应的测试前后工作区对比。
+
+## 7. 第二批：Turn 参与者在使用时读取（基线 `be32fbda`）
+
+### 7.1 用户的决定（2026-11-21）
+
+- 按用户的方案直接实现，不另写方案文档。
+- 解析函数叫 `of_turn`。
+- Memory 里统一用 `participants`，不另存一份"已接受参与者"。
+- profiler 用 (b)：会话结束时再把各轮分配给参与者。
+- `_admit_decision` 的整理单独作为第三批。
+- 段记录上限由我定为 16384。
+- 用户纠正了我的两处说法：
+  - `_segments` 和 `ParticipantBindings` 已经记着关联，复用它们，不新建记录；
+  - 实体在整个会话里一直存在，只在 Persona 处理器停止时才释放，不是会话中途释放。
+
+### 7.2 改动
+
+| 位置 | 改动 |
+|---|---|
+| avatar-core | 删掉 `TurnSnapshot.actors`，以及 `commit_input`、`commit_event_input` 的 `actors` 参数。Turn 的 `perception_events` 已带着它的输入观测 |
+| participant runtime | 新增 `of_turn(snapshot)`：按这一刻的状态读这一轮各输入的参与者。语音段按段关联，作废的段不算；直接输入（文字、图片）按设备绑定；其余为匿名条目。同一段的语音和转写合成一条。用户 ID 和身份版本取 Session 当前值；别的会话的 Turn 拒绝解析；新增 `identity_of(entry)`：给出条目所指的已接受身份，要求名下用户对得上；`identity_basis` 和身份工具 `invoke` 改用 `of_turn`，删掉 `project_turn`；来源退役时，只释放还在等待结果的段，已有结论的保留；`max_segments` 默认值从 1024 改为 16384；删掉 `release_entity`、`_release_participant`，以及 `ParticipantBindings` 的 `release_entity`、`has_participant` |
+| Persona | 说话人和人脸处理器停止时不再释放实体，绑定留到 participant runtime 关闭；删掉 `_release_tracks`、跟踪的 `drain_retired`；`content_for` 改用 `of_turn`；profiler 只记下每一轮的输入观测，去掉音频；会话结束、合并缓存之前，再用 `of_turn` 分配给参与者 |
+| Engine | 删掉 `_decision_actors`，以及提交时的 `actors`。`_participant_entity` 并入只解析 `addressees` 的 `_entity`。`Turn participants` 日志改用 `of_turn`，各段状态从 Turn 的输入读取。共 849 行 → 796 行 |
+| Memory | `MemoryIdentitySnapshot` 只保留 `participants`：每条输入归属到谁，只取参与者、用户和身份版本，匿名的合成一条。落盘证据只剩 `participants` 和 `unattributed`；`capture_identity(messages, of_turn=...)`：用户输入在提取时读取，模型和工具记录仍按准入时的身份；"已接受用户"由新增的 `accepted_users` 推出；存储层、consolidator 的接口改为接收这些条目，存储层新增 `_users`；提取提示模板改用 `of_turn` |
+| Doctor | `association_ready` 的说明和提示改为：关联晚于准入时，只有在那之前读取参与者的一方，例如这一轮的上下文，会把这一段当作未归属；Memory 在会话结束时仍能读到 |
+| 文档 | `AGENTS.md`、`identifiers-zh.md`、`doctor.md`、KD-49 状态 |
+
+### 7.3 行为变化，需要知道
+
+- **更正身份会影响尚未提取的轮**：参与者被更正后，尚未提取的更早的轮按更正后的用户提取，因为以 Session 为准。
+  - 原测试 `test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user` 断言的旧规则（更正前的轮变成未归属）不再成立，已改为 `test_memory_reads_earlier_turns_as_their_participants_corrected_user`。
+  - 用户主动更正时这是对的；跟踪混进了别人的声音后再改绑时，别人的话也会归到新用户，与 KD-41 同类。
+- **已写入的不变**：已写入的 Memory 不受影响；模型和工具记录仍按它们准入时的身份（`identity_basis`）。
+
+### 7.4 验证
+
+| 测试 | 覆盖 |
+|---|---|
+| `test_memory_runtime.py` 新增 `test_speech_whose_speaker_is_known_only_after_admission_is_the_users_memory` × 2 | KD-49 本身：一句话在准入时还没关联，之后绑定，麦克风退役后 Memory 在会话结束时提取，进了 alice 的 `owner`；始终没绑定时仍留在 `context` |
+| `test_persona_runtime.py` 新增 `test_speech_whose_speaker_is_known_only_after_it_was_consumed_is_profiled` | profiler 已消费这一轮，关联才绑定，会话结束时仍更新 alice 的资料 |
+| `test_participant_segments.py` 新增 `test_a_turns_participants_are_read_from_its_inputs_whenever_asked` | 语音和转写合成一条；作废后为匿名；直接输入按设备；没绑定的设备为匿名；`identity_of` 校验用户；别的会话的 Turn 拒绝解析 |
+| `avatar-host/tests/test_turn_participants.py`（由 `test_turn_actors.py` 改名、改写） | 真实链路：准入时按段关联、不看设备与主参与者；准入时还在等待的一段之后绑定就算进来；来源退役后仍可读 |
+| 迁移的测试 | Memory、召回诊断、Persona、Context、Loop、参与者身份：不再用 `actors=`，改为通过真实的设备绑定或段关联建立参与者 |
+
+- 变异 9 个：8 个被发现。存活的"Persona 私有资料不查 `accepts_identity`"说明那行检查是多余的：`of_turn` 给出的就是当前身份。已删掉，没有为它补测试。
+- 离线全量：按 Quality 的方式运行，907 passed（312.30 s；原 903 加新增 4），测试前后工作区完全一致。
+- 仓库规范：`ruff check .`、`ruff format --check .`（791 个文件）、`check_workspace.py`、`pre-commit validate-config` 都通过。
+- 证据：会话临时目录 `participants/` 下的 `mutate_batch2.py`、`full3.txt`、`checkout-diff3.txt`。
+
+### 7.5 未验证 / 后续
+
+- 没有用真实通话验证。下次通话后，可以用第一批的日志确认空说话人属于"晚到"还是"根本没有关联"，前者此后应进入用户的长期记忆。
+- 没有覆盖的部分，见 KD-49：段没有声纹、没匹配上跟踪或推理失败时仍未归属；一批里含未归属输入时整批降级的规则未改。
+- 第三批：整理 Engine `_admit_decision`。

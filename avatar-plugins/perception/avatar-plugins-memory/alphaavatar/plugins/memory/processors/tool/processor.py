@@ -85,7 +85,7 @@ class ToolProcessor(MemoryProcessor):
                 return
 
             self.memory_runtime.sync_session()
-            identity = state.capture_identity(messages)
+            identity = state.capture_identity(messages, of_turn=self.runtime.participants.of_turn)
             participants = self._participants(identity, messages)
             content = self.render_context_content(state, messages, identity=identity)
             delta = await self._provider.extract(

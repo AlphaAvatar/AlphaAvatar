@@ -32,12 +32,17 @@ from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest
+from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
@@ -73,11 +78,21 @@ class Recall(SimpleNamespace):
     actor: TurnEntityRef
 
     def commit(self, index: int, text: str = "Where should we eat tonight?") -> TurnSnapshot:
+        """Typed on the participant's own device: the Turn's participant is read from it."""
+        device = f"device-{self.actor.participant_id}"
+        self.runtime.participants.bind_device(device, self.actor.participant_id)
+        observation = EnvObservation(
+            kind=ObservationKind.TEXT_INPUT,
+            time_range=RuntimeTimeRange.point(self.runtime.perception.clock.now()),
+            source=PerceptionSourceRef(device, 1),
+            payload=TextPayload.create(text=text),
+            device_id=device,
+        )
         return self.runtime.turn.commit_input(
             input_id=f"input-{index}",
             modality=TurnInputModality.TEXT,
             text=text,
-            actors=(self.actor,),
+            final_observations=(observation,),
         )
 
     def outcomes(self) -> list[list[tuple[str, int]]]:

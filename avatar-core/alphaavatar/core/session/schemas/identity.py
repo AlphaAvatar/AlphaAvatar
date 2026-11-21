@@ -51,7 +51,7 @@ class IdentityRef:
 
 @dataclass(frozen=True, slots=True)
 class IdentityBasis:
-    """Frozen identity evidence; an empty basis explicitly has no participant actors."""
+    """Frozen identity evidence; an empty basis explicitly has no participants."""
 
     participants: tuple[IdentityRef, ...] = ()
 

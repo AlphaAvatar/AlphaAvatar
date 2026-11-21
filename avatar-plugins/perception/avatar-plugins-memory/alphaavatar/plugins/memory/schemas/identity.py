@@ -16,17 +16,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from alphaavatar.agents.memory.schemas import MemoryOwnerRef, MemoryParticipantRef
-from alphaavatar.core.session import Participant
 from alphaavatar.core.turn.schemas import TurnEntityRef
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryIdentitySnapshot:
+    """Whom a batch is from, as it was captured: each participant its inputs name, by its
+    identity then, and one anonymous entry for inputs attributed to no one."""
+
     sequence: int
-    participants: tuple[Participant, ...]
+    participants: tuple[TurnEntityRef, ...]
     owner_refs: tuple[MemoryOwnerRef, ...]
     participant_refs: tuple[MemoryParticipantRef, ...]
-    actors: tuple[TurnEntityRef, ...] = ()
     unattributed: bool = False
 
     def evidence(self) -> dict:
@@ -34,19 +35,11 @@ class MemoryIdentitySnapshot:
             "sequence": self.sequence,
             "participants": [
                 {
-                    "participant_id": participant.participant_id,
-                    "user_id": participant.user_id,
-                    "identity_revision": participant.identity_revision,
+                    "participant_id": entry.participant_id,
+                    "user_id": entry.user_id,
+                    "identity_revision": entry.identity_revision,
                 }
-                for participant in self.participants
-            ],
-            "actors": [
-                {
-                    "participant_id": actor.participant_id,
-                    "user_id": actor.user_id,
-                    "identity_revision": actor.identity_revision,
-                }
-                for actor in self.actors
+                for entry in self.participants
             ],
             "unattributed": self.unattributed,
         }
