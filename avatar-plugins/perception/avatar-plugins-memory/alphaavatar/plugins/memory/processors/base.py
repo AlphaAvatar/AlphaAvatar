@@ -114,11 +114,14 @@ class MemoryProcessor(MemoryProcessorBase):
         kept = unattributed or not owner_refs
         if kept:
             # Preserve unverified observations in their originating context, without publishing
-            # them into another user's long-term memory or the Avatar's shared owner scope.
-            owner_refs, scope = (
-                [MemoryOwnerRef.avatar(self.avatar_id)],
-                MemoryScope.context(state.context_id),
-            )
+            # them into another user's long-term memory or the Avatar's shared owner scope. They
+            # stay their verified users', whose Turns alone recall them there; the Avatar holds
+            # them only when no user is verified, since its memory is everyone's.
+            verified = [
+                ref for ref in owner_refs if ref.kind is MemoryOwnerKind.USER and ref.id in users
+            ]
+            owner_refs = verified or [MemoryOwnerRef.avatar(self.avatar_id)]
+            scope = MemoryScope.context(state.context_id)
 
         extra_data = {**(extra_data or {}), "session_identity": identity.evidence()}
         if unattributed:

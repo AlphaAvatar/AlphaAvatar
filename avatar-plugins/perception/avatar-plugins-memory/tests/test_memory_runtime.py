@@ -676,6 +676,84 @@ async def test_speech_whose_speaker_is_known_only_after_admission_is_the_users_m
     await runtime.aclose()
 
 
+def joined(runtime: AvatarRuntime, user_id: str) -> TurnEntityRef:
+    participant = runtime.participants.join(user_id=user_id)
+    return TurnEntityRef(
+        participant_id=participant.participant_id,
+        user_id=participant.user_id,
+        identity_revision=participant.identity_revision,
+    )
+
+
+@pytest.mark.parametrize("batch", ["with-an-unattributed-turn", "of-two-people"])
+async def test_a_batch_kept_in_its_context_stays_its_users_and_only_their_turns_recall_it(
+    batch: str, tmp_path: Path
+) -> None:
+    """A batch kept in its context, for an unattributed Turn or for more than one person, is
+    still its verified users': only a recall for one of them finds it there. An anonymous
+    speaker's recall, which only the Avatar's memory answers, does not; another context's
+    never does."""
+
+    async def remember(prompt: str) -> MemoryDelta:
+        return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers green tea")])
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=remember, tool=empty))
+    memory, alice = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    if batch == "with-an-unattributed-turn":
+        spoken(runtime, "I prefer green tea")  # Its speaker is never associated.
+        users = ["alice"]
+    else:
+        commit_turn(runtime, joined(runtime, "bob"), 0, "So do I")
+        users = ["alice", "bob"]
+    commit_turn(runtime, alice, 1, "Green tea, please")
+    await memory.on_stop()
+
+    (item,) = memory.memory_state.get(memory_type=MemoryType.CONVERSATION)
+    assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
+    assert {(ref.kind, ref.id) for ref in item.owner_refs} == {
+        (MemoryOwnerKind.USER, user) for user in users
+    }
+    store = SQLiteMemoryStore(runtime.workspace.data.memory.records_file)
+    await store.initialize()
+    avatar = MemoryOwnerRef.avatar("avatar")
+    elsewhere = item.context.model_copy(update={"context_id": "another-context"})
+    for owners, context, found in [
+        *(([avatar, MemoryOwnerRef.user(user)], item.context, True) for user in users),
+        ([avatar], item.context, False),
+        ([avatar, MemoryOwnerRef.user("alice")], elsewhere, False),
+    ]:
+        visible = await store.get_visible([item.memory_id], owner_refs=owners, context=context)
+        assert [found.memory_id for found in visible] == ([item.memory_id] if found else [])
+    await runtime.aclose()
+
+
+async def test_an_owner_never_verified_is_never_kept(tmp_path: Path) -> None:
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory = memory_for(runtime)
+    speaker(runtime)
+    await memory.on_start()
+    memory.sync_session()
+    state = memory.context_state(memory.root_context_id)
+    (processor,) = (item for item in memory._processors if item.name == "conversation")
+    alice, mallory = MemoryOwnerRef.user("alice"), MemoryOwnerRef.user("mallory")
+
+    for owners, kept in (([alice, mallory], ["user:alice"]), ([mallory], ["avatar:avatar"])):
+        (item,) = processor.build_memory_items(
+            state=state,
+            memory_type=MemoryType.CONVERSATION,
+            patches=[PatchOp(value="prefers green tea")],
+            owner_refs=owners,
+            participant_refs=[],
+            source_refs=[],
+            scope=MemoryScope.owner(),
+        )
+        assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
+        assert [ref.key for ref in item.owner_refs] == kept
+    await memory.on_stop()
+    await runtime.aclose()
+
+
 def text_event(perception: PerceptionRuntime) -> None:
     now = perception.clock.now()
     perception.publish_observation(

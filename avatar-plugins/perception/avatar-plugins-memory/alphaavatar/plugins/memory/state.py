@@ -356,6 +356,7 @@ class MemoryContextState:
                 continue
             if item.id in self._turn_input_ids:
                 raise ModelProtocolError("Memory item identity collides with committed user input")
+
             previous = staged.get(item.id, self._message_ids.get(item.id))
             if previous is not None:
                 if not same_message(previous, item):

@@ -1,6 +1,6 @@
 # Memory 修复：一轮未归属导致整批记忆只留在 context（KD-49）— Claude Code 日志
 
-- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批），第三批基线 `90883e9f`（第二批）；日期为 CST。
+- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批），第三批基线 `90883e9f`（第二批），第四批基线 `68d78414`（第三批）；日期为 CST。
 - 依据：用户 2026-11-21 的两次真实对话，记忆全部只写进了 `contexts/`；定位后登记为 [KD-49](../../../bugs-zh.md)，用户决定逐步修复。
 - 范围：第一批只加诊断，并做 Router 侧的改名和删减，不改行为；第二批按用户的方案实现；第三批整理 Engine 的准入，不改行为。改动留在工作区，由用户提交。
 
@@ -10,7 +10,8 @@
 |---|---|---|---|---|---|
 | 第一批：诊断 | 每段关联结束、每轮准入、Memory 整批降级各记一行日志；Router 侧 `actors` 改为 `input_devices`，删掉判定上没人读的字段和从未被读取的 `InteractionAddressing` | 2026-11-21 | `b2b4af8b` | `be32fbda` | 已提交 |
 | 第二批：使用时读取参与者 | Turn 不在准入时固定参与者，`ParticipantRuntime.of_turn()` 在使用时读取；段关联保留整个会话；Memory、Persona 改为使用时读取，profiler 在会话结束时分配 | 2026-11-21 | `be32fbda` | `90883e9f` | 已提交 |
-| 第三批：整理准入 | Engine `_admit_decision` 的重复拒绝分支并为一处，去掉重复的来源检查；先补准入各分支的测试 | 2026-11-22 | `90883e9f` | — | 待审查 |
+| 第三批：整理准入 | Engine `_admit_decision` 的重复拒绝分支并为一处，去掉重复的来源检查；先补准入各分支的测试 | 2026-11-22 | `90883e9f` | `68d78414` | 已提交 |
+| 第四批：降级后的 owner | 整批降为 `context` 时保留已验证用户的 owner，没有已验证用户时才归 Avatar | 2026-11-22 | `68d78414` | — | 待审查 |
 
 ## 1. 问题
 
@@ -243,3 +244,47 @@
 - **证据**：
   - 改动前的行覆盖、第一轮变异和改动前的全量：会话临时目录 `admission/` 下的 `lines-before.json`、`mutate.py`、`mutate.txt`、`full-before.txt`；
   - 从仓库外加载原版 Engine 的插件、两个存活变异的重跑结果、改后的全量与工作区对比：`~/alphaavatar-kd49-check/`。
+
+## 9. 第四批：降级后的 owner（基线 `68d78414`）
+
+### 9.1 用户的决定（2026-11-22）
+
+- 一批里有未归属的轮时，scope 降为 `context`，这一条合理，保留。
+- 但不能因此把 owner 只设为 Avatar、去掉已有的 owner。
+
+### 9.2 原因（已核实）
+
+- **跨 context 的保护只靠 scope**：检索要求 owner 匹配，并且 scope 适用于当前 context（`storage/sqlite/query.py` 的 `visibility_clause`）。scope 为 `context:<本次>` 时，别的 context 查不到，owner 写谁都一样。
+- **换成 Avatar 反而放宽了可见范围**：被动检索总是带上 Avatar 这个 owner（`retrieval/passive.py`），`visible_items` 也把 Avatar 的记忆当作所有人可见。所以原来的做法，让同一 context 里任何人都能召回用户说过的话，包括没认出来的说话人和其他用户。
+- **归属信息丢了**：用户只留在 `participant_refs` 里，数据却记在 Avatar 名下。
+
+### 9.3 改动
+
+- `processors/base.py` 的 `build_memory_items`：降为 `context` 时，owner 只保留已验证的用户，即这批里按提取时的身份版本被接受的用户。
+  - 没有已验证用户时，才归 Avatar，与原来没有 owner 时相同。
+  - 不把 Avatar 加进 owner，否则同一 context 里人人可见。
+  - 一批里有多个已验证用户时，都保留。
+- 不变的部分：
+  - scope 仍降为 `context`，`unattributed_input` 标记和 `Memory items kept in their context` 日志照旧；
+  - 落盘目录由 scope 决定，仍是 `contexts/`；
+  - 会话内整合要求 scope 和 owner 都相同才合并，不会并进用户的长期记忆；
+  - 写入检查要求用户 owner 都已被接受，保留下来的 owner 都满足。
+- 已验证的过滤对应写入检查：未被接受的用户 owner 会让 `store.add_messages` 抛出 `PermissionError`。经过 `capture_identity` 选出的 owner 实际上都会通过这道过滤。
+- 这一改动不会让这类记忆在之后的会话里被召回，scope 仍是 `context`。那是第 2 节第 4 点的决定。
+
+### 9.4 验证
+
+| 测试 | 覆盖 |
+|---|---|
+| `test_a_batch_kept_in_its_context_stays_its_users_and_only_their_turns_recall_it` × 2 | 一批里有一轮从没归属，或者有两个人：scope 为 `context`，owner 为这批的已验证用户（alice，或 alice 和 bob）。SQLite 的可见性：同一 context 里带某个用户的查询看得到；只带 Avatar 的查询（未归属那一轮的被动检索）看不到；别的 context 看不到 |
+| `test_an_owner_never_verified_is_never_kept` | 直接调用 `build_memory_items`：owner 里没验证过的用户（mallory）被去掉；只剩它时归 Avatar |
+| 原有的 `test_model_records_are_attributed_by_their_own_identity_basis[after-execution]`、KD-49 的 `[never-bound]` | 这批里没有已验证用户：仍归 Avatar，断言不变 |
+
+- 变异测试：从仓库外把变异版本的 `build_memory_items` 换到基类上运行，不改工作区。
+  - 没有变异的对照组 22 passed。
+  - 4 个变异都被发现：恢复成原规则（只给 Avatar）、保留未验证的用户、把 Avatar 也加进 owner、不降 scope。
+  - 每个变异的运行里另有 1 个 error：断言失败后，那个用例没有关闭 runtime，在 teardown 时报错。对照组里没有。
+- Memory 插件测试：37 passed。
+- 离线全量：按 AGENTS.md 第 19 节的方式运行，936 passed（336.57 s；原 933 加新增 3）。工作区前后对比只多出 `docs/bugs-zh.md` 和这份日志，是测试期间写的，测试没有留下文件。
+- 仓库规范：`ruff check .`、`ruff format --check .`、`check_workspace.py`、`git diff --check`、改动文件的 pre-commit 都通过。
+- 证据：`~/alphaavatar-kd49-check/owners/`（`plugin/swap_build.py`、`mutate.py`、`mutate.txt`）。
