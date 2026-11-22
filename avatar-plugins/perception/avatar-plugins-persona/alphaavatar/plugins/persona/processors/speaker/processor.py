@@ -78,6 +78,7 @@ class SpeakerSegmentState:
     inference_failed: bool = False
     vector: np.ndarray | None = None
     vector_sec: float = 0.0  # Seconds of audio its vector is from: a window's, or its own
+    speech_sec: float | None = None  # Its VAD length, once it closed; for the log alone
     last_audio: bytes | None = None
     identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
     # The short speech of its source just before it, which leads its own audio; the segments it
@@ -191,7 +192,10 @@ class SpeakerProcessor(PersonaProcessorBase):
 
     def _retire(self, state: SpeakerSegmentState) -> None:
         self.runtime.participants.finish_segment_resolution(
-            state.segment, token=state.token, reason=self._unbound_reason(state)
+            state.segment,
+            token=state.token,
+            reason=self._unbound_reason(state),
+            speech_sec=state.speech_sec,
         )
         if self._segments.get(state.segment) is state:
             self._segments.pop(state.segment)
@@ -216,7 +220,10 @@ class SpeakerProcessor(PersonaProcessorBase):
         if self._segments.get(state.segment) is state:
             state.inference_failed = True
             self.runtime.participants.finish_segment_resolution(
-                state.segment, token=state.token, reason=self._unbound_reason(state)
+                state.segment,
+                token=state.token,
+                reason=self._unbound_reason(state),
+                speech_sec=state.speech_sec,
             )
             if state.closed and state.pending == 0:
                 self._retire(state)
@@ -335,6 +342,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         state = self._state(observation)
         if state is None or state.closed:
             return
+        state.speech_sec = observation.time_range.duration_sec
 
         # Include the final tail in a full window: after a window, its buffer keeps that window
         # less a step, and anything beyond is tail. Speech that never filled one is inferred
@@ -567,7 +575,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 device_id=state.device_id,
             )
             if not self.runtime.participants.bind_segment(
-                state.segment, state.entity, token=state.token
+                state.segment, state.entity, token=state.token, speech_sec=state.speech_sec
             ):
                 return
             for segment, token in state.led.segments:
@@ -627,7 +635,10 @@ class SpeakerProcessor(PersonaProcessorBase):
                 # Missing model evidence leaves the segment unattributed, not invalidated.
                 state.inference_failed = True
                 self.runtime.participants.finish_segment_resolution(
-                    state.segment, token=state.token, reason=self._unbound_reason(state)
+                    state.segment,
+                    token=state.token,
+                    reason=self._unbound_reason(state),
+                    speech_sec=state.speech_sec,
                 )
             raise
 

@@ -13,9 +13,17 @@
 # limitations under the License.
 from enum import Enum
 
+from .reference import MemoryOwnerKind
+
 
 class MemoryType(str, Enum):
     Avatar = "Assistant Memory"
     CONVERSATION = "User Interaction with Assistant"
     TOOLS = "Assistant Interaction with Tools"
     ENV = "Environment Observations"
+
+    @property
+    def read_by(self) -> MemoryOwnerKind:
+        """The kind of owner it is read through, whatever its scope: the Avatar's own memory
+        through the Avatar, so by every reader; each other memory through its users only."""
+        return MemoryOwnerKind.AVATAR if self is MemoryType.Avatar else MemoryOwnerKind.USER

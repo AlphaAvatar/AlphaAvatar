@@ -31,7 +31,7 @@ from launch_runner_samples import LaunchProbeRunner, LaunchProbeTwinRunner
 
 from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.configs.runtime_config import InferenceConfig
-from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryOwnerRef
+from alphaavatar.agents.memory.schemas import MemoryOwnerRef
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import (
     InferenceExecutor,
@@ -346,9 +346,7 @@ async def test_plugin_factories_call_the_planned_runner_methods(
         persona = restored.persona.get_plugin(runtime=runtime)
         tools = restored.tools.get_tools(runtime=runtime)
         recalled = await memory.store.recall_by_graph_node(
-            owner_refs=[MemoryOwnerRef.avatar("alphaavatar_demo")],
-            context=MemoryContextRef(episode_id="episode", context_id="context"),
-            node_query="preferences",
+            owner_refs=[MemoryOwnerRef.avatar("alphaavatar_demo")], node_query="preferences"
         )
         speaker = await persona.store.search_speaker_vector(
             speaker_vector=np.zeros(4, dtype=np.float32), threshold=0.5

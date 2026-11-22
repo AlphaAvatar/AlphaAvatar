@@ -17,24 +17,21 @@ import pathlib
 import sqlite3
 
 from alphaavatar.agents.memory import MemoryStoreConflict
-from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryItem, MemoryOwnerRef
+from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 
 from .database import connect
 from .query import fetch_visible, normalize_memory_ids, placeholders, visibility_clause
 
 
 def _latest_superseders(
-    connection: sqlite3.Connection,
-    memory_ids: list[str],
-    owner_refs: list[MemoryOwnerRef],
-    context: MemoryContextRef,
+    connection: sqlite3.Connection, memory_ids: list[str], owner_refs: list[MemoryOwnerRef]
 ) -> dict[str, MemoryItem]:
     memory_ids = normalize_memory_ids(memory_ids)
 
     if not memory_ids or not owner_refs:
         return {}
 
-    visibility, params = visibility_clause("r", owner_refs, context)
+    visibility, params = visibility_clause("r", owner_refs)
 
     rows = connection.execute(
         f"""
@@ -70,10 +67,7 @@ def _latest_superseders(
 
 
 def resolve_current_sync(
-    path: pathlib.Path,
-    memory_ids: list[str],
-    owner_refs: list[MemoryOwnerRef],
-    context: MemoryContextRef,
+    path: pathlib.Path, memory_ids: list[str], owner_refs: list[MemoryOwnerRef]
 ) -> list[MemoryItem]:
     memory_ids = normalize_memory_ids(memory_ids)
 
@@ -87,7 +81,7 @@ def resolve_current_sync(
         # snapshot without blocking concurrent writers.
         connection.execute("BEGIN")
 
-        base = fetch_visible(connection, memory_ids, owner_refs, context)
+        base = fetch_visible(connection, memory_ids, owner_refs)
 
         current = {item.memory_id: item for item in base}
 
@@ -102,7 +96,6 @@ def resolve_current_sync(
                 connection,
                 list(dict.fromkeys(item.memory_id for item in resolved.values())),
                 owner_refs,
-                context,
             )
 
             changed = False

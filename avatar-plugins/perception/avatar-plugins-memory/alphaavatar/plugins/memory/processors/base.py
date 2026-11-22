@@ -202,7 +202,6 @@ class MemoryProcessor(MemoryProcessorBase):
                     memory_type=MemoryType.ENV, context_id=state.context_id
                 ),
                 identity=identity,
-                context=state.context,
             )
         )
         if not env_memory:

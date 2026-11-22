@@ -57,10 +57,12 @@ class RecallInference:
         self.gate, self.entered = asyncio.Event(), asyncio.Event()
         self.gate.set()
         self.reply: Callable[[], dict] = lambda: {"candidates": []}
+        self.asked: list[dict] = []
 
     async def do_inference(self, method: str, data: bytes) -> bytes:
         request = json.loads(data)
         if request["op"] == VectorRunnerOP.search_by_context:
+            self.asked.append(request["param"])
             self.entered.set()
             await self.gate.wait()
             return json.dumps(self.reply()).encode()
@@ -178,17 +180,26 @@ async def recall(request: pytest.FixtureRequest, tmp_path: Path):
 
 async def test_completed_recall_reports_its_items_or_an_empty_result(recall: Recall) -> None:
     state = recall.memory.context_state(recall.memory.root_context_id)
+    # An earlier session's memory, kept in its context: alice's all the same, so her recall
+    # finds it here.
+    earlier = state.context.model_copy(
+        update={"context_id": "an-earlier-context", "session_id": "an-earlier-session"}
+    )
     (item,) = items = [
         MemoryItem(
-            context=state.context,
-            scope=MemoryScope.context(state.context_id),
-            owner_refs=[MemoryOwnerRef.avatar("avatar")],
+            context=earlier,
+            scope=MemoryScope.context(earlier.context_id),
+            owner_refs=[MemoryOwnerRef.user("alice")],
             value="The user prefers quiet restaurants",
             memory_type=MemoryType.CONVERSATION,
         )
     ]
     await recall.memory.store.commit(
-        items, context_id=state.context_id, processor="test", idempotency_key="seed"
+        items,
+        context_id=earlier.context_id,
+        processor="test",
+        idempotency_key="seed",
+        participants=(recall.actor,),
     )
     recall.inference.reply = lambda: {"candidates": [{"memory_id": item.memory_id}]}
     first = recall.commit(0)
@@ -198,6 +209,14 @@ async def test_completed_recall_reports_its_items_or_an_empty_result(recall: Rec
     assert await recall.runtime.turn.wait_context_ready(second)
 
     assert await recall.settled(2) == [[("ok", 1)], [("empty", 0)]]
+    # The vector search narrows to what alice reads, by type and owner, in no scope.
+    user_types = [MemoryType.CONVERSATION.value, MemoryType.TOOLS.value, MemoryType.ENV.value]
+    groups = recall.inference.asked[0]["visibility"]
+    assert sorted((group["owner_keys"], group["memory_types"]) for group in groups) == [
+        (["avatar:avatar"], [MemoryType.Avatar.value]),
+        (["user:alice"], user_types),
+    ]
+    assert "scope_keys" not in recall.inference.asked[0]
     # Bounded metadata only: recalled text never enters the trace.
     serialized = json.dumps(recall.runtime.perception.input_trace.snapshot().to_dict())
     assert "quiet restaurants" not in serialized and "Where should we eat" not in serialized

@@ -226,7 +226,7 @@ class MemoryConsolidator:
             hits = await self._candidate_search(
                 [item.embedding_text() for item in items],
                 owner_refs=first.owner_refs,
-                context=first.context,
+                scope=first.scope,
                 participants=participants,
             )
 

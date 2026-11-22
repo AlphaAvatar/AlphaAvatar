@@ -399,6 +399,7 @@ Their persistence rules do not belong in Core or Engine.
 - A failed batch restored after newer arrivals must not overwrite those newer arrivals.
 - Passive retrieval supplies contextual clues; active retrieval can request more precise evidence.
 - User rebinding does not authorize moving or exposing another user's stored data.
+- Retrieval reads a memory by its type and owners, never its scope: Avatar memory is everyone's; other types are their user owners' only.
 - Historical context stays frozen while current identity-dependent state can change.
 - Session end is one finalization boundary, not a universal persistence trigger.
 - Keep processor-specific lifecycle, configuration, prompts and providers together.

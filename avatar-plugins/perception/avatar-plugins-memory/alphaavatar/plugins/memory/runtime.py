@@ -22,18 +22,12 @@ from datetime import UTC, datetime
 from alphaavatar.agents.avatar.provider.records import MODEL_RECORD_SCHEMA
 from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
 from alphaavatar.agents.memory import MemoryBase
-from alphaavatar.agents.memory.enums import (
-    MemoryCacheType,
-    MemoryOwnerKind,
-    MemoryScopeKind,
-    MemoryType,
-)
+from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
 from alphaavatar.agents.memory.schemas import (
     MemoryContextRef,
     MemoryItem,
     MemoryOwnerRef,
     MemoryParticipantRef,
-    MemoryScope,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
@@ -119,17 +113,13 @@ class MemoryRuntime(MemoryBase):
         if not task.cancelled():
             task.exception()
 
-    def _render_content(
-        self,
-        identity: MemoryIdentitySnapshot | None = None,
-        context: MemoryContextRef | None = None,
-    ) -> str:
+    def _render_content(self, identity: MemoryIdentitySnapshot | None = None) -> str:
         kinds = (MemoryType.Avatar, MemoryType.CONVERSATION, MemoryType.TOOLS, MemoryType.ENV)
         return "\n".join(
             item.render_line()
             for kind in kinds
             for item in self.visible_items(
-                self._memory_state.get(memory_type=kind), identity=identity, context=context
+                self._memory_state.get(memory_type=kind), identity=identity
             )
         )
 
@@ -142,35 +132,26 @@ class MemoryRuntime(MemoryBase):
             return ""
         state = self.context_state(context_id)
         identity = state.capture_identity([snapshot], of_turn=self._runtime.participants.of_turn)
-        return self._render_content(identity, state.context)
+        return self._render_content(identity)
 
     def visible_items(
-        self,
-        items: Sequence[MemoryItem],
-        *,
-        identity: MemoryIdentitySnapshot | None = None,
-        context: MemoryContextRef | None = None,
+        self, items: Sequence[MemoryItem], *, identity: MemoryIdentitySnapshot | None = None
     ) -> list[MemoryItem]:
+        """What the identity's readers read, by each item's type and owners: the Avatar's own
+        memory for everyone, each user memory for its users only; whatever its scope."""
         users = self.accepted_users(
             () if identity is None or identity.unattributed else identity.participants
         )
-        scopes = set(MemoryScope.applicable_keys(context)) if context is not None else None
+        readers = {
+            MemoryOwnerRef.avatar(self._avatar_id).key,
+            *(MemoryOwnerRef.user(user).key for user in users),
+        }
         return [
             item
             for item in items
             if any(
-                (ref.kind is MemoryOwnerKind.AVATAR and ref.id == self._avatar_id)
-                or (ref.kind is MemoryOwnerKind.USER and ref.id in users)
+                ref.kind is item.memory_type.read_by and ref.key in readers
                 for ref in item.owner_refs
-            )
-            and (
-                item.scope.key in scopes
-                if scopes is not None
-                else item.scope.kind is MemoryScopeKind.OWNER
-                or (
-                    item.scope.kind is MemoryScopeKind.CONTEXT
-                    and item.context.context_id in self._memory_contexts
-                )
             )
         ]
 

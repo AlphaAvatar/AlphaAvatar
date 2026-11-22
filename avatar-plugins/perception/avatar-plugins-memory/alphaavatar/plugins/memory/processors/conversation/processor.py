@@ -70,13 +70,13 @@ class ConversationProcessor(MemoryProcessor):
         self._consolidator.record_recall(records)
 
     async def _candidate_search(
-        self, texts: list[str], *, owner_refs, context, participants=(), timeout: float = 5.0
+        self, texts: list[str], *, owner_refs, scope, participants=(), timeout: float = 5.0
     ):
         try:
             return await self.store.search_similar_batch(
                 texts,
                 owner_refs=owner_refs,
-                context=context,
+                scope=scope,
                 memory_type=MemoryType.CONVERSATION,
                 kind=MemoryKind.CONSOLIDATED,
                 top_k=(self._config.pipeline.consolidation.max_candidates_per_item),

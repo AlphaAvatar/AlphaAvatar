@@ -213,7 +213,7 @@ def test_records_are_whom_they_were_admitted_for_and_turns_whom_they_are_from(
         ([ANSWER], ["alice"], False),
         ([turn, CALL, ANSWER], ["alice"], False),
         ([replace(turn, modality=TurnInputModality.SYSTEM)], [], True),  # A notice: nobody's.
-        (None, ["alice"], False),  # The context's participants.
+        (None, ["alice"], False),  # Whom environment capture is for: its primary participant.
     ]:
         identity = state.capture_identity(messages, of_turn=of_turn)
         assert [ref.key for ref in identity.owner_refs] == [

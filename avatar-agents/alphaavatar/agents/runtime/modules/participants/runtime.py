@@ -147,10 +147,17 @@ class ParticipantRuntime:
             self._drop_source(PerceptionSourceRef(source.source_id, current[0]))
         self._generations[source.source_id] = (source.source_generation, True)
 
-    def _settle(self, current: _SegmentState, outcome: str, reason: str | None = None) -> None:
+    def _settle(
+        self,
+        current: _SegmentState,
+        outcome: str,
+        reason: str | None = None,
+        speech_sec: float | None = None,
+    ) -> None:
         """Settle the association, once: the first time it is ready, and how, is what the trace
         keeps (bound, unbound, invalid or released). Ready is not recognized: a
-        failure, an eviction or a retirement settles it too."""
+        failure, an eviction or a retirement settles it too. The log also gives the segment's
+        speech length, when its resolver knows it."""
         if current.outcome is not None:
             return
         current.outcome = outcome
@@ -158,12 +165,13 @@ class ParticipantRuntime:
         now_ns = perception.clock.now().monotonic_ns
         logger.info(
             "Speaker association settled segment_id=%s source_id=%s source_generation=%s "
-            "outcome=%s reason=%s wait_ms=%.1f",
+            "outcome=%s reason=%s speech_ms=%s wait_ms=%.1f",
             segment.segment_id,
             segment.source.source_id,
             segment.source.source_generation,
             outcome,
             reason,
+            None if speech_sec is None else round(speech_sec * 1000),
             (now_ns - current.observed_ns) / 1e6,
         )
         perception.input_trace.record(
@@ -394,15 +402,21 @@ class ParticipantRuntime:
         return current.token
 
     def finish_segment_resolution(
-        self, segment: PerceptionSegmentRef, *, token: int, reason: str | None = None
+        self,
+        segment: PerceptionSegmentRef,
+        *,
+        token: int,
+        reason: str | None = None,
+        speech_sec: float | None = None,
     ) -> None:
-        """The resolver is done with the segment; ``reason`` says why it found no entity."""
+        """The resolver is done with the segment; ``reason`` says why it found no entity, and
+        ``speech_sec``, for the log, how long its speech is."""
         current = self._segments.get(segment)
         if current is not None and current.token == token:
             outcome = (
                 "invalid" if current.invalid else "unbound" if current.entity is None else "bound"
             )
-            self._settle(current, outcome, None if outcome == "bound" else reason)
+            self._settle(current, outcome, None if outcome == "bound" else reason, speech_sec)
 
     def segment_association(self, segment: PerceptionSegmentRef) -> str:
         """Where the segment's association stands now: ``pending`` until it settles, then how
@@ -428,7 +442,12 @@ class ParticipantRuntime:
             self._settle(current, "invalid", "invalidated")
 
     def bind_segment(
-        self, segment: PerceptionSegmentRef, entity: PerceptionEntityRef | None, *, token: int
+        self,
+        segment: PerceptionSegmentRef,
+        entity: PerceptionEntityRef | None,
+        *,
+        token: int,
+        speech_sec: float | None = None,
     ) -> bool:
         # A late inference result cannot reopen an evicted or invalidated admission.
         if not self.segment_is_current(segment, token):
@@ -446,7 +465,18 @@ class ParticipantRuntime:
             return False
 
         current.entity = entity
-        self._settle(current, "bound")
+        if current.outcome == "unbound":
+            # Short speech settles unbound when it closes, and the speech after it can bind it
+            # later: that first settling stays, so its binding is told here.
+            logger.info(
+                "Speaker association bound late segment_id=%s source_id=%s "
+                "source_generation=%s wait_ms=%.1f",
+                segment.segment_id,
+                segment.source.source_id,
+                segment.source.source_generation,
+                (self.turn.perception.clock.now().monotonic_ns - current.observed_ns) / 1e6,
+            )
+        self._settle(current, "bound", speech_sec=speech_sec)
         return True
 
     def entity_for_segment(self, segment: PerceptionSegmentRef) -> PerceptionEntityRef | None:

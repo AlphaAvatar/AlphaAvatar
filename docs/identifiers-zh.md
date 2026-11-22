@@ -243,6 +243,11 @@ flowchart LR
 
 - `MemoryContextRef` 自身不自动生成 Episode／Context ID；它引用 StateRuntime 或调用方给出的已有上下文。`open_context()` 的重复检查不等于全球唯一性承诺。
 - `owner:*` 只表示 Owner scope，实际归属仍由 owners 决定，不代表向所有用户授权。`episode:<id>`、`context:<id>` 也复用已有 ID。
+- 检索不看 scope，只看记忆类型和 owners（`MemoryType.read_by`）：
+  - Avatar 类型经由 Avatar 读取，所以所有读者都可读；
+  - 对话、工具、环境记忆只由其用户 owner 读取，在任何 context 里都可以，即使 owners 里同时有 Avatar；
+  - scope 只决定导出目录，以及会话内整合在哪些记忆之间合并。
+- 环境 Memory 的 owner 是会话的主参与者加 Avatar，scope 为 `context`。主参与者是打开会话的人，可以不出现在观测内容里；在场的其他人不会成为 owner。新加入的参与者都会先得到临时生成的用户 ID，所以只有主参与者被解绑、没有用户时，环境 Memory 才只归 Avatar，此时谁都读不到。
 - 环境 Memory 的运行事件来源当前使用 `session_id 或 episode_id` 加事件 sequence 的复合键；不能假定 `MemorySourceRef.runtime_event()` 总是收到 Core 的事件 UUID。
 - 感知实体来源必须保留完整来源三元组；片段引用保留 source、generation、segment。跨会话追溯还需 `MemoryContextRef.session_id`。
 - `data/memory/records.sqlite3` 是 Workspace 级权威记录，`exports/` 和本地索引是派生结果。身份更正不会通过改 scope 或移动用户目录自动授予读取权限。

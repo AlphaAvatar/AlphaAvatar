@@ -31,7 +31,6 @@ from alphaavatar.agents.memory.enums import (
 from alphaavatar.agents.memory.schemas import (
     MemoryCheckpointAdvance,
     MemoryCommitResult,
-    MemoryContextRef,
     MemoryItem,
     MemoryOwnerRef,
     MemoryScope,
@@ -45,6 +44,7 @@ from .export import MemoryExportSink
 from .index_serialization import serialize_memory_items
 from .outbox import MemoryOutboxWorker
 from .sqlite import SQLiteMemoryStore
+from .sqlite.query import visibility
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +110,12 @@ class MemoryStore:
         return list(dict.fromkeys(ref.key for ref in owner_refs))
 
     @staticmethod
-    def _scope_keys(context: MemoryContextRef) -> list[str]:
-        return list(MemoryScope.applicable_keys(context))
+    def _visibility(owner_refs: list[MemoryOwnerRef]) -> list[dict[str, list[str]]]:
+        """What the readers read, as the vector search narrows to it before SQLite decides."""
+        return [
+            {"memory_types": [value.value for value in types], "owner_keys": keys}
+            for types, keys in visibility(owner_refs)
+        ]
 
     def _users(self, participants: tuple[TurnEntityRef, ...], *, current: bool = True) -> set[str]:
         """The users the entries name with an accepted identity: the current one, or for a
@@ -163,7 +167,6 @@ class MemoryStore:
         *,
         context_str: str,
         owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
         top_k: int,
         memory_type: MemoryType | None = None,
         timeout: float = 3.0,
@@ -187,8 +190,7 @@ class MemoryStore:
                         op=VectorRunnerOP.search_by_context,
                         param={
                             "context_str": context_str,
-                            "owner_keys": self._owner_keys(owner_refs),
-                            "scope_keys": self._scope_keys(context),
+                            "visibility": self._visibility(owner_refs),
                             "memory_type": memory_type.value if memory_type is not None else None,
                             "top_k": max(top_k * 3, top_k),
                             "request_id": request_id,
@@ -207,7 +209,7 @@ class MemoryStore:
                 resolve_started = perf_counter()
                 try:
                     memories = await self._backend.resolve_current(
-                        memory_ids, owner_refs=owner_refs, context=context
+                        memory_ids, owner_refs=owner_refs
                     )
                 finally:
                     resolve_wait = perf_counter() - resolve_started
@@ -236,7 +238,6 @@ class MemoryStore:
         self,
         *,
         owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
         node_keys: list[str] | None = None,
         node_query: str | None = None,
         memory_type: MemoryType | None = None,
@@ -254,8 +255,7 @@ class MemoryStore:
             param={
                 "node_keys": node_keys or [],
                 "node_query": node_query,
-                "owner_keys": self._owner_keys(owner_refs),
-                "scope_keys": self._scope_keys(context),
+                "visibility": self._visibility(owner_refs),
                 "memory_type": (memory_type.value if memory_type is not None else None),
                 "node_type": node_type,
                 "top_k": max(top_k * 3, top_k),
@@ -268,9 +268,7 @@ class MemoryStore:
         if not memory_ids:
             return []
 
-        memories = await self._backend.resolve_current(
-            memory_ids, owner_refs=owner_refs, context=context
-        )
+        memories = await self._backend.resolve_current(memory_ids, owner_refs=owner_refs)
 
         return self._readable_items(memories, participants)[:top_k]
 
@@ -279,7 +277,7 @@ class MemoryStore:
         texts: list[str],
         *,
         owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
+        scope: MemoryScope,
         memory_type: MemoryType | None = None,
         kind: MemoryKind | None = None,
         top_k: int,
@@ -298,8 +296,9 @@ class MemoryStore:
             param={
                 "texts": texts,
                 "top_k": top_k,
+                # Consolidation merges only within one scope: its candidates are that scope's.
                 "owner_keys": self._owner_keys(owner_refs),
-                "scope_keys": self._scope_keys(context),
+                "scope_keys": [scope.key],
                 "memory_type": memory_type.value if memory_type is not None else None,
                 "memory_kind": kind.value if kind is not None else None,
             },
@@ -318,9 +317,10 @@ class MemoryStore:
         if not all_ids:
             return [[] for _ in texts]
 
-        visible = await self._backend.get_visible(all_ids, owner_refs=owner_refs, context=context)
+        # The consolidator keeps only candidates of the batch's own type, scope and owners.
+        found = await self._backend.get_many(all_ids)
 
-        by_id = {memory.memory_id: memory for memory in self._readable_items(visible, participants)}
+        by_id = {memory.memory_id: memory for memory in self._readable_items(found, participants)}
 
         return [
             [
@@ -368,54 +368,6 @@ class MemoryStore:
         self, memory_ids: list[str], *, participants: tuple[TurnEntityRef, ...] = ()
     ) -> list[MemoryItem]:
         return self._readable_items(await self._backend.get_many(memory_ids), participants)
-
-    async def get_visible(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
-        participants: tuple[TurnEntityRef, ...] = (),
-    ) -> list[MemoryItem]:
-        owner_refs = self._read_owners(owner_refs, participants)
-        if not owner_refs:
-            return []
-        items = await self._backend.get_visible(memory_ids, owner_refs=owner_refs, context=context)
-        return self._readable_items(items, participants)
-
-    async def resolve_current(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
-        participants: tuple[TurnEntityRef, ...] = (),
-    ) -> list[MemoryItem]:
-        owner_refs = self._read_owners(owner_refs, participants)
-        if not owner_refs:
-            return []
-        items = await self._backend.resolve_current(
-            memory_ids, owner_refs=owner_refs, context=context
-        )
-        return self._readable_items(items, participants)
-
-    async def query_visible(
-        self,
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
-        memory_type: MemoryType | None = None,
-        kind: MemoryKind | None = None,
-        limit: int = 100,
-        participants: tuple[TurnEntityRef, ...] = (),
-    ) -> list[MemoryItem]:
-        owner_refs = self._read_owners(owner_refs, participants)
-        if not owner_refs:
-            return []
-        items = await self._backend.query_visible(
-            owner_refs=owner_refs, context=context, memory_type=memory_type, kind=kind, limit=limit
-        )
-        return self._readable_items(items, participants)
 
     async def get_checkpoint(self, *, context_id: str, processor: str) -> int:
         return await self._backend.get_checkpoint(context_id=context_id, processor=processor)

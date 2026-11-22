@@ -108,7 +108,37 @@ def test_an_association_settles_once_and_the_trace_and_log_say_how(
     assert record["start_time_ns"] <= record["end_time_ns"]
     (line,) = [r.getMessage() for r in caplog.records if "association settled" in r.getMessage()]
     assert f"segment_id=seg-1 source_id=microphone source_generation=1 outcome={outcome} " in line
-    assert f" reason={reason} wait_ms=" in line
+    assert f" reason={reason} speech_ms=None wait_ms=" in line
+
+
+def test_speech_that_settled_unbound_and_is_bound_later_is_told_with_its_length(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The log gives each segment's speech length when its resolver knows it. Short speech
+    settles unbound as it closes; when the speech after it binds it, a line says so, since
+    that first settling stays. A segment bound when it settles is told once."""
+    caplog.set_level(logging.INFO, logger="alphaavatar.agents.runtime.modules.participants")
+    runtime = participants(tmp_path)
+    short, long = PerceptionSegmentRef(SOURCE, "short"), PerceptionSegmentRef(SOURCE, "long")
+    short_token, long_token = runtime.observe_segment(short), runtime.observe_segment(long)
+    runtime.finish_segment_resolution(short, token=short_token, reason="no_vector", speech_sec=0.8)
+    runtime.ensure_entity(SOURCE, VOICE, kind=EntityKind.SPEAKER, device_id="microphone")
+    assert runtime.bind_segment(long, VOICE, token=long_token, speech_sec=1.2)
+    assert runtime.bind_segment(short, VOICE, token=short_token)  # By the speech after it.
+    assert runtime.bind_segment(long, VOICE, token=long_token)  # Again: nothing new to tell.
+
+    lines = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Speaker association")
+    ]
+    assert len(lines) == 3
+    assert lines[0].startswith("Speaker association settled segment_id=short ")
+    assert " outcome=unbound reason=no_vector speech_ms=800 wait_ms=" in lines[0]
+    assert lines[1].startswith("Speaker association settled segment_id=long ")
+    assert " outcome=bound reason=None speech_ms=1200 wait_ms=" in lines[1]
+    assert lines[2].startswith(
+        "Speaker association bound late segment_id=short source_id=microphone "
+        "source_generation=1 wait_ms="
+    )
 
 
 def test_where_an_association_stands_is_told_until_it_is_released(tmp_path: Path) -> None:

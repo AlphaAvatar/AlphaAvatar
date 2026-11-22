@@ -145,14 +145,13 @@ class RetrievalProcessor(MemoryProcessor):
             items = await self.store.recall_by_context(
                 context_str=query,
                 owner_refs=owners,
-                context=state.context,
                 memory_type=memory_type,
                 top_k=(top_k if top_k is not None else self._recall_num),
                 timeout=(timeout if timeout is not None else 3.0),
                 participants=identity.participants,
             )
             return (
-                self.memory_runtime.visible_items(items, identity=identity, context=state.context)
+                self.memory_runtime.visible_items(items, identity=identity)
                 if self.memory_runtime.identity_is_current(identity)
                 else []
             )
@@ -188,7 +187,6 @@ class RetrievalProcessor(MemoryProcessor):
         try:
             items = await self.store.recall_by_graph_node(
                 owner_refs=owners,
-                context=state.context,
                 node_keys=node_keys,
                 node_query=node_query,
                 memory_type=memory_type,
@@ -198,7 +196,7 @@ class RetrievalProcessor(MemoryProcessor):
                 participants=identity.participants,
             )
             return (
-                self.memory_runtime.visible_items(items, identity=identity, context=state.context)
+                self.memory_runtime.visible_items(items, identity=identity)
                 if self.memory_runtime.identity_is_current(identity)
                 else []
             )

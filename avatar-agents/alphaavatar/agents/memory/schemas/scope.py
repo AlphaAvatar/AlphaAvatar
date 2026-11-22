@@ -13,14 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from pydantic import BaseModel, model_validator
 
 from ..enums import MemoryScopeKind
-
-if TYPE_CHECKING:
-    from .context import MemoryContextRef
 
 
 class MemoryScope(BaseModel):
@@ -47,10 +42,6 @@ class MemoryScope(BaseModel):
             return "owner:*"
         return f"{self.kind.value}:{self.scope_id}"
 
-    @staticmethod
-    def applicable_keys(context: MemoryContextRef) -> tuple[str, str, str]:
-        return ("owner:*", f"episode:{context.episode_id}", f"context:{context.context_id}")
-
     @classmethod
     def owner(cls) -> MemoryScope:
         return cls(kind=MemoryScopeKind.OWNER)
@@ -62,10 +53,3 @@ class MemoryScope(BaseModel):
     @classmethod
     def context(cls, context_id: str) -> MemoryScope:
         return cls(kind=MemoryScopeKind.CONTEXT, scope_id=context_id)
-
-    def applies_to(self, context: MemoryContextRef) -> bool:
-        if self.kind is MemoryScopeKind.OWNER:
-            return True
-        if self.kind is MemoryScopeKind.EPISODE:
-            return self.scope_id == context.episode_id
-        return self.scope_id == context.context_id

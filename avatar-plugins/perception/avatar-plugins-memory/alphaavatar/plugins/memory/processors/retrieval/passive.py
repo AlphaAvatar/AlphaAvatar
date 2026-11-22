@@ -186,7 +186,6 @@ class PassiveRecall:
                 items = await self._memory.store.recall_by_context(
                     context_str=query,
                     owner_refs=owners,
-                    context=state.context,
                     top_k=self._config.recall_num,
                     timeout=remaining,
                     trace_id=entry.turn_id,
@@ -199,7 +198,7 @@ class PassiveRecall:
             elif not self._memory.identity_is_current(identity):
                 self._finish(entry, "identity_changed")
             elif not entry.result.done():
-                items = self._memory.visible_items(items, identity=identity, context=state.context)
+                items = self._memory.visible_items(items, identity=identity)
                 self._memory.apply_items(items)
                 self._finish(entry, "ok" if items else "empty", count=len(items))
                 try:

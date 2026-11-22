@@ -37,7 +37,7 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelTextPart,
 )
 from alphaavatar.agents.avatar.provider.schemas.model_result import ProviderModelResult
-from alphaavatar.agents.memory.enums import MemoryOwnerKind, MemoryScopeKind, MemoryType
+from alphaavatar.agents.memory.enums import MemoryKind, MemoryOwnerKind, MemoryScopeKind, MemoryType
 from alphaavatar.agents.memory.schemas import (
     MemoryCheckpointAdvance,
     MemoryContextRef,
@@ -161,7 +161,21 @@ def avatar_runtime(root: Path, providers: ProviderService) -> AvatarRuntime:
     )
 
 
-def memory_for(runtime: AvatarRuntime):
+def memory_for(runtime: AvatarRuntime, *, environment: bool = False):
+    """Memory as configured for these tests; with ``environment``, its capture on too."""
+    init_config = {
+        "retrieval": {"enabled": False},
+        "conversation": {
+            "provider": {"task": "task", "gateway": gateway("conversation")},
+            "pipeline": {"consolidation": {"mode": "off"}},
+        },
+        "tool": {"provider": {"task": "task", "gateway": gateway("tool")}},
+    }
+    if environment:
+        init_config["environment"] = {
+            "enabled": True,
+            "provider": {"task": "task", "gateway": gateway("environment")},
+        }
     return AvatarModulePlugin.create(
         AvatarModule.MEMORY,
         "default",
@@ -169,14 +183,7 @@ def memory_for(runtime: AvatarRuntime):
         avatar_id="avatar",
         maximum_memory_num=24,
         vdb_config={},
-        init_config={
-            "retrieval": {"enabled": False},
-            "conversation": {
-                "provider": {"task": "task", "gateway": gateway("conversation")},
-                "pipeline": {"consolidation": {"mode": "off"}},
-            },
-            "tool": {"provider": {"task": "task", "gateway": gateway("tool")}},
-        },
+        init_config=init_config,
     )
 
 
@@ -544,7 +551,7 @@ async def test_tool_failure_in_one_context_never_fail_fasts_the_other_contexts(
     await runtime.aclose()
 
 
-def correct(runtime: AvatarRuntime, participant_id: str, user_id: str) -> None:
+def correct(runtime: AvatarRuntime, participant_id: str, user_id: str | None) -> None:
     current = runtime.participants.get(participant_id)
     request = IdentityRequest(
         participant_id=participant_id,
@@ -690,13 +697,13 @@ def joined(runtime: AvatarRuntime, user_id: str) -> TurnEntityRef:
 
 
 @pytest.mark.parametrize("batch", ["with-an-unattributed-turn", "of-two-people"])
-async def test_a_batch_kept_in_its_context_stays_its_users_and_only_their_turns_recall_it(
+async def test_a_batch_kept_in_its_context_stays_its_users_and_only_they_recall_it(
     batch: str, tmp_path: Path
 ) -> None:
     """A batch kept in its context, for an unattributed Turn or for more than one person, is
-    still its verified users': only a recall for one of them finds it there. An anonymous
-    speaker's recall, which only the Avatar's memory answers, does not; another context's
-    never does."""
+    still its verified users': a recall for one of them finds it, from any context, since a
+    memory is read by its type and owners, never its scope. An anonymous speaker's recall,
+    which only the Avatar's own memory answers, does not; nor does another user's."""
 
     async def remember(prompt: str) -> MemoryDelta:
         return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers green tea")])
@@ -721,13 +728,12 @@ async def test_a_batch_kept_in_its_context_stays_its_users_and_only_their_turns_
     store = SQLiteMemoryStore(runtime.workspace.data.memory.records_file)
     await store.initialize()
     avatar = MemoryOwnerRef.avatar("avatar")
-    elsewhere = item.context.model_copy(update={"context_id": "another-context"})
-    for owners, context, found in [
-        *(([avatar, MemoryOwnerRef.user(user)], item.context, True) for user in users),
-        ([avatar], item.context, False),
-        ([avatar, MemoryOwnerRef.user("alice")], elsewhere, False),
+    for owners, found in [
+        *(([avatar, MemoryOwnerRef.user(user)], True) for user in users),
+        ([avatar], False),
+        ([avatar, MemoryOwnerRef.user("carol")], False),
     ]:
-        visible = await store.get_visible([item.memory_id], owner_refs=owners, context=context)
+        visible = await store.resolve_current([item.memory_id], owner_refs=owners)
         assert [found.memory_id for found in visible] == ([item.memory_id] if found else [])
     await runtime.aclose()
 
@@ -755,6 +761,195 @@ async def test_an_owner_never_verified_is_never_kept(tmp_path: Path) -> None:
         )
         assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
         assert [ref.key for ref in item.owner_refs] == kept
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("primary", ["recognized", "provisional", "unbound"])
+async def test_environment_memory_is_its_primary_participants_and_the_avatars_alone(
+    primary: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Environment capture is for whoever opened the session, seen or not: each batch is the
+    session's primary participant's and the Avatar's, never a bystander's, and a stranger in
+    view leaves it in no doubt. The primary participant is a recognized user, or the
+    provisional one a newcomer is given; with no user at all, the batch is the Avatar's alone,
+    which no recall reads. Either way, the extractor sees what it observed before."""
+    caplog.set_level(logging.INFO, logger="alphaavatar.plugins.memory")
+    providers = ScriptedProviders(conversation=empty, tool=empty, environment=empty)
+    runtime = avatar_runtime(tmp_path, providers)
+    opener = runtime.participants.join(
+        user_id="alice" if primary == "recognized" else None, primary=True
+    )
+    if primary == "unbound":
+        correct(runtime, opener.participant_id, None)
+    user = runtime.participants.get(opener.participant_id).user_id
+    bob = joined(runtime, "bob")  # Recognized in view, a bystander.
+    runtime.participants.join()  # A stranger in view.
+    memory = memory_for(runtime, environment=True)
+    await memory.on_start()
+    (processor,) = (item for item in memory._processors if item.name == "environment")
+    previous: list[str | None] = []
+
+    async def extract(*, previous_env_memory: str | None, **_: object) -> SimpleNamespace:
+        previous.append(previous_env_memory)
+        return SimpleNamespace(env_memory_entries=[PatchOp(value=f"lamp {len(previous)} on")])
+
+    processor._provider.extract = extract
+    root = memory.root_context_id
+    start = await checkpoint(runtime, root, "environment")
+    for sequence in (start, start + 1):
+        batch = SimpleNamespace(
+            context_id=root,
+            from_sequence=sequence,
+            to_sequence=sequence + 1,
+            events=(),
+            memory_input=SimpleNamespace(slices=(), observations=()),
+            conversation_context=None,
+            trigger_text="test",
+            missed_count=0,
+            committed=False,
+        )
+        await processor._process_batch(batch, timeout=5.0)
+
+    assert previous[0] is None and "lamp 1 on" in previous[1]
+    items = memory.memory_state.get(memory_type=MemoryType.ENV)
+    owners = {"avatar:avatar", *(() if user is None else (f"user:{user}",))}
+    assert [{ref.key for ref in item.owner_refs} for item in items] == [owners, owners]
+    assert all(item.scope == MemoryScope.context(root) for item in items)
+    kept = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Memory items kept")
+    ]
+    assert len(kept) == (2 if user is None else 0)
+    store = SQLiteMemoryStore(runtime.workspace.data.memory.records_file)
+    await store.initialize()
+    avatar, ids = MemoryOwnerRef.avatar("avatar"), [item.memory_id for item in items]
+    opener_reads = [([avatar, MemoryOwnerRef.user(user)], True)] if user is not None else []
+    for readers, found in [
+        *opener_reads,
+        ([avatar, MemoryOwnerRef.user(bob.user_id)], False),
+        ([avatar], False),
+    ]:
+        visible = await store.resolve_current(ids, owner_refs=readers)
+        assert sorted(item.memory_id for item in visible) == (sorted(ids) if found else [])
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_memory_is_read_by_its_type_and_owners_never_its_scope(tmp_path: Path) -> None:
+    """The Avatar's own memory is every reader's; each user memory, conversation, tools or
+    environment, is its users' only, from any context. A user memory the Avatar owns as well,
+    or alone, is read by no one through the Avatar. SQLite and what is kept for the current
+    Turn agree."""
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory, alice = memory_for(runtime), speaker(runtime)
+    bob = joined(runtime, "bob")
+    await memory.on_start()
+    state = memory.context_state(memory.root_context_id)
+    earlier = state.context.model_copy(update={"context_id": "earlier", "session_id": "earlier"})
+    avatar, a, b = (
+        MemoryOwnerRef.avatar("avatar"),
+        MemoryOwnerRef.user("alice"),
+        MemoryOwnerRef.user("bob"),
+    )
+    kinds = {
+        "the Avatar's": (MemoryType.Avatar, [avatar], MemoryScope.owner()),
+        "alice's, kept in an earlier context": (MemoryType.CONVERSATION, [a], "earlier"),
+        "alice's tools": (MemoryType.TOOLS, [a], MemoryScope.owner()),
+        "alice's surroundings": (MemoryType.ENV, [a, avatar], "earlier"),
+        "unattributed, the Avatar's alone": (MemoryType.CONVERSATION, [avatar], "earlier"),
+        "observed for no one known": (MemoryType.ENV, [avatar], "earlier"),
+        "bob's": (MemoryType.CONVERSATION, [b], MemoryScope.owner()),
+    }
+    items = {
+        name: MemoryItem(
+            context=earlier if scope == "earlier" else state.context,
+            scope=MemoryScope.context("earlier") if scope == "earlier" else scope,
+            owner_refs=owners,
+            value=name,
+            memory_type=memory_type,
+        )
+        for name, (memory_type, owners, scope) in kinds.items()
+    }
+    people = (alice, bob)
+    for context_id in ("earlier", state.context_id):
+        await memory.store.commit(
+            [item for item in items.values() if item.context.context_id == context_id],
+            context_id=context_id,
+            processor="test",
+            idempotency_key=f"seed:{context_id}",
+            participants=people,
+        )
+    turns = {
+        "alice": commit_turn(runtime, alice, 1, "hi", state.context_id),
+        "bob": commit_turn(runtime, bob, 2, "hi", state.context_id),
+        "anonymous": spoken(runtime, "hi")[0],  # input-0
+    }
+    readable = {
+        "alice": {"the Avatar's", *(name for name in items if name.startswith("alice's"))},
+        "bob": {"the Avatar's", "bob's"},
+        "anonymous": {"the Avatar's"},
+    }
+    ids = [item.memory_id for item in items.values()]
+    of_turn = runtime.participants.of_turn
+    for reader, turn in turns.items():
+        identity = state.capture_identity([turn], of_turn=of_turn)
+        owners = [avatar, *(() if identity.unattributed else identity.owner_refs)]
+        stored = await memory.store._backend.resolve_current(ids, owner_refs=owners)
+        kept = memory.visible_items(list(items.values()), identity=identity)
+        assert {item.value for item in stored} == readable[reader], reader
+        assert {item.value for item in kept} == readable[reader], reader
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+async def test_consolidation_looks_for_candidates_in_its_own_scope_alone(tmp_path: Path) -> None:
+    """Consolidation merges only within one scope, so it looks only there: no other scope's
+    hit takes a candidate's place."""
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory, alice = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    state = memory.context_state(memory.root_context_id)
+    scope = MemoryScope.context(state.context_id)
+    fields = {
+        "context": state.context,
+        "scope": scope,
+        "owner_refs": [MemoryOwnerRef.user("alice")],
+        "value": "prefers green tea",
+        "memory_type": MemoryType.CONVERSATION,
+    }
+    atomic = MemoryItem(**fields)
+    item = MemoryItem(**fields, kind=MemoryKind.CONSOLIDATED, source_memory_ids=[atomic.memory_id])
+    items = [atomic, item]
+    await memory.store.commit(
+        items,
+        context_id=state.context_id,
+        processor="test",
+        idempotency_key="seed",
+        participants=(alice,),
+    )
+    # The vector search answers with that memory, recording what it was asked.
+    asked, answer = [], runtime.inference.do_inference
+
+    async def candidates(method: str, data: bytes) -> bytes:
+        request = json.loads(data)
+        if request["op"] != "search_similar_batch":
+            return await answer(method, data)
+        asked.append(request["param"])
+        return json.dumps({"results": [[{"memory_id": item.memory_id, "score": 0.9}]]}).encode()
+
+    runtime.inference.do_inference = candidates
+    (hits,) = await memory.store.search_similar_batch(
+        ["green tea"],
+        owner_refs=[MemoryOwnerRef.user("alice")],
+        scope=scope,
+        memory_type=MemoryType.CONVERSATION,
+        kind=MemoryKind.CONSOLIDATED,
+        top_k=3,
+        participants=(alice,),
+    )
+    (param,) = asked
+    assert param["scope_keys"] == [scope.key] and param["owner_keys"] == ["user:alice"]
+    assert [hit.memory.memory_id for hit in hits] == [item.memory_id]
     await memory.on_stop()
     await runtime.aclose()
 

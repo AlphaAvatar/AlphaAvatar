@@ -13,11 +13,10 @@
 # limitations under the License.
 from abc import ABC, abstractmethod
 
-from .enums import MemoryKind, MemoryOutboxTarget, MemoryType
+from .enums import MemoryOutboxTarget
 from .schemas import (
     MemoryCheckpointAdvance,
     MemoryCommitResult,
-    MemoryContextRef,
     MemoryItem,
     MemoryOutboxEvent,
     MemoryOwnerRef,
@@ -55,24 +54,8 @@ class MemoryStoreBackend(ABC):
     async def get_many(self, memory_ids: list[str]) -> list[MemoryItem]: ...
 
     @abstractmethod
-    async def get_visible(
-        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
-    ) -> list[MemoryItem]: ...
-
-    @abstractmethod
     async def resolve_current(
-        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
-    ) -> list[MemoryItem]: ...
-
-    @abstractmethod
-    async def query_visible(
-        self,
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
-        memory_type: MemoryType | None = None,
-        kind: MemoryKind | None = None,
-        limit: int = 100,
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef]
     ) -> list[MemoryItem]: ...
 
     @abstractmethod

@@ -111,6 +111,7 @@ class LanceDBRunner(InferenceRunner):
         doc_kind: str | None = None,
         owner_keys: list[str] | None = None,
         scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]] | None = None,
         memory_type: str | None = None,
         memory_kind: str | None = None,
         node_type: str | None = None,
@@ -130,6 +131,16 @@ class LanceDBRunner(InferenceRunner):
             parts.append(f"array_has_any(owner_keys, {cls._sql_list(owners)})")
         if scopes := cls._as_str_list(scope_keys):
             parts.append(f"scope_key IN {cls._sql_in(scopes)}")
+        if visibility is not None:
+            # What the readers read: each memory type through its kind of owner, any scope.
+            groups = [
+                f"(memory_type IN {cls._sql_in(types)} "
+                f"AND array_has_any(owner_keys, {cls._sql_list(keys)}))"
+                for group in visibility
+                if (types := cls._as_str_list(group.get("memory_types")))
+                and (keys := cls._as_str_list(group.get("owner_keys")))
+            ]
+            parts.append("(" + " OR ".join(groups) + ")" if groups else "false")
         if keys := cls._as_str_list(node_keys):
             parts.append(f"node_key IN {cls._sql_in(keys)}")
         return " AND ".join(parts) if parts else "true"
@@ -323,8 +334,7 @@ class LanceDBRunner(InferenceRunner):
         self,
         *,
         context_str: str,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         top_k: int = 10,
         request_id: str | None = None,
@@ -335,11 +345,11 @@ class LanceDBRunner(InferenceRunner):
         embedding_wait = vector_wait = 0.0
         memories, graph = [], []
         phase, error_type = "embedding", None
-        common = {"owner_keys": owner_keys, "scope_keys": scope_keys, "memory_type": memory_type}
+        common = {"visibility": visibility, "memory_type": memory_type}
         memory_where = self._where(doc_kind="memory_item", **common)
         graph_where = self._where(doc_kind="graph_node", **common)
         try:
-            # Nothing these owners and scopes hold can be recalled: the query, which a remote
+            # Nothing these readers read can be recalled: the query, which a remote
             # model may embed, is not embedded, and the search would have found nothing anyway.
             if not (self._stored(memory_where) or self._stored(graph_where)):
                 phase = "empty"
@@ -383,8 +393,7 @@ class LanceDBRunner(InferenceRunner):
         *,
         node_keys: list[str] | None = None,
         node_query: str | None = None,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         node_type: str | None = None,
         top_k: int = 50,
@@ -393,8 +402,7 @@ class LanceDBRunner(InferenceRunner):
         try:
             common = {
                 "doc_kind": "graph_node",
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
+                "visibility": visibility,
                 "memory_type": memory_type,
                 "node_type": node_type,
             }

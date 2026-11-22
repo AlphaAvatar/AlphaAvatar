@@ -874,7 +874,10 @@ async def test_short_segments_are_inferred_together_once_long_enough_and_never_w
     await runtime.aclose()
 
 
-async def test_short_segments_lead_the_next_longer_one_into_its_vector(tmp_path: Path) -> None:
+async def test_short_segments_lead_the_next_longer_one_into_its_vector(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="alphaavatar.agents.runtime.modules.participants")
     inference = SensorInference()
     runtime = avatar_runtime(tmp_path, inference)
     persona = persona_for(runtime, "speaker")
@@ -893,6 +896,22 @@ async def test_short_segments_lead_the_next_longer_one_into_its_vector(tmp_path:
         runtime.participants.resolve(segment=PerceptionSegmentRef(source, name)) for name in spoken
     ]
     assert alice is not None and heard == [alice] * 3
+    # The log tells it as it went: each short one settled unbound at its own length, then the
+    # long one bound, and with it the short ones, late.
+    told = [
+        r.getMessage().split(" wait_ms=")[0]
+        for r in caplog.records
+        if r.getMessage().startswith("Speaker association")
+    ]
+    settled = "Speaker association settled segment_id={} source_id=device source_generation=1"
+    late = "Speaker association bound late segment_id={} source_id=device source_generation=1"
+    assert told == [
+        settled.format("short-0") + " outcome=unbound reason=no_vector speech_ms=800",
+        settled.format("short-1") + " outcome=unbound reason=no_vector speech_ms=700",
+        settled.format("long") + " outcome=bound reason=None speech_ms=1200",
+        late.format("short-0"),
+        late.format("short-1"),
+    ]
     await persona.on_stop()
     await runtime.aclose()
 

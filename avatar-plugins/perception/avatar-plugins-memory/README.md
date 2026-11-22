@@ -78,7 +78,7 @@ Text alone does not establish environment evidence. Enabled audio support uses s
 
 Memory records retain text, kind, ownership, scope, context, provenance and graph-related metadata. Supported memory types include Avatar, Conversation, Tools and ENV. Raw SDK objects and media clients are not stored as memory records.
 
-The SQLite records are authoritative; an outbox feeds their projections: the LanceDB or Qdrant vector index and the Markdown/graph export. Retrieval owns text/graph lookup and identity-related resolution rather than adding concrete search methods to MemoryBase. Avatar-owned memory and user-owned memory remain separate ownership domains, even when they can be recalled across episodes.
+The SQLite records are authoritative; an outbox feeds their projections: the LanceDB or Qdrant vector index and the Markdown/graph export. Retrieval owns text/graph lookup and identity-related resolution rather than adding concrete search methods to MemoryBase. Retrieval reads a memory by its type and owners, never by its scope. Avatar memory is read through the Avatar, so every reader can read it. Conversation, tool and environment memory is read only by its user owners, from any context, even when the Avatar is also an owner. Scope decides the export directory and which memories consolidation may merge. Environment memory belongs to the Avatar and to the session's primary participant, the person who opened the session, whether or not they appear in what is observed. Its scope is its context.
 
 ## Lifecycle
 

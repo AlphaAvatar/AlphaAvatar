@@ -69,14 +69,12 @@ class EnvironmentProcessor(MemoryProcessor):
         state = self.memory_runtime.context_state(batch.context_id)
         identity = state.capture_identity()
 
+        # The Avatar's own earlier observations here, so it records each once: its working
+        # input, shown to no reader, whoever the capture is for.
         previous = "\n".join(
             item.render_line()
-            for item in self.memory_runtime.visible_items(
-                self.memory_runtime.memory_state.get(
-                    memory_type=MemoryType.ENV, context_id=state.context_id
-                ),
-                identity=identity,
-                context=state.context,
+            for item in self.memory_runtime.memory_state.get(
+                memory_type=MemoryType.ENV, context_id=state.context_id
             )
         )
 

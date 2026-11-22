@@ -1,6 +1,6 @@
 # Memory 修复：一轮未归属导致整批记忆只留在 context（KD-49）— Claude Code 日志
 
-- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批），第三批基线 `90883e9f`（第二批），第四批基线 `68d78414`（第三批），第五批基线 `352b4588`（第四批之后）；日期为 CST。
+- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批），第三批基线 `90883e9f`（第二批），第四批基线 `68d78414`（第三批），第五批基线 `352b4588`（第四批之后），第六批基线 `25f92093`（第五批）；日期为 CST。
 - 依据：用户 2026-11-21 的两次真实对话，记忆全部只写进了 `contexts/`；定位后登记为 [KD-49](../../../bugs-zh.md)，用户决定逐步修复。
 - 范围：第一批只加诊断，并做 Router 侧的改名和删减，不改行为；第二批按用户的方案实现；第三批整理 Engine 的准入，不改行为。改动留在工作区，由用户提交。
 
@@ -12,7 +12,9 @@
 | 第二批：使用时读取参与者 | Turn 不在准入时固定参与者，`ParticipantRuntime.of_turn()` 在使用时读取；段关联保留整个会话；Memory、Persona 改为使用时读取，profiler 在会话结束时分配 | 2026-11-21 | `be32fbda` | `90883e9f` | 已提交 |
 | 第三批：整理准入 | Engine `_admit_decision` 的重复拒绝分支并为一处，去掉重复的来源检查；先补准入各分支的测试 | 2026-11-22 | `90883e9f` | `68d78414` | 已提交 |
 | 第四批：降级后的 owner | 整批降为 `context` 时保留已验证用户的 owner，没有已验证用户时才归 Avatar | 2026-11-22 | `68d78414` | `d6fa1034` | 已提交 |
-| 第五批：整理 Memory state | `messages.py` 并入 `state.py`；删掉没有调用方的成员，合并冗余的字段，统一 owner 与 participant 的生成；先补 state 的测试 | 2026-11-22 | `352b4588` | — | 待审查 |
+| 第五批：整理 Memory state | `messages.py` 并入 `state.py`；删掉没有调用方的成员，合并冗余的字段，统一 owner 与 participant 的生成；先补 state 的测试 | 2026-11-22 | `352b4588` | `25f92093` | 已提交 |
+| 第六批：按类型与 owner 检索 | 检索不再看 scope：Avatar 记忆所有人可读，对话、工具、环境记忆只由其用户 owner 读取；环境记忆归主参与者和 Avatar；整合只在本 scope 内找候选 | 2026-11-22 | `25f92093` | — | 待审查 |
+| 第七批：短句的诊断日志 | 关联结束的日志带上段长；短段事后补上关联时另记一行；不改关联的状态 | 2026-11-22 | `25f92093`（与第六批同在工作区） | — | 待审查 |
 
 ## 1. 问题
 
@@ -354,3 +356,174 @@
 - **离线全量**：按 AGENTS.md 第 19 节的方式运行，941 passed（337.43 s；原 936 加新增 5），测试前后工作区一致。
 - **没有覆盖的**：`_memory_message` 的投影规则原样移入，没有补测试。这些规则包括：控制项和 provider 项、系统与用户消息、运行时上下文工具不进记忆；推理内容被去掉；媒体替换为占位文本；各种类型校验。
 - **证据**：`~/alphaavatar-kd49-check/state/`（`lines-before.json`、`plugin/`、`mutate.py`、`mutate.txt`、`full.txt`）。
+
+## 11. 第六批：按类型与 owner 检索（基线 `25f92093`）
+
+### 11.1 用户的决定（2026-11-22）
+
+- 检索按 owner 过滤，不按 scope。降级到 `context` 的记忆，只要 owner 里有这个用户，他就能检索到。
+- 用户记忆（CONVERSATION、ENV、TOOLS）按类型加 owner 检索，Avatar 记忆（Avatar 类型）按类型检索。
+- 会话内整合仍只合并类型、scope、owner 都相同的条目，找候选时只查这一批自己的 scope。
+- 环境记忆的概念：某个用户为了让 Avatar 替他观察周围环境而开启的持续捕获，开启的人可以不出现在画面里，例如摄像头或观测模式。
+  - 环境记忆的 owner 为主参与者加 Avatar。
+  - 因为 Avatar 只能读到 Avatar 类型，所以环境记忆实际只由主参与者读取。
+  - 环境记忆的 scope 仍为 `context`。
+- 规则不单独建新文件：
+  - 类型到"经由哪类 owner 读取"的对应，写在 `MemoryType.read_by`；
+  - 按 owner 分组的函数放在 `storage/sqlite/query.py`。
+
+### 11.2 改动
+
+| 位置 | 改动 |
+|---|---|
+| `agents/memory/enums/memory_type.py` | 新增 `MemoryType.read_by`：Avatar 类型经由 Avatar 读取，其余类型经由用户读取 |
+| SQLite（`storage/sqlite/query.py`、`resolution.py`、`store.py`） | `visibility()` 把读者的 owner 按类别分组，每组带上它能读的类型。`visibility_clause` 改为"该类型且 owner 匹配"的组之间取"或"，不再看 scope。`fetch_visible`、`resolve_current` 去掉 `context` 参数。`get_visible`、`query_visible` 改动后没有调用方了，连同 `owner_keys` 一起删掉 |
+| 后端契约（`agents/memory/store.py`） | 删掉 `get_visible`、`query_visible`；`resolve_current` 去掉 `context` |
+| 向量检索（LanceDB、Qdrant） | 召回和图召回改为按同一份分组预筛，不再按 scope；分组为空时什么都不匹配。Qdrant 的空 `should` 会匹配所有点，所以改用一个永不成立的条件。整合用的相似度检索仍按 owner 加 scope |
+| `storage/store.py` | 召回和图召回不再接收 `context`，传给向量检索的是可见性分组。`search_similar_batch` 改为接收这一批的 `scope`，只在这个 scope 里找候选；候选按 ID 读出，是否兼容由整合器判断。删掉没有调用方的 `get_visible`、`resolve_current`、`query_visible` 三个包装方法 |
+| `runtime.py` 的 `visible_items` | 用同一条规则，去掉 `context` 参数 |
+| `agents/memory/schemas/scope.py` | 删掉 `applicable_keys`、`applies_to` |
+| `state.py` 的 `capture_identity()` | 不传消息时只取会话的主参与者。在场的其他人不会成为 owner，也不会让这批降级 |
+| 环境处理器 | 提取时给的"之前的环境记忆"直接读本 context 的环境记忆，不按读者过滤。这是 Avatar 自己的工作输入，不展示给任何读者 |
+| 调用方 | 被动召回、主动检索、整合找候选、提取提示里的环境记忆，都改为新的接口 |
+
+### 11.3 行为变化，需要知道
+
+- **不再有"无人可读"的空档**：新加入的参与者都会先得到一个临时生成的用户 ID（`ParticipantRuntime.join`），之后识别出真实身份时再改绑。
+  - 所以主参与者通常都有用户 ID，环境记忆就归这个 ID。只有主参与者被显式解绑、没有用户时，才只归 Avatar、谁都读不到，并记一行 `Memory items kept in their context`。
+  - 我之前说的"主参与者身份未知时归 Avatar"不准确，应以这里为准。
+  - 如果会话中途才认出主参与者，并从临时 ID 改绑为已有用户，那么改绑之前提交的环境记忆仍归临时 ID，改绑后的用户读不到。
+- **提取提示里的环境记忆**：对话、工具提取时附带的本 context 环境记忆也按读者过滤，只有这一批属于环境记忆的 owner（主参与者）时才附上，以免一位用户那边观察到的内容被写进另一位用户的对话记忆。
+- **兜底归 Avatar 的对话、工具记忆**：谁都检索不到，只作为记录保留。会话内整合在找候选时也用不上它们之间的合并，但它们本来就不会被检索。
+
+### 11.4 验证
+
+| 测试 | 覆盖 |
+|---|---|
+| `test_memory_runtime.py` 新增 `test_a_memory_is_read_by_its_type_and_owners_never_its_scope` | 七种记忆（Avatar 的、alice 在更早 context 的对话、alice 的工具、alice 的环境、未归属兜底的对话、无人可归的环境、bob 的）× 三种读者（alice、bob、匿名）：SQLite 和 `visible_items` 的结果都与规则一致 |
+| `test_memory_runtime.py` 新增 `test_environment_memory_is_its_primary_participants_and_the_avatars_alone` × 3 | 主参与者是已识别的用户、临时身份，或已解绑。在场有已识别的 bob 和一个陌生人：owner 只有主参与者和 Avatar，没有用户时只有 Avatar 并记日志；scope 为 `context`；bob 和只带 Avatar 的读者读不到；第二批提取能看到第一批的观察 |
+| `test_memory_runtime.py` 新增 `test_consolidation_looks_for_candidates_in_its_own_scope_alone` | 整合找候选时只在这一批的 scope 里查，候选按 ID 读出 |
+| `tests/storage/test_qdrant_filter.py`（新） | Qdrant 的过滤条件：各类型经由对应类别的 owner；读者为空时什么都不匹配 |
+| `tests/storage/test_lancedb_recall.py`（改） | 别人的、以及 Avatar 也是 owner 的用户记忆，不会被检索到，也不会触发向量化；自己的在别的 scope 也能找到；读者为空时没有候选 |
+| `test_memory_recall_diagnostics.py`（改） | 预置的记忆改为 alice 在更早会话里的；她这一轮的召回能找到；传给向量检索的是两组分组，不带 scope |
+| 第四批的用例（改） | 降级的批次在任何 context 都能被它的用户检索到；只带 Avatar 的读者和其他用户读不到 |
+
+- **变异测试**：用 pytest 插件在导入前把目标模块换成仓库外的变异版本，不改工作区。
+  - 没有变异的对照组 65 passed。
+  - 15 个变异全部被发现：
+    - SQLite 规则的两个；
+    - `read_by` 的两个；
+    - 向量预筛为空；
+    - 整合查遍所有 scope；
+    - 整合候选被丢掉；
+    - `visible_items` 忽略类型、忽略用户；
+    - 环境身份取全部参与者；
+    - 环境的之前记忆被按读者过滤；
+    - LanceDB、Qdrant 各两个（忽略类型、读者为空时全读）。
+  - 每次运行另有的 error，是断言失败的用例没有关闭 runtime、在 teardown 时报的错，对照组里没有。
+- **离线全量**：按 AGENTS.md 第 19 节的方式运行，947 passed（337.86 s；原 941 加新增 6），测试前后工作区一致。
+- **仓库规范**：都通过，包括 `ruff check .`、`ruff format --check .`（793 个文件）、`check_workspace.py`、`git diff --check`、`pre-commit validate-config`，以及改动文件的 pre-commit。
+- **没有覆盖的**：
+  - Qdrant 只验证了过滤条件的结构，没有连真实的 Qdrant 服务；
+  - 真实通话里跨会话召回的效果还没验证。
+- **证据**：`~/alphaavatar-kd49-check/visibility/`（`plugin/override.py`、`mutate.py`、`mutate.txt`、`mutate-qdrant.txt`、`full.txt`）。
+
+### 11.5 KD-49 的状态（2026-11-22）
+
+- 代码层面，KD-49 记录的症状已解决：一轮没归属不再让整场对话的记忆在之后的会话里检索不到。
+- 用户决定：
+  - KD-49 先标为"已修复，待真实通话验证"；
+  - 混合说话导致的记忆混合，单独登记为 O-29，后续版本修复。
+- 真实通话的验证由用户本人说话，我读取 Host 日志和 SQLite 的元数据，不读对话内容。
+  - 验证前的基线：19 条记录，来自之前的两次会话，scope 全是 `context`。
+  - 其中对话、工具记忆归 Avatar，环境记忆归 Avatar 加用户；这些都是修复前写入的，没有迁移。
+
+### 11.6 真实通话验证（2026-11-22 18:12–18:16，用户两次对话）
+
+只读取 Host 日志里的 ID 与状态，以及 SQLite 的元数据，不读对话内容。
+
+| 项目 | 结果 |
+|---|---|
+| 第一次对话（7 轮） | 第 3～5 轮归属到用户 `73f4e31f`；第 1、2、6、7 轮的段为 `outcome=unbound reason=no_vector`，这几轮是 `unattributed` |
+| 第一次对话写入的记忆 | 对话记忆（原子和整合各一条）、工具记忆都归 `user:73f4e31f`。因为有未归属的轮，scope 为 `context`，并标了 `unattributed_input`；日志各有一行 `Memory items kept in their context`。修复前同样的情形会归 Avatar |
+| 跨会话检索 | 第一次对话里已归属的三轮，被动召回都是 `status=ok items=6`。库里能检索到的只有之前两次会话写入的环境记忆，它们归 Avatar 加该用户、scope 为 `context`，说明按 owner、跨 context 的检索在真实链路上生效 |
+| 第二次对话（2 轮） | 第 1 轮 `no_vector`、未归属，召回 `empty`；第 2 轮归属到同一用户，召回 `ok items=6`。这 6 条里有没有第一次对话的记忆，日志里看不出来（召回不记条目 ID），要看回答 |
+| 环境记忆 | 第一次对话的两批分别归临时 ID `188828f1` 和用户 `73f4e31f`，第二次对话的一批归临时 ID `bf969554`：认出用户（`bind_user` 从临时 ID 改绑）之前提交的批次留在临时 ID 名下，这正是 11.3 节说的限制 |
+| 其他 | 两次会话结束时都有 `ENV processing halted reason=shutdown_timeout`，最后一段环境观察没有提取。11-21 的日志里同样出现过两次，是之前就有的问题，与本批无关 |
+
+- 两次对话共 10 段，未归属的 5 段全部是 `no_vector`，没有 `no_match` 或 `inference_failed`；原因见 11.7。
+- 证据：`~/alphaavatar-kd49-check/real-call/`（`baseline.txt`、`after.txt`、`log-lines.txt`）。
+
+### 11.7 `no_vector` 的原因，以及登记的 O 项
+
+**原因**
+
+- 结论：从代码和日志合起来看，是短句，而不是缺少音频或推理失败。
+- 机制（`speaker/processor.py`）：
+  - VAD 长度不到 1 秒（`short_segment_sec`）的段不单独做声纹；
+  - 它关闭时就调用 `_retire`，以 `unbound reason=no_vector` 结束关联；
+  - 音频带进同一来源的下一段，合起来推理（`_add_short`）；
+  - 下一段匹配上以后，在 `_finish_segment` 里给带进来的短段补上关联。
+- 日志的佐证：
+  - 未归属的 5 段从登记到结束只等了 455～1055 ms，已绑定的 5 段是 1555～2646 ms；
+  - 前两句短句后面紧跟一段被认出的话，第二次对话的第一句也是这样。
+- 日志无法直接证实：
+  - 日志里没有段长；
+  - 补上的关联不会再记一行。
+- 由此推断：
+  - 第一次对话的第 1、2 轮和第二次对话的第 1 轮，事后已经补上了关联，所以会话结束时 Memory 读到的是已归属；
+  - 第一次对话最后的第 6、7 轮后面没有下一段，始终未归属，这一批因此按混合批次降级。
+- 影响：短句在准入时都未归属，这一轮的被动召回只能读到 Avatar 记忆。
+
+**诊断上的问题（只报告，没有改）**
+
+- `_settle` 只记第一次结束的结果。短段先以 `unbound no_vector` 结束，之后补上的关联不再写日志。
+- `segment_association()` 也仍然返回 `unbound`。
+- 所以第一批加的日志，把"之后会被补上"的短段，和"根本没有声纹"的段，记成了同一种情况。
+
+**用户决定（2026-11-22）**
+
+- KD-49 移到"已修复"：第二次对话已归属的那一轮召回出了第一次对话的内容，回答正确。
+- 三个问题登记为 O 项：
+  - O-30：短句不单独做声纹，并且诊断不准；
+  - O-31：认出本人之前的环境记忆归临时 ID；
+  - O-32：会话结束时环境提取超时。
+
+## 12. 第七批：短句的诊断日志（O-30 的诊断部分）
+
+### 12.1 范围
+
+- 用户决定只改日志，不改关联的状态和行为。
+- `segment_association()` 仍返回第一次结束时的结果。
+- 这一批和第六批都在同一个工作区里，都还没有提交。
+
+### 12.2 改动
+
+| 位置 | 改动 |
+|---|---|
+| `participants/runtime.py` 的 `_settle` | `Speaker association settled` 一行加上 `speech_ms`：段的 VAD 长度，解析方给出时才有，否则为 `None` |
+| `finish_segment_resolution`、`bind_segment` | 新增只供日志用的可选参数 `speech_sec`，传给 `_settle` |
+| `bind_segment` | 一段先以 `unbound` 结束、之后被绑定时，记一行 `Speaker association bound late`，字段为 `segment_id`、`source_id`、`source_generation`、`wait_ms`。已经是 `bound` 的段再绑定一次，不会记这一行 |
+| Persona 说话人处理器 | 段关闭时记下 VAD 长度（`SpeakerSegmentState.speech_sec`，只用于日志）。`_retire`、`_discard_job`、推理失败时的结束，以及 `_finish_segment` 的绑定，都把它传过去 |
+| `docs/cli/doctor.md` | `association_ready` 的说明补上 `speech_ms` 和 `bound late` |
+| `docs/bugs-zh.md` | O-30 写明诊断部分已改，`segment_association()` 没有改 |
+
+- 以后看日志时：
+  - `outcome=unbound reason=no_vector speech_ms=<1000`，之后跟着一行 `bound late`：短句，由下一段补上了关联；
+  - `speech_ms` 不小于 1000 却是 `no_vector`：缺少音频；
+  - 没有 `bound late`：始终没有补上。
+
+### 12.3 验证
+
+| 测试 | 覆盖 |
+|---|---|
+| `avatar-agents/tests/test_participant_segments.py` 新增 `test_speech_that_settled_unbound_and_is_bound_later_is_told_with_its_length` | 未绑定结束时带段长；绑定时带段长；事后补上时记 `bound late`；已绑定的段再绑定一次不记 |
+| 同文件，改 `test_an_association_settles_once_and_the_trace_and_log_say_how` | 不给段长时为 `speech_ms=None` |
+| `test_persona_sensors.py`，改 `test_short_segments_lead_the_next_longer_one_into_its_vector` | 真实短段链路：两段短句先以 `unbound no_vector` 结束（`speech_ms` 为 800、700），长段以 `bound` 结束（`speech_ms=1200`），之后两段短句各记一行 `bound late` |
+
+- 变异测试：8 个全部被发现，对照组通过，仍从仓库外加载变异版本，不改工作区。
+  - 参与者 runtime 的五个：日志不写段长；结束时丢掉段长；绑定时丢掉段长；不记 `bound late`；任何再绑定都记 `bound late`。
+  - Persona 的三个：不记下段长；`_retire` 不传段长；绑定时不传段长。
+- 离线全量：948 passed（338.22 s；第六批的 947 加新增 1），测试前后工作区一致。
+- 仓库规范：都通过，包括 `ruff check .`、`ruff format --check .`（793 个文件）、`check_workspace.py`、`git diff --check`、`pre-commit validate-config`，以及改动文件的 pre-commit。
+- 证据：`~/alphaavatar-kd49-check/short-logs/`。

@@ -236,12 +236,14 @@ class MemoryContextState:
         self._provider_dir = provider_dir
         self._cache_type = cache_type
 
-        # Its fixed owners and participants; its users are its participants', as they stand.
+        # Its fixed owners and participants; its users are its participants', as they stand,
+        # and the session's primary participant, whom environment capture is for.
         self._owner_refs = deduplicate_refs(owner_refs)
         self._participant_refs = deduplicate_refs(participant_refs)
         self._participants = {
             participant.participant_id: participant for participant in participants
         }
+        self._primary_id: str | None = None
         self._session_sequence = 0
 
         # What it holds, in arrival order: Turns by ID and their inputs, records by ID.
@@ -308,6 +310,7 @@ class MemoryContextState:
             for participant_id, participant in participants.items()
             if include_new or participant_id in self._participants
         }
+        self._primary_id = snapshot.primary_participant_id
         self._session_sequence = snapshot.sequence
 
     def capture_identity(
@@ -318,14 +321,15 @@ class MemoryContextState:
     ) -> MemoryIdentitySnapshot:
         """Whom the messages are from: each user input by its Turn's participants as they
         stand now (``of_turn``), each model or tool record by the identity it was admitted
-        with. Without messages, the context's participants."""
+        with. Without messages, whom environment capture is for: the session's primary
+        participant, who opened it, seen or not; never the people it observes."""
         if messages is None:
+            primary = self._participants.get(self._primary_id) if self._primary_id else None
+            people = () if primary is None else (primary,)
             found = {
-                _identity(p.participant_id, p.user_id, p.identity_revision): None
-                for p in self._participants.values()
+                _identity(p.participant_id, p.user_id, p.identity_revision): None for p in people
             }
-            unattributed = any(p.user_id is None for p in self._participants.values())
-            people = self._participants.values()
+            unattributed = primary is None or primary.user_id is None
         else:
             if of_turn is None:
                 raise ValueError("A batch's participants are read from its Turns")

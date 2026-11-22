@@ -114,6 +114,7 @@ class QdrantRunner(InferenceRunner):
         doc_kind: str | None = None,
         owner_keys: list[str] | None = None,
         scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]] | None = None,
         memory_type: str | None = None,
         memory_kind: str | None = None,
         node_type: str | None = None,
@@ -139,6 +140,26 @@ class QdrantRunner(InferenceRunner):
         ):
             if values := self._as_str_list(values):
                 must.append(FieldCondition(key=key, match=MatchAny(any=values)))
+
+        if visibility is not None:
+            # What the readers read: each memory type through its kind of owner, any scope.
+            groups = [
+                Filter(
+                    must=[
+                        FieldCondition(key="memory_type", match=MatchAny(any=types)),
+                        FieldCondition(key="owner_keys", match=MatchAny(any=keys)),
+                    ]
+                )
+                for group in visibility
+                if (types := self._as_str_list(group.get("memory_types")))
+                and (keys := self._as_str_list(group.get("owner_keys")))
+            ]
+            # An empty should matches every point; readers who read nothing match none.
+            must.append(
+                Filter(should=groups)
+                if groups
+                else FieldCondition(key="doc_kind", match=MatchValue(value=""))
+            )
 
         return Filter(must=must) if must else None
 
@@ -271,8 +292,7 @@ class QdrantRunner(InferenceRunner):
         self,
         *,
         context_str: str,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         top_k: int = 10,
         request_id: str | None = None,
@@ -288,11 +308,7 @@ class QdrantRunner(InferenceRunner):
                 vector = self._embeddings.embed_query(context_str)
             finally:
                 embedding_wait = perf_counter() - started
-            common = {
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
-                "memory_type": memory_type,
-            }
+            common = {"visibility": visibility, "memory_type": memory_type}
             phase = "vector"
             vector_started = perf_counter()
             try:
@@ -335,8 +351,7 @@ class QdrantRunner(InferenceRunner):
         *,
         node_keys: list[str] | None = None,
         node_query: str | None = None,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         node_type: str | None = None,
         top_k: int = 50,
@@ -346,8 +361,7 @@ class QdrantRunner(InferenceRunner):
         try:
             common = {
                 "doc_kind": "graph_node",
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
+                "visibility": visibility,
                 "memory_type": memory_type,
                 "node_type": node_type,
             }
