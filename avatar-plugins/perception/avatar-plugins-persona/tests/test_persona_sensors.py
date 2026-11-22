@@ -243,9 +243,10 @@ def speak(
     user: str,
     *,
     end: bool = True,
+    seconds: int = 3,
 ) -> None:
-    """Publish one 3 s utterance, known by its voice: exactly one model window, then the
-    segment end."""
+    """Publish one utterance of ``seconds`` 1 s frames, known by its voice (3: exactly one model
+    window), then the segment end."""
     level = next(level for level, name in LEVELS.items() if name == user)
     pcm = np.full(16000, level, dtype="<i2").tobytes()
     common = {
@@ -253,7 +254,7 @@ def speak(
         "segment": PerceptionSegmentRef(source, segment),
         "device_id": source.source_id,
     }
-    for index in range(3):
+    for index in range(seconds):
         frame = AudioFrame(sample_rate=16000, num_channels=1, samples_per_channel=16000, data=pcm)
         runtime.perception.publish_observation(
             EnvObservation(
@@ -1693,17 +1694,10 @@ def gateway(model: str) -> dict:
     return {"trace": {"enabled": False}, "tasks": {"task": {"model": model}}}
 
 
-@pytest.mark.parametrize("ended_by", ["cancelled-source", "new-generation"])
-async def test_a_source_that_ends_keeps_the_association_its_earlier_speech_settled(
-    ended_by: str, tmp_path: Path
-) -> None:
-    """Alice was heard, identified and her Turn committed; her attributes are still being
-    inferred when she begins again and the source ends. The attribute inference is cancelled
-    and the unfinished segment invalidated, but her settled association stays: the Turn reads
-    as hers, then, after Persona stops, and for the profiler and Memory at the session's end.
-    Nothing settled after the source ended is taken."""
+async def remembered_session(tmp_path: Path, **speaker: object):
+    """A session whose speaker processor, profiler and Memory are real, its models and vector
+    indexes doubles: Alice's profile and her Turn's conversation memory, once each."""
     inference = SessionInference()
-    inference.hold_attribute = True
     providers = ScriptedProviders(
         profile=ScriptedModel(ProfileDelta(ops=[ProfilePatch(op="set", path="/name", value="Al")])),
         conversation=ScriptedModel(
@@ -1719,7 +1713,7 @@ async def test_a_source_that_ends_keeps_the_association_its_earlier_speech_settl
             }
         }
     }
-    persona = persona_for(runtime, "speaker", profiler=profiler)
+    persona = persona_for(runtime, "speaker", profiler=profiler, **speaker)
     memory = AvatarModulePlugin.create(
         AvatarModule.MEMORY,
         "default",
@@ -1738,6 +1732,32 @@ async def test_a_source_that_ends_keeps_the_association_its_earlier_speech_settl
     )
     await memory.on_start()
     await persona.on_start()
+    return inference, runtime, persona, memory
+
+
+async def remembered_as_alice(inference, runtime, persona, memory, turn) -> None:
+    """At the session's end the Turn still reads as Alice's, after Persona stops as well: the
+    profiler gives it to her and Memory keeps its conversation as hers."""
+    await persona.on_stop()
+    assert [entry.user_id for entry in runtime.participants.of_turn(turn)] == ["alice"]
+    assert "alice" in inference.saves
+    await memory.on_stop()
+    (item,) = memory.memory_state.get(memory_type=MemoryType.CONVERSATION)
+    assert [ref.key for ref in item.owner_refs] == ["user:alice"]
+    assert item.scope.kind is MemoryScopeKind.OWNER
+
+
+@pytest.mark.parametrize("ended_by", ["cancelled-source", "new-generation"])
+async def test_a_source_that_ends_keeps_the_association_its_earlier_speech_settled(
+    ended_by: str, tmp_path: Path
+) -> None:
+    """Alice was heard, identified and her Turn committed; her attributes are still being
+    inferred when she begins again and the source ends. The attribute inference is cancelled
+    and the unfinished segment invalidated, but her settled association stays: the Turn reads
+    as hers, then, after Persona stops, and for the profiler and Memory at the session's end.
+    Nothing settled after the source ended is taken."""
+    inference, runtime, persona, memory = await remembered_session(tmp_path)
+    inference.hold_attribute = True
     source = PerceptionSourceRef("device", 1)
     speak(runtime, source, "a", "alice")
     async with asyncio.timeout(HANG_GUARD):
@@ -1782,14 +1802,67 @@ async def test_a_source_that_ends_keeps_the_association_its_earlier_speech_settl
     await wait_until(lambda: traced(runtime, "speaker.attribute"), "it never ended")
     assert persona.cache_for(alice.participant_id).profile_details is None
     assert runtime.participants.segment_association(heard) == "bound"
+    await remembered_as_alice(inference, runtime, persona, memory, turn)
+    await runtime.aclose()
 
-    await persona.on_stop()
-    assert read() == ["alice"]
-    assert "alice" in inference.saves  # The profiler gave the Turn to Alice.
-    await memory.on_stop()
-    (item,) = memory.memory_state.get(memory_type=MemoryType.CONVERSATION)
-    assert [ref.key for ref in item.owner_refs] == ["user:alice"]
-    assert item.scope.kind is MemoryScopeKind.OWNER
+
+@pytest.mark.parametrize("lost_by", ["gap", "capacity"])
+async def test_work_given_up_on_a_gap_or_a_full_table_keeps_the_associations_it_settled(
+    lost_by: str, tmp_path: Path
+) -> None:
+    """Alice's Turn is committed, her attributes still being inferred; Bob's segment is bound,
+    his identity still being searched; a third is still being spoken. Then the processor gives
+    their work up: a gap loses the speech after them, or new speech needs their places in the
+    table, one at a time. Alice's and Bob's associations stay; the unfinished segment is
+    invalidated; the attribute and identity released afterwards are not taken. Alice's Turn
+    reads as hers to the end, for the profiler and Memory."""
+    capacity = lost_by == "capacity"
+    inference, runtime, persona, memory = await remembered_session(
+        tmp_path, **({"max_segments": 1} if capacity else {})
+    )
+    inference.hold_attribute = True
+    source = PerceptionSourceRef("device", 1)
+    heard, bound, unfinished = (PerceptionSegmentRef(source, s) for s in ("a", "b", "c"))
+    speak(runtime, source, "a", "alice")
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.attribute_held.wait()
+    alice = participant_of(runtime, "alice")
+    turn = spoken_turn(runtime, "a")
+    inference.hold_search = True
+    speak(runtime, source, "b", "bob")  # A full table gives Alice's place to it.
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.search_held.wait()
+    assert runtime.participants.segment_association(bound) == "bound"
+    speak(runtime, source, "c", "carol", end=False)  # ... and Bob's to this one.
+    await wait_until(
+        lambda: runtime.participants.segment_association(unfinished) == "pending", "c unseen"
+    )
+    if capacity:
+        speak(runtime, source, "d", "carol", end=False)  # ... and the unfinished one's to this.
+    else:
+        # More speech at once than the stream keeps: the processor reads past a gap.
+        speak(runtime, source, "c", "carol", end=False, seconds=300)
+    await wait_until(
+        lambda: runtime.participants.segment_association(unfinished) == "invalid",
+        "the unfinished segment was never given up",
+    )
+
+    assert runtime.participants.segment_association(heard) == "bound"
+    assert runtime.participants.segment_association(bound) == "bound"
+    assert [entry.user_id for entry in runtime.participants.of_turn(turn)] == ["alice"]
+    # Released now, the attribute and the identity have lost their segments: neither is taken.
+    inference.attribute_release.set()
+    inference.search_release.set()
+    await wait_until(lambda: traced(runtime, "speaker.attribute"), "the attribute never ended")
+    await wait_until(
+        lambda: len(traced(runtime, "speaker.identity")) == 2, "the identity never ended"
+    )
+    assert inference.searches == ["speaker:alice", "speaker:bob"]
+    assert persona.cache_for(alice.participant_id).profile_details is None
+    assert participant_of(runtime, "bob") is None
+    assert runtime.participants.segment_association(heard) == "bound"
+    assert runtime.participants.segment_association(unfinished) == "invalid"
+    await remembered_as_alice(inference, runtime, persona, memory, turn)
     await runtime.aclose()
 
 

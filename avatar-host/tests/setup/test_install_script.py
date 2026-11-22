@@ -26,6 +26,7 @@ import platform
 import re
 import select
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -669,8 +670,28 @@ def shell(tmp_path: Path, tools: Path, script: str, *, options: tuple[str, ...] 
     )
 
 
+LOGIN, INTERACTIVE = ("bash", "-l"), ("bash", "-i")
+
+
+def new_terminal(home: Path, *shell: str) -> tuple[str, list[str]]:
+    """Where a new terminal's shell, started as ``shell`` and reading the startup files it
+    reads itself, finds alphaavatar ("" if nowhere), and its PATH; nothing but the system's
+    PATH and the test's home given to it."""
+    done = subprocess.run(
+        [*shell, "-c", 'command -v alphaavatar; echo "$PATH"'],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin", "TERM": "dumb"},
+        stdin=subprocess.DEVNULL,
+    )
+    *found, path = done.stdout.splitlines() or [""]
+    return (found[0] if found else ""), path.split(":")
+
+
 def found_by_a_new_terminal(home: Path, profile: Path) -> str:
-    """Where a new terminal, its startup file read, finds alphaavatar ("" if nowhere)."""
+    """Where a shell finds alphaavatar once it has read ``profile`` ("" if nowhere): zsh's,
+    with no zsh here to read it itself."""
     done = subprocess.run(
         ["sh", "-c", '. "$1" && command -v alphaavatar', "sh", str(profile)],
         capture_output=True,
@@ -684,9 +705,70 @@ BEGIN, END = "# >>> AlphaAvatar >>>", "# <<< AlphaAvatar <<<"
 
 
 @pytest.mark.parametrize(
-    ("login", "file"),
-    [("/bin/bash", ".bashrc"), ("/usr/bin/zsh", ".zshrc"), ("/bin/sh", ".profile")],
+    "files", ["none", "bash_profile", "bash_profile reading bashrc", "bash_login", "profile"]
 )
+def test_bash_finds_the_command_in_new_terminals_logged_in_or_not(layout, files: str) -> None:
+    """Bash itself, started as a login shell and as an interactive one in a home holding the
+    startup files given, finds the command, on its PATH once. Its interactive file and the one
+    it reads logging in get the block, after what they hold; no file that would hide another
+    is made. Installed again, nothing changes."""
+    tmp_path, _, _, run = layout
+    home, bin_dir = tmp_path / "home", tmp_path / "bin"
+    mine = {
+        "none": {},
+        "bash_profile": {".bash_profile": "# mine, never reading .bashrc\n", ".profile": "# m\n"},
+        "bash_profile reading bashrc": {
+            ".bash_profile": "[ -f ~/.bashrc ] && . ~/.bashrc\n",
+            ".bashrc": "alias ll='ls -l'\n",
+        },
+        "bash_login": {".bash_login": "# mine\n"},
+        "profile": {".profile": "# mine\n", ".bashrc": "# mine\n"},
+    }[files]
+    for name, text in mine.items():
+        (home / name).write_text(text)
+    login = {"none": ".profile", "bash_login": ".bash_login", "profile": ".profile"}.get(
+        files, ".bash_profile"
+    )
+    done = run(extra={"SHELL": "/bin/bash"})
+
+    assert done.returncode == 0, done.stderr
+    for name in (".bashrc", login):
+        assert f"PATH: added {bin_dir} to {home / name}, for new terminals" in done.stdout
+        text = (home / name).read_text()
+        assert text.startswith(mine.get(name, "")) and text.count(BEGIN) == 1
+    assert sorted(os.listdir(home)) == sorted({*mine, ".bashrc", login})
+    for shell in (LOGIN, INTERACTIVE):
+        found, path = new_terminal(home, *shell)
+        assert found == str(bin_dir / "alphaavatar") and path.count(str(bin_dir)) == 1, shell
+    written = {name: (home / name).read_bytes() for name in os.listdir(home)}
+
+    again = run(extra={"SHELL": "/bin/bash"})
+    assert again.returncode == 0, again.stderr
+    for name in (".bashrc", login):
+        assert f"PATH: {home / name} already adds {bin_dir}" in again.stdout
+    assert {name: (home / name).read_bytes() for name in os.listdir(home)} == written
+    assert new_terminal(home, *LOGIN)[1].count(str(bin_dir)) == 1
+
+
+def test_bash_with_a_startup_file_it_cannot_write_says_so_and_configures_the_other(layout) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root writes a read-only file")
+    tmp_path, _, _, run = layout
+    home, bin_dir = tmp_path / "home", tmp_path / "bin"
+    (home / ".bashrc").write_text("# mine\n")
+    (home / ".bashrc").chmod(0o444)
+    done = run(extra={"SHELL": "/bin/bash"})
+    assert done.returncode == 0, done.stderr
+    told = done.stdout.splitlines()
+    assert f"PATH: not configured: cannot write {home / '.bashrc'}" in told
+    assert f"PATH: added {bin_dir} to {home / '.profile'}, for new terminals" in told
+    assert told[told.index("PATH: to add it yourself:") + 1] == f'  export PATH="{bin_dir}:$PATH"'
+    assert f"This terminal finds alphaavatar after: source {home / '.profile'}" in told
+    assert (home / ".bashrc").read_text() == "# mine\n"
+    assert new_terminal(home, *LOGIN)[0] == str(bin_dir / "alphaavatar")
+
+
+@pytest.mark.parametrize(("login", "file"), [("/usr/bin/zsh", ".zshrc"), ("/bin/sh", ".profile")])
 def test_the_command_goes_on_path_for_new_terminals_in_the_login_shells_startup_file(
     layout, login: str, file: str
 ) -> None:
@@ -696,6 +778,14 @@ def test_the_command_goes_on_path_for_new_terminals_in_the_login_shells_startup_
     tmp_path, _, _, run = layout
     home = tmp_path / "home"
     profile = home / file
+
+    def found() -> str:  # sh logging in reads ~/.profile itself; zsh is not here to.
+        return (
+            new_terminal(home, "sh", "-l")[0]
+            if file == ".profile"
+            else (found_by_a_new_terminal(home, profile))
+        )
+
     mine = "# mine\nalias ll='ls -l'\n"
     profile.write_text(mine)
     done = run(extra={"SHELL": login})
@@ -703,7 +793,7 @@ def test_the_command_goes_on_path_for_new_terminals_in_the_login_shells_startup_
     assert f"PATH: added {tmp_path / 'bin'} to {profile}, for new terminals" in done.stdout
     text = profile.read_text()
     assert text.startswith(mine) and text.count(BEGIN) == text.count(END) == 1
-    assert found_by_a_new_terminal(home, profile) == str(tmp_path / "bin/alphaavatar")
+    assert found() == str(tmp_path / "bin/alphaavatar")
     assert f"This terminal finds alphaavatar in a new terminal, or after: source {profile}" in (
         done.stdout
     )
@@ -725,7 +815,7 @@ def test_the_command_goes_on_path_for_new_terminals_in_the_login_shells_startup_
     assert f"PATH: updated {profile} with {tmp_path / 'elsewhere'}" in other.stdout
     text = profile.read_text()
     assert text.startswith(mine) and text.count(BEGIN) == 1 and str(tmp_path / "bin:") not in text
-    assert found_by_a_new_terminal(home, profile) == str(tmp_path / "elsewhere/alphaavatar")
+    assert found() == str(tmp_path / "elsewhere/alphaavatar")
 
 
 def test_zsh_keeps_its_startup_files_where_zdotdir_says_and_a_linked_file_stays_a_link(
@@ -760,7 +850,7 @@ def test_a_directory_on_path_already_is_written_into_no_startup_file(layout) -> 
     done = run(extra={"SHELL": "/bin/bash", "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin"})
     assert done.returncode == 0, done.stderr
     assert f"PATH: {tmp_path / 'bin'} is on PATH already" in done.stdout
-    assert not (tmp_path / "home/.bashrc").exists() and "This terminal" not in done.stdout
+    assert os.listdir(tmp_path / "home") == [] and "This terminal" not in done.stdout
 
 
 def test_a_directory_named_with_spaces_quotes_and_dollars_reads_back_exactly(layout) -> None:
@@ -768,11 +858,13 @@ def test_a_directory_named_with_spaces_quotes_and_dollars_reads_back_exactly(lay
     odd = tmp_path / 'bin dir $HOME "q" `x` back\\slash'
     done = run("--bin-dir", str(odd), extra={"SHELL": "/bin/bash"})
     assert done.returncode == 0, done.stderr
-    found = found_by_a_new_terminal(tmp_path / "home", tmp_path / "home/.bashrc")
-    assert found == str(odd / "alphaavatar")
+    for shell in (LOGIN, INTERACTIVE):
+        assert new_terminal(tmp_path / "home", *shell)[0] == str(odd / "alphaavatar"), shell
 
 
-@pytest.mark.parametrize("case", ["unknown shell", "unwritable", "a directory", "unfinished block"])
+@pytest.mark.parametrize(
+    "case", ["unknown shell", "unwritable", "unwritable, its block there", "a directory"]
+)
 def test_a_startup_file_left_unconfigured_is_said_so_and_the_installation_stands(
     layout, case: str
 ) -> None:
@@ -780,18 +872,17 @@ def test_a_startup_file_left_unconfigured_is_said_so_and_the_installation_stands
     directory, claims nothing, and changes no file; the installation itself is done."""
     tmp_path, _, _, run = layout
     home, bin_dir = tmp_path / "home", tmp_path / "bin"
-    profile = home / ".bashrc"
+    profile = home / ".profile"
     # Bash itself sets SHELL from the account when it is not set: there is always one.
-    login = "/usr/bin/fish" if case == "unknown shell" else "/bin/bash"
-    if case == "unwritable":
+    login = "/usr/bin/fish" if case == "unknown shell" else "/bin/sh"
+    if case.startswith("unwritable"):
         if os.geteuid() == 0:
             pytest.skip("root writes a read-only file")
-        profile.write_text("# mine\n")
+        block = f"{BEGIN}\nexport PATH=/elsewhere:$PATH\n{END}\n" if "block" in case else ""
+        profile.write_text(f"# mine\n{block}")
         profile.chmod(0o444)
     elif case == "a directory":
         profile.mkdir()
-    elif case == "unfinished block":
-        profile.write_text(f"# mine\n{BEGIN}\nexport PATH=/somewhere:$PATH\n")
     before = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
     done = run(extra={"SHELL": login})
 
@@ -800,15 +891,84 @@ def test_a_startup_file_left_unconfigured_is_said_so_and_the_installation_stands
     reason = {
         "unknown shell": "the login shell (/usr/bin/fish) is not bash, zsh or sh",
         "unwritable": f"cannot write {profile}",
+        "unwritable, its block there": f"cannot write {profile}",
         "a directory": f"{profile} is not a file this installer edits",
-        "unfinished block": f"{profile} holds AlphaAvatar's block unfinished",
     }[case]
-    assert f"PATH: not configured: {reason}; to add it yourself:" in done.stdout
-    assert f'  export PATH="{bin_dir}:$PATH"' in done.stdout
-    assert f"This terminal finds alphaavatar once {bin_dir} is on PATH." in done.stdout
+    told = done.stdout.splitlines()
+    assert f"PATH: not configured: {reason}" in told
+    assert told[told.index("PATH: to add it yourself:") + 1] == f'  export PATH="{bin_dir}:$PATH"'
+    assert f"This terminal finds alphaavatar once {bin_dir} is on PATH." in told
     assert "added" not in done.stdout and "updated" not in done.stdout
     after = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
     assert after == before
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "a block, then one never ended",
+        "an end never begun",
+        "ended before begun",
+        "one inside another",
+        "never ended",
+        "spaces around a marker",
+    ],
+)
+def test_markers_out_of_order_leave_the_startup_file_as_it_was_to_the_byte(
+    layout, case: str
+) -> None:
+    """Every marker is checked before anything is written: one out of order and the file,
+    a link to it included, stays exactly as it was, its mode and time too; the installer says
+    which line, and how to add the directory."""
+    tmp_path, _, _, run = layout
+    home, bin_dir, dotfiles = tmp_path / "home", tmp_path / "bin", tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    profile, kept = home / ".profile", dotfiles / "profile"
+    lines, reason = {
+        "a block, then one never ended": (
+            ["# mine", BEGIN, "old", END, "# kept", BEGIN, "# after it", "alias ll='ls -l'"],
+            f"AlphaAvatar's block begun on line 6 of {profile} never ends",
+        ),
+        "an end never begun": (
+            ["# mine", END, "# kept"],
+            f"line 2 of {profile} ends AlphaAvatar's block, never begun",
+        ),
+        "ended before begun": (
+            ["# mine", END, "# kept", BEGIN, "old"],
+            f"line 2 of {profile} ends AlphaAvatar's block, never begun",
+        ),
+        "one inside another": (
+            ["# mine", BEGIN, "old", BEGIN, "older", END, "# kept"],
+            f"line 4 of {profile} begins AlphaAvatar's block inside another",
+        ),
+        "never ended": (
+            ["# mine", BEGIN, "export PATH=/somewhere:$PATH"],
+            f"AlphaAvatar's block begun on line 2 of {profile} never ends",
+        ),
+        "spaces around a marker": (
+            ["# mine", f"  {BEGIN}\t", "# kept"],
+            f"AlphaAvatar's block begun on line 2 of {profile} never ends",
+        ),
+    }[case]
+    kept.write_bytes("\n".join(lines).encode() + b"\n")
+    kept.chmod(0o640)
+    profile.symlink_to(kept)
+    before = (kept.read_bytes(), kept.stat(), sorted(os.listdir(dotfiles)))
+    done = run(extra={"SHELL": "/bin/sh"})
+
+    assert done.returncode == 0, done.stderr
+    assert os.readlink(tmp_path / "prefix/current") == f"versions/{ID}"
+    told = done.stdout.splitlines()
+    assert f"PATH: not configured: {reason}" in told
+    assert told[told.index("PATH: to add it yourself:") + 1] == f'  export PATH="{bin_dir}:$PATH"'
+    after = (kept.read_bytes(), kept.stat(), sorted(os.listdir(dotfiles)))
+    assert after[0] == before[0] and after[2] == before[2]
+    assert (after[1].st_mode, after[1].st_ino, after[1].st_mtime_ns) == (
+        before[1].st_mode,
+        before[1].st_ino,
+        before[1].st_mtime_ns,
+    )
+    assert profile.is_symlink() and os.listdir(home) == [".profile"]
 
 
 # The package's command, as setup: what it was given as its input, whether the installer's lock
@@ -919,7 +1079,8 @@ def test_piped_in_a_terminal_it_offers_setup_and_runs_it_on_that_terminal(
     ]
     assert "Setup: done" in shown
     assert shown.index("PATH: added") < shown.index(OFFER)
-    assert found_by_a_new_terminal(home, home / ".bashrc") == str(home / ".local/bin/alphaavatar")
+    for shell in (LOGIN, INTERACTIVE):
+        assert new_terminal(home, *shell)[0] == str(home / ".local/bin/alphaavatar"), shell
     assert "doctor" not in shown.split(OFFER)[1] and "Starting the Host" not in shown
 
 
@@ -946,6 +1107,71 @@ def test_setup_declined_runs_nothing_and_the_installation_stands(
     assert settings.read_text() == '{"default_bundle": "mine"}\n'
 
 
+@pytest.mark.parametrize("signal_name", ["SIGTERM", "SIGHUP"])
+def test_an_installer_ended_at_its_question_leaves_no_reader_on_the_terminal(
+    layout, releases, signal_name: str
+) -> None:
+    """Ended by a signal while it asks, the installer takes its question's reader with it: no
+    process is left to read a line meant for the shell the person goes on typing in, and no
+    file is left behind."""
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    spare = tmp_path / "spare"  # Its TMPDIR
+    spare.mkdir()
+    pids, ended = tmp_path / "pids", tmp_path / "ended"
+    # The person's shell runs the README's line and stays, as a shell does: had it ended, the
+    # terminal's hangup would end what it left, and hide it.
+    script = f"echo $$ > {pids}; {entry('README.md')}; echo $? > {ended}; sleep 120"
+    controller, terminal_end = os.openpty()
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "PATH": f"{tools}:/usr/bin:/bin",
+        "SHELL": "/bin/bash",
+        "TERM": "dumb",
+        "TMPDIR": str(spare),
+    }
+    process = subprocess.Popen(
+        ["setsid", "--ctty", "bash", "-c", script],
+        stdin=terminal_end,
+        stdout=terminal_end,
+        stderr=terminal_end,
+        env=env,
+        cwd=tmp_path,
+    )
+    os.close(terminal_end)
+    shown = bytearray()
+
+    def children(parent: int) -> list[int]:
+        found = subprocess.run(["pgrep", "-P", str(parent)], capture_output=True, text=True)
+        return [int(pid) for pid in found.stdout.split()]
+
+    try:
+        deadline = time.monotonic() + 60
+        while OFFER.encode() not in shown:
+            assert time.monotonic() < deadline, bytes(shown)
+            if select.select([controller], [], [], 0.1)[0]:
+                shown.extend(os.read(controller, 65536))
+        # The installer: the bash the download is piped to; its one child, the reader.
+        found = subprocess.run(
+            ["pgrep", "-P", pids.read_text().strip(), "-x", "bash"], capture_output=True
+        )
+        (installer,) = map(int, found.stdout.split())
+        (reader,) = children(installer)
+        os.kill(installer, getattr(signal, signal_name))
+        deadline = time.monotonic() + 30
+        while not ended.exists() or Path(f"/proc/{reader}").exists():
+            assert time.monotonic() < deadline, "the installer's reader was left"
+            time.sleep(0.05)
+        code = 143 if signal_name == "SIGTERM" else 129
+        assert ended.read_text().strip() == str(code) and os.listdir(spare) == []
+    finally:
+        os.close(controller)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 @pytest.mark.parametrize("ending", ["fails", "ctrl-c"])
 def test_a_setup_that_fails_or_is_stopped_leaves_the_installation_and_says_which(
     layout, releases, ending: str
@@ -967,7 +1193,8 @@ def test_a_setup_that_fails_or_is_stopped_leaves_the_installation_and_says_which
     code = 3 if ending == "fails" else 130
     assert f"Setup: did not finish (exit {code}); AlphaAvatar stays installed." in shown
     assert os.readlink(home / ".local/lib/alphaavatar/current") == f"versions/{ID}"
-    assert found_by_a_new_terminal(home, home / ".bashrc") == str(home / ".local/bin/alphaavatar")
+    for shell in (LOGIN, INTERACTIVE):
+        assert new_terminal(home, *shell)[0] == str(home / ".local/bin/alphaavatar"), shell
 
 
 def test_non_interactive_in_a_terminal_installs_and_configures_but_never_asks(
@@ -983,7 +1210,8 @@ def test_non_interactive_in_a_terminal_installs_and_configures_but_never_asks(
     assert status == 0, shown
     assert OFFER not in shown and "Next: alphaavatar setup" in shown
     assert not (home / "setup-ran").exists()
-    assert found_by_a_new_terminal(home, home / ".bashrc") == str(home / ".local/bin/alphaavatar")
+    for shell in (LOGIN, INTERACTIVE):
+        assert new_terminal(home, *shell)[0] == str(home / ".local/bin/alphaavatar"), shell
 
 
 def test_without_a_terminal_it_never_asks(layout) -> None:

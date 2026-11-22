@@ -214,9 +214,10 @@ class SpeakerProcessor(PersonaProcessorBase):
         self.runtime.participants.bind_segment(state.segment, None, token=state.token)
 
     def _abandon(self, state: SpeakerSegmentState) -> None:
-        """Stop a segment's remaining work as its source ends. An association it settled bound
-        is a fact of speech already heard and stays, read for its Turn from then on; one not
-        settled yet is invalidated. Once retired, no late identity or attribute is taken."""
+        """Stop a segment's remaining work: its source ended, a gap lost its speech, or the
+        table needs its place. An association it settled bound is a fact of speech already heard
+        and stays, read for its Turn from then on; one not settled yet is invalidated. Once
+        retired, no late identity or attribute is taken."""
         if self.runtime.participants.segment_association(state.segment) != "bound":
             self._invalidate(state)
         self._retire(state)
@@ -300,9 +301,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         if state is None:
             if len(self._segments) >= self._config.max_segments:
-                removed = next(iter(self._segments.values()))
-                self._invalidate(removed)
-                self._retire(removed)
+                self._abandon(next(iter(self._segments.values())))
 
             token = self.runtime.participants.observe_segment(segment)
             state = SpeakerSegmentState(
@@ -693,8 +692,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 batch = stream.read_pending(consumer_id=self.CONSUMER_ID)
                 if batch.has_gap:
                     for state in tuple(self._segments.values()):
-                        self._invalidate(state)
-                        self._retire(state)
+                        self._abandon(state)
                     self._shorts.clear()  # Their order is lost with what was missed
 
                 for observation in batch.items:

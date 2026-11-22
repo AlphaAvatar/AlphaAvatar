@@ -347,41 +347,47 @@ block="$begin
 # Where AlphaAvatar's command is, added by its install.sh; replaced whole when it runs again.
 case \":\$PATH:\" in *\":$quoted:\"*) ;; *) export PATH=\"$quoted:\$PATH\" ;; esac
 $end"
-profile="" path_result=""
-configure_path() {
-  # Sets path_result; fails, having changed nothing, where it cannot say the block is in place.
-  local target text line skipping="" placed="" staged
-  case "${SHELL##*/}" in
-    bash) profile="$HOME/.bashrc" ;;
-    zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
-    sh|dash) profile="$HOME/.profile" ;;
-    *) path_result="not configured: the login shell (${SHELL:-none}) is not bash, zsh or sh"
-       profile=""; return 1 ;;
-  esac
-  if [[ "$bin_dir" == *$'\n'* ]]; then
-    path_result="not configured: the directory's name holds a line break"; return 1
-  fi
+path_result=""
+configure_file() {
+  # Puts the block in one startup file and sets path_result; fails, having changed nothing,
+  # where it cannot say the block is in place. Every marker is checked before anything is
+  # written: begun and ended in turn, none inside another, the last one ended.
+  local profile="$1" target text="" line bare number=0 inside="" found="" staged
   target="$profile"
   if [[ -e "$profile" || -L "$profile" ]]; then
     # A link is followed: the file it names is the one that changes.
     target="$(realpath -e -- "$profile" 2>/dev/null)" && [[ -f "$target" ]] \
       || { path_result="not configured: $profile is not a file this installer edits"; return 1; }
-  fi
-  if [[ -f "$target" ]] && grep -qxF -- "$begin" "$target" 2>/dev/null; then
-    grep -qxF -- "$end" "$target" \
-      || { path_result="not configured: $profile holds AlphaAvatar's block unfinished"; return 1; }
-    # The first block in place of every one of them, each other line as it is.
-    text=""
+    [[ -r "$target" ]] || { path_result="not configured: cannot read $profile"; return 1; }
+    # A marker line is one, spaces around it aside. The first block takes the place of every
+    # one; every other line stays as it is.
     while IFS= read -r line || [[ -n "$line" ]]; do
-      if [[ -z "$skipping" && "$line" == "$begin" ]]; then
-        skipping=1
-        [[ -n "$placed" ]] || text+="$block"$'\n' placed=1
-      elif [[ -n "$skipping" ]]; then
-        [[ "$line" != "$end" ]] || skipping=""
-      else
+      number=$((number + 1))
+      bare="${line#"${line%%[![:space:]]*}"}" bare="${bare%"${bare##*[![:space:]]}"}"
+      if [[ "$bare" == "$begin" ]]; then
+        if [[ -n "$inside" ]]; then
+          path_result="not configured: line $number of $profile begins AlphaAvatar's block"
+          path_result+=" inside another"; return 1
+        fi
+        inside=$number
+        [[ -n "$found" ]] || text+="$block"$'\n' found=1
+      elif [[ "$bare" == "$end" ]]; then
+        if [[ -z "$inside" ]]; then
+          path_result="not configured: line $number of $profile ends AlphaAvatar's block,"
+          path_result+=" never begun"; return 1
+        fi
+        inside=""
+      elif [[ -z "$inside" ]]; then
         text+="$line"$'\n'
       fi
     done < "$target"
+    if [[ -n "$inside" ]]; then
+      path_result="not configured: AlphaAvatar's block begun on line $inside of $profile"
+      path_result+=" never ends"; return 1
+    fi
+  fi
+  if [[ -n "$found" ]]; then
+    [[ -w "$target" ]] || { path_result="not configured: cannot write $profile"; return 1; }
     staged="$(mktemp "$(dirname -- "$target")/.alphaavatar-path-XXXXXX" 2>/dev/null)" \
       || { path_result="not configured: cannot write beside $profile"; return 1; }
     if ! { printf '%s' "$text" > "$staged" && chmod --reference="$target" -- "$staged"; } \
@@ -401,14 +407,40 @@ configure_path() {
     path_result="added $bin_dir to $profile, for new terminals"
   fi
 }
-on_path=""
+# The startup files the login shell reads in a new terminal. Bash reads ~/.bashrc in an
+# interactive shell and, logging in, the first of ~/.bash_profile, ~/.bash_login and
+# ~/.profile there is; ~/.profile when there is none, never a file that would hide another.
+path_files=() login=""
+case "${SHELL##*/}" in
+  bash)
+    for login in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+      [[ -e "$login" || -L "$login" ]] && break
+    done
+    path_files=("$HOME/.bashrc" "$login") ;;
+  zsh) path_files=("${ZDOTDIR:-$HOME}/.zshrc") ;;
+  sh|dash) path_files=("$HOME/.profile") ;;
+esac
+on_path="" path_failed="" path_source=""
 case ":$PATH:" in *":$bin_dir:"*) on_path=1 ;; esac
 if [[ -n "$on_path" ]]; then
   echo "PATH: $bin_dir is on PATH already"
-elif configure_path; then
-  echo "PATH: $path_result"
+elif [[ "$bin_dir" == *$'\n'* ]]; then
+  echo "PATH: not configured: the directory's name holds a line break"; path_failed=1
+elif [[ "${#path_files[@]}" -eq 0 ]]; then
+  echo "PATH: not configured: the login shell (${SHELL:-none}) is not bash, zsh or sh"
+  path_failed=1
 else
-  echo "PATH: $path_result; to add it yourself:"
+  for file in "${path_files[@]}"; do
+    if configure_file "$file"; then
+      [[ -n "$path_source" ]] || path_source="$file"
+    else
+      path_failed=1
+    fi
+    echo "PATH: $path_result"
+  done
+fi
+if [[ -n "$path_failed" ]]; then
+  echo "PATH: to add it yourself:"
   echo "  export PATH=\"$quoted:\$PATH\""
 fi
 
@@ -418,15 +450,27 @@ next="alphaavatar setup    # choose capabilities; it installs them"
 if [[ "$switch" == envs/* || "$previous" == envs/* ]]; then
   :  # Set up already: the bundles there stay as they are.
 elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
-  # Asked and read by a subshell of its own, where Ctrl-C acts as it would: it ends the reading
-  # and answers no, as the end of input does. Shown only once that reader is there, the
-  # question cannot be answered by a Ctrl-C this script would take instead.
-  trap 'printf "\n" > /dev/tty' INT
-  answer="$(
+  # Read in the background, where Ctrl-C is ignored: this script takes it while it waits, a
+  # wait a trapped signal always ends, then ends the reading. A Ctrl-C reaching a shell as its
+  # read begins can be lost, leaving the question unanswered. It answers no, as the end of
+  # input does. However this script ends, by a signal too, the reader ends with it, never left
+  # on the terminal to take a line meant for the shell.
+  answer="" reader="" reply="$(mktemp "${TMPDIR:-/tmp}/alphaavatar-reply.XXXXXX" 2>/dev/null)" \
+    || reply=""
+  if [[ -n "$reply" ]]; then
+    trap '[[ -z "$reader" ]] || kill "$reader" 2>/dev/null; rm -f -- "$reply"' EXIT
+    trap 'printf "\n" > /dev/tty' INT
+    { IFS= read -r line < /dev/tty && printf 'answered:%s' "$line" > "$reply"; } &
+    reader=$!
     printf 'Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] ' > /dev/tty
-    IFS= read -r line < /dev/tty && printf 'answered:%s' "$line"
-  )" || answer=""
-  trap - INT
+    wait "$reader" || :
+    trap - INT
+    kill "$reader" 2>/dev/null || :
+    wait "$reader" 2>/dev/null || :
+    answer="$(< "$reply")"
+    rm -f -- "$reply"
+    trap - EXIT
+  fi
   if [[ "$answer" =~ ^answered:([Yy]([Ee][Ss])?)?$ ]]; then
     status=0
     trap ':' INT  # Ctrl-C ends setup, never this script: its report still follows.
@@ -443,11 +487,11 @@ elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
 else
   echo "Next: $next"
 fi
-if [[ -z "$on_path" ]]; then
-  if [[ -n "$profile" && "$path_result" != "not configured"* ]]; then
-    printf 'This terminal finds alphaavatar in a new terminal, or after: source %q\n' "$profile"
-  else
-    echo "This terminal finds alphaavatar once $bin_dir is on PATH."
-  fi
+if [[ -n "$path_source" && -z "$path_failed" ]]; then
+  printf 'This terminal finds alphaavatar in a new terminal, or after: source %q\n' "$path_source"
+elif [[ -n "$path_source" ]]; then
+  printf 'This terminal finds alphaavatar after: source %q\n' "$path_source"
+elif [[ -z "$on_path" ]]; then
+  echo "This terminal finds alphaavatar once $bin_dir is on PATH."
 fi
 }

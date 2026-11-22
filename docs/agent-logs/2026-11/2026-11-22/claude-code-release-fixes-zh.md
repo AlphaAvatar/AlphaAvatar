@@ -13,7 +13,8 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| 发布前修复 | KD-50 来源关闭保留已完成的关联；KD-51 安装器为新终端配置 PATH，并在交互安装结束时接续首次 setup；KD-52 下载失败时管道的退出码 | 2026-11-22 | `064222fb` | — | 待审查 |
+| 发布前修复 | KD-50 来源关闭保留已完成的关联；KD-51 安装器为新终端配置 PATH，并在交互安装结束时接续首次 setup；KD-52 下载失败时管道的退出码 | 2026-11-22 | `064222fb` | `09845713` | 已提交 |
+| 第二批 | KD-53 缺口和容量淘汰保留已完成的关联；KD-54 PATH 标记异常时不改文件；KD-55 bash 登录终端的 PATH；KD-56 询问 setup 时 Ctrl-C 可能卡住（范围外，验证中发现） | 2026-11-22 | `09845713` | — | 待审查 |
 
 ## 1. KD-50：来源关闭不能作废此前已完成的语音关联（P1）
 
@@ -216,3 +217,119 @@ PATH 配置：
 - **说话人处理器的其他作废路径**：感知缺口（`batch.has_gap`）和段数超过上限时的淘汰，同样会对可能已确认的段调用 `_invalidate()`。它们不是来源关闭，不在本轮范围内，没有改，也没有验证，只在这里记录。
 - **真实通话**：KD-50 没有在真实通话里验证，只有离线回归。
 - 没有重跑 240 次中断注入，也没有重跑模型评测。
+
+## 6. 第二批：KD-53～KD-55（基线 `09845713`）
+
+- 依据：用户转来的 review（基于 `09845713`），三处问题。第 5 节里"bash 登录 shell"和"说话人处理器的其他作废路径"两条，就是本批修复的内容。
+- 范围不变：Memory 规则、VAD 300 ms、寻址策略、安装器原有的保护；README 的入口不变；不运行 Doctor，不启动 Host。
+- 删除了仓库外的旧证据目录 `~/alphaavatar-kd49-check`（用户要求）。本批的变异副本放在任务自己的临时目录里，用完即删。
+
+### 6.1 KD-53：缺口和容量淘汰不能作废已完成的关联
+
+- 原因：`_consume_loop` 遇到 `batch.has_gap`，对处理器里的所有段调用 `_invalidate()` 和 `_retire()`；`_state()` 在段数达到 `max_segments` 时，对最早的段也这样做。已提交 Turn、只剩属性推理的段因此变成 `invalid`。
+- 改动：这两处改用 KD-50 的 `_abandon()`：停止剩余工作；已确认（`bound`）的关联保留，未完成的段作废。`_abandon()` 的说明补上这两种原因。
+- 没有改：混合声音（`segment_consistency_threshold`）、同一段换设备、新一代来源这几条作废路径；`_invalidate()` 本身。
+- 回归 `test_work_given_up_on_a_gap_or_a_full_table_keeps_the_associations_it_settled`，参数为 `gap` 和 `capacity`：
+  - 与 KD-50 的测试共用 `remembered_session()`（真实的说话人处理器、profiler、Memory）和 `remembered_as_alice()`（会话结束时的归属检查）。
+  - alice 的 Turn 已提交、属性推理卡住；bob 的段已绑定、身份检索卡住；第三段还在说。
+  - 缺口：一次发布 300 帧，超过流保留的 256 条，处理器读到缺口。容量：`max_segments=1`，每来一段新的语音就挤掉最早的一段。
+  - 断言：alice 和 bob 的段仍是 `bound`，未完成的段是 `invalid`；放开卡住的属性推理和身份检索后，结果都没有被采用（alice 没有写入属性，bob 没有绑定用户）；会话结束时 Turn 仍读作 alice，profiler 交给 alice 保存，Memory 的对话记忆 owner 是 `user:alice`，scope 为 `owner`。
+- 换回 HEAD 的处理器（从仓库外加载）后，两种情况都失败：`assert 'invalid' == 'bound'`。
+- 变异（仓库外加载）都被发现：
+  - `_abandon` 一律作废；
+  - `_abandon` 从不作废；
+  - 已确认的段不退役；
+  - 只留缺口路径为旧写法；
+  - 只留淘汰路径为旧写法。
+
+### 6.2 KD-54：PATH 标记异常时不改文件
+
+- 原因：以前只用 `grep` 检查开始、结束标记是否存在。完整的一段之后再出现一个没有结束的开始标记，逐行重建时会跳过它之后的所有行，再报告 `updated`。用 HEAD 的 `install.sh` 复现：之后的用户配置被删除，输出 `PATH: updated …`。
+- 改动（`configure_file`）：
+  - 写入之前逐行检查全部标记，标记行两边的空白不影响识别；
+  - 必须依次开始、结束，不能嵌套，最后一段必须结束；
+  - 以下情况一律不改文件，输出行号和原因：
+    - 孤立的结束标记（`line N of … ends AlphaAvatar's block, never begun`）；
+    - 嵌套（`line N of … begins AlphaAvatar's block inside another`）；
+    - 顺序颠倒：先出现结束标记，按孤立的结束标记处理；
+    - 末尾没有结束（`AlphaAvatar's block begun on line N of … never ends`）；
+  - 只读文件里已有这一段时，也不替换（`cannot write`）。
+- 链接和权限的处理不变：改链接指向的文件，临时文件保留原权限后替换。
+- 回归 `test_markers_out_of_order_leave_the_startup_file_as_it_was_to_the_byte` 有 6 种情况：
+  - 完整一段之后接一段没有结束的；
+  - 孤立的结束标记；
+  - 先结束后开始；
+  - 嵌套；
+  - 末尾没有结束；
+  - 标记行两边有空白。
+
+  启动文件是链接时，断言链接指向的文件内容、权限、inode 和修改时间都不变，目录里没有留下临时文件，安装照常完成，并给出要加的那一行。`unconfigured` 测试新增"只读文件里已有这一段"。
+
+### 6.3 KD-55：bash 登录终端的 PATH
+
+- 原因：bash 只写 `~/.bashrc`。登录式 bash 读 `~/.bash_profile`、`~/.bash_login`、`~/.profile` 中第一个存在的文件；已有 `.bash_profile` 且不加载 `.bashrc` 时，登录终端找不到命令。用 HEAD 的 `install.sh` 复现：`bash -l` 中找不到。
+- 改动：
+  - bash 写两个文件：`~/.bashrc`，以及登录时读的那个文件；
+  - 三个都不存在时写 `~/.profile`，不新建会遮住它的 `.bash_profile` 或 `.bash_login`；
+  - 段内的 `case` 保证两个文件都被加载时，目录也只加一次；
+  - 每个文件各输出一行结果；任何一个没配上时，再给出 `PATH: to add it yourself:` 和要加的那一行；
+  - 最后一行：都配上时写 `in a new terminal, or after: source …`；只配上一个时只写 `after: source …`，不声称新终端都能找到。
+- 回归实际启动 `bash -l` 和 `bash -i`（只给系统 PATH 和测试的 home），不手动加载安装器选的文件：
+  - `test_bash_finds_the_command_in_new_terminals_logged_in_or_not` 有 5 种情况：没有启动文件；只有不加载 `.bashrc` 的 `.bash_profile`（同时有 `.profile`）；`.bash_profile` 加载 `.bashrc`；只有 `.bash_login`；只有 `.profile`。
+    - 两种启动方式都找到命令，PATH 里这个目录只出现一次；
+    - 原有内容保留，不新建其他启动文件；
+    - 重复安装输出 `already adds`，所有文件逐字节不变。
+  - `test_bash_with_a_startup_file_it_cannot_write_says_so_and_configures_the_other`：`.bashrc` 只读时如实说明，`~/.profile` 照常配置，登录终端能找到命令。
+  - 空格和特殊字符目录的测试、PTY 测试里对 PATH 的检查，也改为实际启动 `bash -l` 和 `bash -i`；sh 的测试实际启动 `sh -l`。
+- DEPLOY 的 PATH 段补上 bash 的两个文件，以及"标记异常的文件保持原样"。
+
+### 6.4 KD-56：询问 setup 时 Ctrl-C 可能卡住（范围外，验证中发现）
+
+- 发现：本批第一次离线全量里，`test_setup_declined_runs_nothing_and_the_installation_stands[ctrl-c]` 失败；只跑这个测试，15 次失败 8 次。安装器显示 `^C` 后不再输出，也不退出。
+- 原因：第一批把问题的打印和读取放进命令替换里的子 shell。进程状态显示，子 shell 收到 Ctrl-C 后仍停在 `read`，信号被吞掉了。Ctrl-C 恰好落在打印之后、`read` 开始之前时就会这样。把打印挪进子 shell 只是缩小了这个窗口。
+- 改动：
+  - 读取放到后台。非交互 shell 的后台任务忽略 SIGINT，由安装器自己接收；它在 `wait` 里等待，被捕获的信号总会让 `wait` 立即返回；
+  - 之后结束读取，回答经 `mktemp` 建的临时文件传回；
+  - INT 和 EXIT 的 trap 在启动读取之前设好。安装器以任何方式结束，包括收到 TERM、HUP（bash 对这两个信号同样运行 EXIT trap），都会结束读取进程、删除临时文件，不会留一个进程在终端上读走用户 shell 的下一行；
+  - 问题结束后撤掉这些 trap，后面 setup 的处理不变。
+- 新回归 `test_an_installer_ended_at_its_question_leaves_no_reader_on_the_terminal`，参数为 TERM 和 HUP：
+  - 用户的 shell 运行 README 那一行后继续存在，和真实终端一样。如果让它退出，终端挂断时内核会结束它留下的进程，问题就被掩盖了；
+  - 在询问时向安装器发信号，断言它以 143 或 129 退出，读取进程不再存在，临时目录为空。
+- 验证：
+  - 在仓库外用真实 PTY 探测 40 次，每次一出现问题就按 Ctrl-C，全部正常结束；
+  - 全量测试同时运行时，PTY 的 12 个测试连续 10 轮通过。
+- 变异测试（仓库外的文件副本）：
+  - 读取放回前台、EXIT 时不结束读取进程、不删临时文件：都被发现；
+  - 去掉 TERM、HUP 的 trap 时测试照样通过，原因是 bash 自己会运行 EXIT trap。这两个 trap 是多余的，已删除。
+- 局限：旧的写法在变异测试的副本里 5 次都通过，说明这个竞态只是有时出现，测试不能稳定地发现它。
+- 这项不在本批点名的三处问题之内。因为它让要求的离线全量失败，而且只涉及询问这一段，我直接修了。如果要拆出去，只需撤回 `install.sh` 里询问的那一段和这个新测试。
+
+### 6.5 验证
+
+- 相关测试：安装器 79 个（第一批 66 个，本批新增 13 个）；KD-56 之前，Persona、参与者 runtime 和安装器合计 256 passed。
+- 安装器变异测试：在仓库外的文件副本里运行，只跑 PATH 相关的 23 个测试。对照组全部通过，HEAD 的 `install.sh` 有 17 个失败，9 个变异全部被发现：
+  - 标记只认完全相同的行；
+  - 放过嵌套；
+  - 放过孤立的结束标记；
+  - 放过没有结束的段；
+  - bash 只写 `.bashrc`；
+  - 登录文件固定写 `.profile`；
+  - 登录文件固定写 `.bash_profile`；
+  - 只读文件里有这一段时仍然替换；
+  - 只配上一个文件时仍声称新终端都能找到。
+- 离线全量（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 uv run --no-sync pytest -p no:cacheprovider`）：
+  - 第一次 987 passed、1 failed，就是 KD-56；
+  - 修好后的最终一次 990 passed，47 warnings，350 s；运行前后，工作区的文件列表（含被忽略的文件）一致。
+- 仓库规范：都通过。
+  - `uv lock --check`、`check_workspace.py`（16 个成员）；
+  - `ruff check .`、`ruff format --check .`（793 个文件）；
+  - `git diff --check`、`bash -n packaging/linux/install.sh`；
+  - 对改动文件跑 pre-commit：全部通过，没有改动任何文件。
+- CI：`09845713`（第一批）的 Quality 和 Linux package 都通过。本批还没有提交，没有对应的 CI。
+
+### 6.6 未验证的边界
+
+- 真实安装流程没有跑：v0.6.9 未发布，真实 setup 的终端界面也没有验证，由用户最后验收。
+- zsh 没有实际启动验证（本机没有 zsh）；`.zprofile` 不写，非交互的登录 zsh 不读 `.zshrc`。
+- 发行版的 `/etc/profile` 改写 PATH 的方式各不相同；本机的 bash 登录测试通过，其他发行版没有验证。
+- KD-53 只有离线回归，没有真实通话；缺口和容量淘汰在真实通话里很少出现。

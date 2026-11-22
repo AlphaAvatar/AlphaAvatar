@@ -83,9 +83,11 @@ cancelled, the installation stays. `--non-interactive` (`… | bash -s -- --non-
 never asks, nor does a run without a terminal.
 
 For new terminals, the installer adds the command's directory to PATH in a block marked
-`# >>> AlphaAvatar >>>`, in `~/.bashrc`, `${ZDOTDIR:-~}/.zshrc` or `~/.profile` by login shell.
-For another shell, or a file it cannot write, it prints the line to add. In the terminal it ran
-in, `source` the file it names, or open a new one:
+`# >>> AlphaAvatar >>>`: for bash in `~/.bashrc` and the file it reads logging in
+(`~/.bash_profile`, `~/.bash_login` or `~/.profile`), for zsh in `${ZDOTDIR:-~}/.zshrc`, for sh
+in `~/.profile`. A file whose markers are out of order stays as it is. For another shell, or a
+file it cannot change, it prints the line to add. In the terminal it ran in, `source` the file
+it names, or open a new one:
 
 ```bash
 alphaavatar setup                       # a new bundle, asked part by part
