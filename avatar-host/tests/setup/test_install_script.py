@@ -23,12 +23,15 @@ import http.server
 import json
 import os
 import platform
+import re
+import select
 import shutil
 import stat
 import subprocess
 import sys
 import tarfile
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -452,6 +455,7 @@ def releases(layout):
             "package": (name, archive.read_bytes()),
             "sha256": (f"{name}.sha256", f"{sha(archive)}  {name}\n".encode()),
             "manifest": (MANIFEST, inside(manifest_of or archive)),
+            "script": ("install.sh", SCRIPT.read_bytes()),
         }
         for kind, (file, data) in files.items():
             if kind != without:
@@ -635,3 +639,427 @@ def test_piped_to_bash_it_runs_once_whole_and_a_script_cut_short_runs_nothing(
     installed = run(source=(), piped=text)
     assert installed.returncode == 0, installed.stderr
     assert os.readlink(tmp_path / "prefix/current") == f"versions/{ID}"
+
+
+def documented(doc: str, holding: str) -> str:
+    """The first bash block of ``doc`` that holds ``holding``, as it is written."""
+    text = (ROOT / doc).read_text()
+    return next(b for b in re.findall(r"```bash\n(.*?)```", text, re.S) if holding in b)
+
+
+def entry(doc: str) -> str:
+    """The documented install: the line of the doc's first install block that fetches it."""
+    block = documented(doc, "latest/download/install.sh")
+    (line,) = [line for line in block.splitlines() if "install.sh" in line]
+    return line
+
+
+def shell(tmp_path: Path, tools: Path, script: str, *, options: tuple[str, ...] = ()):
+    """``script`` run as a person would in a fresh shell: its home the test's, and on its PATH
+    only the stand-in tools and the system's, never the command's directory."""
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    return subprocess.run(
+        ["bash", *options, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={"HOME": str(tmp_path / "home"), "PATH": f"{tools}:/usr/bin:/bin", "LANG": "C.UTF-8"},
+        cwd=work,
+    )
+
+
+def found_by_a_new_terminal(home: Path, profile: Path) -> str:
+    """Where a new terminal, its startup file read, finds alphaavatar ("" if nowhere)."""
+    done = subprocess.run(
+        ["sh", "-c", '. "$1" && command -v alphaavatar', "sh", str(profile)],
+        capture_output=True,
+        text=True,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+    )
+    return done.stdout.strip()
+
+
+BEGIN, END = "# >>> AlphaAvatar >>>", "# <<< AlphaAvatar <<<"
+
+
+@pytest.mark.parametrize(
+    ("login", "file"),
+    [("/bin/bash", ".bashrc"), ("/usr/bin/zsh", ".zshrc"), ("/bin/sh", ".profile")],
+)
+def test_the_command_goes_on_path_for_new_terminals_in_the_login_shells_startup_file(
+    layout, login: str, file: str
+) -> None:
+    """Not on PATH: a block marked as AlphaAvatar's goes into the login shell's own startup
+    file, after what it holds; again, it is there already; from another directory, it is
+    replaced, never added twice."""
+    tmp_path, _, _, run = layout
+    home = tmp_path / "home"
+    profile = home / file
+    mine = "# mine\nalias ll='ls -l'\n"
+    profile.write_text(mine)
+    done = run(extra={"SHELL": login})
+    assert done.returncode == 0, done.stderr
+    assert f"PATH: added {tmp_path / 'bin'} to {profile}, for new terminals" in done.stdout
+    text = profile.read_text()
+    assert text.startswith(mine) and text.count(BEGIN) == text.count(END) == 1
+    assert found_by_a_new_terminal(home, profile) == str(tmp_path / "bin/alphaavatar")
+    assert f"This terminal finds alphaavatar in a new terminal, or after: source {profile}" in (
+        done.stdout
+    )
+
+    again = run(extra={"SHELL": login})
+    assert again.returncode == 0, again.stderr
+    assert f"PATH: {profile} already adds {tmp_path / 'bin'}" in again.stdout
+    assert profile.read_text() == text
+
+    # Another installation's directory: the block now names it alone.
+    other = run(
+        "--prefix",
+        str(tmp_path / "other"),
+        "--bin-dir",
+        str(tmp_path / "elsewhere"),
+        extra={"SHELL": login},
+    )
+    assert other.returncode == 0, other.stderr
+    assert f"PATH: updated {profile} with {tmp_path / 'elsewhere'}" in other.stdout
+    text = profile.read_text()
+    assert text.startswith(mine) and text.count(BEGIN) == 1 and str(tmp_path / "bin:") not in text
+    assert found_by_a_new_terminal(home, profile) == str(tmp_path / "elsewhere/alphaavatar")
+
+
+def test_zsh_keeps_its_startup_files_where_zdotdir_says_and_a_linked_file_stays_a_link(
+    layout,
+) -> None:
+    tmp_path, _, _, run = layout
+    zdot, dotfiles = tmp_path / "zdot", tmp_path / "dotfiles"
+    zdot.mkdir()
+    dotfiles.mkdir()
+    (dotfiles / "zshrc").write_text("# kept in dotfiles\n")
+    (zdot / ".zshrc").symlink_to(dotfiles / "zshrc")
+    done = run(extra={"SHELL": "/usr/bin/zsh", "ZDOTDIR": str(zdot)})
+    assert done.returncode == 0, done.stderr
+    assert f"PATH: added {tmp_path / 'bin'} to {zdot / '.zshrc'}" in done.stdout
+    assert (zdot / ".zshrc").is_symlink() and BEGIN in (dotfiles / "zshrc").read_text()
+    # The block replaced in place keeps the link too.
+    other = run(
+        "--prefix",
+        str(tmp_path / "other"),
+        "--bin-dir",
+        str(tmp_path / "elsewhere"),
+        extra={"SHELL": "/usr/bin/zsh", "ZDOTDIR": str(zdot)},
+    )
+    assert other.returncode == 0, other.stderr
+    assert (zdot / ".zshrc").is_symlink()
+    assert str(tmp_path / "elsewhere") in (dotfiles / "zshrc").read_text()
+    assert not (tmp_path / "home/.zshrc").exists()
+
+
+def test_a_directory_on_path_already_is_written_into_no_startup_file(layout) -> None:
+    tmp_path, _, _, run = layout
+    done = run(extra={"SHELL": "/bin/bash", "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin"})
+    assert done.returncode == 0, done.stderr
+    assert f"PATH: {tmp_path / 'bin'} is on PATH already" in done.stdout
+    assert not (tmp_path / "home/.bashrc").exists() and "This terminal" not in done.stdout
+
+
+def test_a_directory_named_with_spaces_quotes_and_dollars_reads_back_exactly(layout) -> None:
+    tmp_path, _, _, run = layout
+    odd = tmp_path / 'bin dir $HOME "q" `x` back\\slash'
+    done = run("--bin-dir", str(odd), extra={"SHELL": "/bin/bash"})
+    assert done.returncode == 0, done.stderr
+    found = found_by_a_new_terminal(tmp_path / "home", tmp_path / "home/.bashrc")
+    assert found == str(odd / "alphaavatar")
+
+
+@pytest.mark.parametrize("case", ["unknown shell", "unwritable", "a directory", "unfinished block"])
+def test_a_startup_file_left_unconfigured_is_said_so_and_the_installation_stands(
+    layout, case: str
+) -> None:
+    """Where the block cannot be put in place, the installer says so and how to add the
+    directory, claims nothing, and changes no file; the installation itself is done."""
+    tmp_path, _, _, run = layout
+    home, bin_dir = tmp_path / "home", tmp_path / "bin"
+    profile = home / ".bashrc"
+    # Bash itself sets SHELL from the account when it is not set: there is always one.
+    login = "/usr/bin/fish" if case == "unknown shell" else "/bin/bash"
+    if case == "unwritable":
+        if os.geteuid() == 0:
+            pytest.skip("root writes a read-only file")
+        profile.write_text("# mine\n")
+        profile.chmod(0o444)
+    elif case == "a directory":
+        profile.mkdir()
+    elif case == "unfinished block":
+        profile.write_text(f"# mine\n{BEGIN}\nexport PATH=/somewhere:$PATH\n")
+    before = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
+    done = run(extra={"SHELL": login})
+
+    assert done.returncode == 0, done.stderr
+    assert os.readlink(tmp_path / "prefix/current") == f"versions/{ID}"
+    reason = {
+        "unknown shell": "the login shell (/usr/bin/fish) is not bash, zsh or sh",
+        "unwritable": f"cannot write {profile}",
+        "a directory": f"{profile} is not a file this installer edits",
+        "unfinished block": f"{profile} holds AlphaAvatar's block unfinished",
+    }[case]
+    assert f"PATH: not configured: {reason}; to add it yourself:" in done.stdout
+    assert f'  export PATH="{bin_dir}:$PATH"' in done.stdout
+    assert f"This terminal finds alphaavatar once {bin_dir} is on PATH." in done.stdout
+    assert "added" not in done.stdout and "updated" not in done.stdout
+    after = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
+    assert after == before
+
+
+# The package's command, as setup: what it was given as its input, whether the installer's lock
+# was free, its descriptor closed and its stage removed, then a line read from that input; its
+# exit as asked.
+SETUP = """if [ "$1" = setup ]; then
+  { [ -t 0 ] && echo stdin=terminal || echo stdin=other
+    [ -e /proc/self/fd/9 ] && echo lock-descriptor=open || echo lock-descriptor=closed
+    flock -n "$HOME/.local/lib/alphaavatar/.install.lock" true && echo lock=free || echo lock=held
+    set -- "$HOME"/.local/lib/alphaavatar/versions/.install-*
+    [ -e "$1" ] && echo stage=left || echo stage=gone
+  } >> "$HOME/setup-ran"
+  printf 'setup asks: '
+  IFS= read -r said || said="(end of input)"
+  echo "said=$said" >> "$HOME/setup-ran"
+  exit "${SETUP_EXIT:-0}"
+fi
+"""
+
+
+def terminal(
+    tmp_path: Path,
+    tools: Path,
+    script: str,
+    replies: list[tuple[str, bytes]],
+    extra: dict[str, str] | None = None,
+) -> tuple[int, str]:
+    """``script`` in bash on a terminal of its own, a real PTY that is its controlling
+    terminal, as a person runs it: each reply typed once what precedes it shows. Returns the
+    exit code and what the terminal showed."""
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "PATH": f"{tools}:/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "SHELL": "/bin/bash",
+        "TERM": "dumb",
+    } | (extra or {})
+    controller, terminal_end = os.openpty()
+    process = subprocess.Popen(
+        ["setsid", "--ctty", "bash", "-c", script],
+        stdin=terminal_end,
+        stdout=terminal_end,
+        stderr=terminal_end,
+        env=env,
+        cwd=work,
+    )
+    os.close(terminal_end)
+    shown = bytearray()
+
+    def read(until: str | None) -> None:
+        deadline = time.monotonic() + 60
+        while until is None or until.encode() not in shown:
+            if time.monotonic() > deadline:
+                raise AssertionError(f"waited for {until!r}; the terminal showed {bytes(shown)!r}")
+            ready, _, _ = select.select([controller], [], [], 0.1)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(controller, 65536)
+            except OSError:  # Closed: everything on the terminal has ended.
+                chunk = b""
+            if not chunk:
+                if until is None:
+                    return
+                raise AssertionError(f"ended before {until!r}: {bytes(shown)!r}")
+            shown.extend(chunk)
+
+    try:
+        for prompt, reply in replies:
+            read(prompt)
+            os.write(controller, reply)
+        read(None)
+        return process.wait(timeout=60), shown.decode(errors="replace")
+    finally:
+        os.close(controller)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+OFFER = "Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] "
+
+
+@pytest.mark.parametrize("answer", [b"\r", b"y\r", b"yes\r"], ids=["enter", "y", "yes"])
+def test_piped_in_a_terminal_it_offers_setup_and_runs_it_on_that_terminal(
+    layout, releases, answer: bytes
+) -> None:
+    """The README's own line, on a real terminal: installed and put on PATH, then setup is
+    offered; agreed to, it runs on the terminal, its input the person's, not the download, and
+    after the installer has let go of its lock."""
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    home = tmp_path / "home"
+    status, shown = terminal(
+        tmp_path, tools, entry("README.md"), [(OFFER, answer), ("setup asks: ", b"hello\r")]
+    )
+
+    assert status == 0, shown
+    assert (home / "setup-ran").read_text().splitlines() == [
+        "stdin=terminal",
+        "lock-descriptor=closed",
+        "lock=free",
+        "stage=gone",
+        "said=hello",
+    ]
+    assert "Setup: done" in shown
+    assert shown.index("PATH: added") < shown.index(OFFER)
+    assert found_by_a_new_terminal(home, home / ".bashrc") == str(home / ".local/bin/alphaavatar")
+    assert "doctor" not in shown.split(OFFER)[1] and "Starting the Host" not in shown
+
+
+@pytest.mark.parametrize(
+    "reply", [b"n\r", b"no\r", b"\x04", b"\x03"], ids=["no", "no-word", "end-of-input", "ctrl-c"]
+)
+def test_setup_declined_runs_nothing_and_the_installation_stands(
+    layout, releases, reply: bytes
+) -> None:
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    home = tmp_path / "home"
+    # Configuration already there: an installation never touches it.
+    settings = home / ".local/share/alphaavatar/settings/settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"default_bundle": "mine"}\n')
+    status, shown = terminal(tmp_path, tools, entry("README.md"), [(OFFER, reply)])
+
+    assert status == 0, shown
+    assert not (home / "setup-ran").exists()
+    assert "Setup: not run. Next: alphaavatar setup" in shown
+    assert os.readlink(home / ".local/lib/alphaavatar/current") == f"versions/{ID}"
+    assert settings.read_text() == '{"default_bundle": "mine"}\n'
+
+
+@pytest.mark.parametrize("ending", ["fails", "ctrl-c"])
+def test_a_setup_that_fails_or_is_stopped_leaves_the_installation_and_says_which(
+    layout, releases, ending: str
+) -> None:
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    home = tmp_path / "home"
+    reply = b"hello\r" if ending == "fails" else b"\x03"
+    status, shown = terminal(
+        tmp_path,
+        tools,
+        entry("README.md"),
+        [(OFFER, b"y\r"), ("setup asks: ", reply)],
+        extra={"SETUP_EXIT": "3"},
+    )
+
+    assert status == 0, shown  # The installer's status is the installation's.
+    code = 3 if ending == "fails" else 130
+    assert f"Setup: did not finish (exit {code}); AlphaAvatar stays installed." in shown
+    assert os.readlink(home / ".local/lib/alphaavatar/current") == f"versions/{ID}"
+    assert found_by_a_new_terminal(home, home / ".bashrc") == str(home / ".local/bin/alphaavatar")
+
+
+def test_non_interactive_in_a_terminal_installs_and_configures_but_never_asks(
+    layout, releases
+) -> None:
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    home = tmp_path / "home"
+    script = entry("README.md") + " -s -- --non-interactive"
+    status, shown = terminal(tmp_path, tools, script, [])
+
+    assert status == 0, shown
+    assert OFFER not in shown and "Next: alphaavatar setup" in shown
+    assert not (home / "setup-ran").exists()
+    assert found_by_a_new_terminal(home, home / ".bashrc") == str(home / ".local/bin/alphaavatar")
+
+
+def test_without_a_terminal_it_never_asks(layout) -> None:
+    tmp_path, _, _, run = layout
+    guided = package(tmp_path / "guided", effect=SETUP)
+    digest = hashlib.sha256(guided.read_bytes()).hexdigest()
+    done = run(source=("--file", str(guided), "--sha256", digest), extra={"SHELL": "/bin/bash"})
+    assert done.returncode == 0, done.stderr
+    assert OFFER not in done.stdout and "Next: alphaavatar setup" in done.stdout
+    assert not (tmp_path / "home/setup-ran").exists()
+
+
+def test_a_terminal_already_set_up_is_offered_no_setup(layout, releases) -> None:
+    """Set up already, the bundles there stay as they are: no first setup is offered."""
+    tmp_path, good, tools, run = layout
+    publish, _, _ = releases
+    prefix = tmp_path / "prefix"
+    assert run().returncode == 0
+    environment = prefix / "envs/plan-1"
+    (environment / "share/alphaavatar").mkdir(parents=True)
+    (environment / ".alphaavatar-setup").touch()
+    (environment / "share/alphaavatar/plan.json").write_text(json.dumps({"base": ID}))
+    (environment / "bin").mkdir()
+    (environment / "bin/alphaavatar").write_text(LAUNCHER.format(effect=SETUP, version="9.9.9"))
+    (environment / "bin/alphaavatar").chmod(0o755)
+    (prefix / "current.new").symlink_to("envs/plan-1")
+    (prefix / "current.new").rename(prefix / "current")
+    publish(good)
+    script = f"{entry('README.md')} -s -- --prefix {prefix} --bin-dir {tmp_path / 'bin'}"
+    status, shown = terminal(tmp_path, tools, script, [])
+
+    assert status == 0, shown
+    assert OFFER not in shown and "Next: alphaavatar setup" not in shown
+    assert not (tmp_path / "home/setup-ran").exists()
+
+
+def test_an_unattended_install_that_fails_never_goes_on_to_setup(layout, releases) -> None:
+    """No release to download: curl fails before writing anything. The unattended example
+    downloads before it runs and stops at the first failed step, so it never goes on to setup
+    and installs nothing."""
+    tmp_path, _, tools, _ = layout
+    _, asked, _ = releases
+    # A command of that name already on PATH, to see whether anything goes on to run it.
+    ran = tmp_path / "ran"
+    (tools / "alphaavatar").write_text(f'#!/bin/sh\necho "$@" >> "{ran}"\n')
+    (tools / "alphaavatar").chmod(0o755)
+    failed = shell(tmp_path, tools, documented("docs/DEPLOY.md", "set -euo pipefail"))
+    assert failed.returncode == 22, failed.stderr  # curl's own, for the missing file
+    assert failed.stdout == "" and asked == ["/latest/download/install.sh"]
+    assert not ran.exists() and not (tmp_path / "home/.local").exists()
+
+
+def test_the_unattended_example_installs_asks_nothing_and_goes_on_by_itself(
+    layout, releases
+) -> None:
+    """The unattended example, run whole with no terminal: installed, never asked, and its own
+    next commands find the command."""
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    done = shell(tmp_path, tools, documented("docs/DEPLOY.md", "set -euo pipefail"))
+    assert done.returncode == 0, done.stderr
+    assert OFFER not in done.stdout and "Next: alphaavatar setup" in done.stdout
+    # The example's own setup, the bundle given, ran with what the script gave it.
+    assert (tmp_path / "home/setup-ran").read_text().splitlines()[0] == "stdin=other"
+    assert os.readlink(tmp_path / "home/.local/lib/alphaavatar/current") == f"versions/{ID}"
+
+
+def test_piped_a_download_that_fails_succeeds_unless_the_outer_shell_has_pipefail(
+    layout, releases
+) -> None:
+    """Why the unattended install downloads before it runs: piped, as people run it, bash
+    reads curl's empty output as an empty script and succeeds, and so does the pipeline,
+    unless its shell has pipefail. Nothing is installed either way."""
+    tmp_path, _, tools, _ = layout
+    piped = entry("README.md")
+    assert shell(tmp_path, tools, piped).returncode == 0
+    assert shell(tmp_path, tools, piped, options=("-o", "pipefail")).returncode == 22
+    assert not (tmp_path / "home/.local").exists()

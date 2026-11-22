@@ -28,9 +28,14 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import alphaavatar.plugins.memory  # noqa: F401  Registers the default Memory plugin.
 import alphaavatar.plugins.persona  # noqa: F401  Registers the default Persona plugin.
+from alphaavatar.agents.avatar.provider.base import LLMBase
+from alphaavatar.agents.avatar.provider.schemas.model_result import ProviderModelResult
+from alphaavatar.agents.memory.enums import MemoryScopeKind, MemoryType
 from alphaavatar.agents.persona.schemas import FaceDetectionResult
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import (
     ParticipantRuntime,
     PrimaryParticipantIdentityPolicy,
@@ -56,8 +61,10 @@ from alphaavatar.core.session.schemas import IdentityRequest, Participant
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.plugins.memory.schemas.patch import MemoryDelta, PatchOp as MemoryPatch
 from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
 from alphaavatar.plugins.persona.processors.face.processor import FaceProcessor
+from alphaavatar.plugins.persona.processors.profiler.op import PatchOp as ProfilePatch, ProfileDelta
 from alphaavatar.plugins.persona.processors.speaker.attribute_runner import SpeakerAttributeRunner
 from alphaavatar.plugins.persona.processors.speaker.processor import SpeakerProcessor
 from alphaavatar.plugins.persona.processors.speaker.tracking import SpeakerTracks
@@ -178,7 +185,9 @@ class SensorInference:
         pass
 
 
-def avatar_runtime(root: Path, inference: SensorInference, *, policy=None) -> AvatarRuntime:
+def avatar_runtime(
+    root: Path, inference: SensorInference, *, policy=None, providers=None
+) -> AvatarRuntime:
     workspace = WorkspacePaths.from_root(root / "avatar")
     prepare_workspace(workspace)
     session = SessionRuntime(session_id="session", identity_policy=policy)
@@ -201,11 +210,17 @@ def avatar_runtime(root: Path, inference: SensorInference, *, policy=None) -> Av
         state=StateRuntime(),
         participants=ParticipantRuntime(session=session, workspace=workspace, turn=turn),
         inference=inference,
+        foundation=None
+        if providers is None
+        else SimpleNamespace(provider=providers, aclose=providers.aclose),
     )
 
 
-def persona_for(runtime: AvatarRuntime, sensor: str, **settings: object):
-    """Persona with one sensor enabled, its settings over the test defaults."""
+def persona_for(
+    runtime: AvatarRuntime, sensor: str, *, profiler: dict | None = None, **settings: object
+):
+    """Persona with one sensor enabled, its settings over the test defaults; its profiler
+    only with ``profiler``'s settings."""
     other = "face" if sensor == "speaker" else "speaker"
     own = {"inference_queue_size": 8} | settings if sensor == "speaker" else settings
     return AvatarModulePlugin.create(
@@ -213,7 +228,11 @@ def persona_for(runtime: AvatarRuntime, sensor: str, **settings: object):
         "default",
         runtime=runtime,
         vdb_config={},
-        init_config={"profiler": {"enabled": False}, other: {"enabled": False}, sensor: own},
+        init_config={
+            "profiler": {"enabled": False} if profiler is None else profiler,
+            other: {"enabled": False},
+            sensor: own,
+        },
     )
 
 
@@ -1628,6 +1647,149 @@ async def test_an_attribute_of_a_retired_segment_is_reaped_and_writes_nothing(
     assert attribute["outcome"] == expected and cache.profile_details is None
     if how != "stop":
         await persona.on_stop()
+    await runtime.aclose()
+
+
+class ScriptedModel(LLMBase):
+    def __init__(self, output: object) -> None:
+        self.output, self.prompts = output, []
+
+    def validate_input(self, *, require_input_adapter: bool = False) -> None:
+        pass
+
+    async def ainvoke_structured(self, model_input, *, output_schema, include_raw=False):
+        self.prompts.append("\n".join(item.text or "" for item in model_input.items))
+        return ProviderModelResult(output=self.output)
+
+    async def aclose(self) -> None:
+        pass
+
+
+class ScriptedProviders(ProviderService):
+    """Each task's model by the name its configuration gives it."""
+
+    def __init__(self, **models: ScriptedModel) -> None:
+        super().__init__()
+        self.models = models
+
+    def model(self, config):
+        self._ensure_open()
+        return self.models[config.model]
+
+
+class SessionInference(SensorInference):
+    """Memory's vector index as well: every Memory request finds nothing and saves."""
+
+    async def do_inference(self, method: str, data: bytes) -> bytes | None:
+        if not method.startswith("alphaavatar.memory."):
+            return await super().do_inference(method, data)
+        request = json.loads(data)
+        if request["op"] == "search_similar_batch":
+            return json.dumps({"results": [[] for _ in request["param"]["texts"]]}).encode()
+        return json.dumps({"candidates": [], "saved": True}).encode()
+
+
+def gateway(model: str) -> dict:
+    return {"trace": {"enabled": False}, "tasks": {"task": {"model": model}}}
+
+
+@pytest.mark.parametrize("ended_by", ["cancelled-source", "new-generation"])
+async def test_a_source_that_ends_keeps_the_association_its_earlier_speech_settled(
+    ended_by: str, tmp_path: Path
+) -> None:
+    """Alice was heard, identified and her Turn committed; her attributes are still being
+    inferred when she begins again and the source ends. The attribute inference is cancelled
+    and the unfinished segment invalidated, but her settled association stays: the Turn reads
+    as hers, then, after Persona stops, and for the profiler and Memory at the session's end.
+    Nothing settled after the source ended is taken."""
+    inference = SessionInference()
+    inference.hold_attribute = True
+    providers = ScriptedProviders(
+        profile=ScriptedModel(ProfileDelta(ops=[ProfilePatch(op="set", path="/name", value="Al")])),
+        conversation=ScriptedModel(
+            MemoryDelta(user_or_tool_memory_entries=[MemoryPatch(value="greets the avatar")])
+        ),
+    )
+    runtime = avatar_runtime(tmp_path, inference, providers=providers)
+    profiler = {
+        "provider": {
+            "gateway": {
+                "trace": {"enabled": False},
+                "tasks": {"persona.profile_delta": {"model": "profile"}},
+            }
+        }
+    }
+    persona = persona_for(runtime, "speaker", profiler=profiler)
+    memory = AvatarModulePlugin.create(
+        AvatarModule.MEMORY,
+        "default",
+        runtime=runtime,
+        avatar_id="avatar",
+        maximum_memory_num=24,
+        vdb_config={},
+        init_config={
+            "retrieval": {"enabled": False},
+            "conversation": {
+                "provider": {"task": "task", "gateway": gateway("conversation")},
+                "pipeline": {"consolidation": {"mode": "off"}},
+            },
+            "tool": {"enabled": False},
+        },
+    )
+    await memory.on_start()
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    speak(runtime, source, "a", "alice")
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.attribute_held.wait()
+    alice = participant_of(runtime, "alice")
+    turn = spoken_turn(runtime, "a")
+    heard = PerceptionSegmentRef(source, "a")
+
+    def read() -> list[str | None]:
+        return [entry.user_id for entry in runtime.participants.of_turn(turn)]
+
+    assert read() == ["alice"]
+    if ended_by == "cancelled-source":
+        unfinished = PerceptionSegmentRef(source, "b")
+        speak(runtime, source, "b", "bob", end=False)
+        runtime.perception.publish_observation(
+            EnvObservation(
+                kind=ObservationKind.SPEECH_CANCELLED,
+                time_range=RuntimeTimeRange.point(runtime.clock.now()),
+                source=source,
+                segment=unfinished,
+                metadata={"reason_code": "source_ended"},
+            )
+        )
+        await wait_until(lambda: traced(runtime, "speaker.attribute"), "it was never reaped")
+        (attribute,) = traced(runtime, "speaker.attribute")
+        assert attribute["outcome"] == "cancelled"
+        # The unfinished segment is invalidated: nothing can bind it now.
+        assert runtime.participants.segment_association(unfinished) == "invalid"
+    else:
+        # The device reopened: its old generation's segments are retired as the new speaks.
+        speak(runtime, PerceptionSourceRef("device", 2), "c", "bob", end=False)
+        await wait_until(
+            lambda: not runtime.participants.source_is_current(source), "never retired"
+        )
+
+    # The settled one stays, read as Alice's.
+    assert runtime.participants.segment_association(heard) == "bound"
+    assert read() == ["alice"]
+    # What arrives after the source ended is not taken: the held attribute, released now.
+    inference.attribute_release.set()
+    await wait_until(lambda: traced(runtime, "speaker.attribute"), "it never ended")
+    assert persona.cache_for(alice.participant_id).profile_details is None
+    assert runtime.participants.segment_association(heard) == "bound"
+
+    await persona.on_stop()
+    assert read() == ["alice"]
+    assert "alice" in inference.saves  # The profiler gave the Turn to Alice.
+    await memory.on_stop()
+    (item,) = memory.memory_state.get(memory_type=MemoryType.CONVERSATION)
+    assert [ref.key for ref in item.owner_refs] == ["user:alice"]
+    assert item.scope.kind is MemoryScopeKind.OWNER
     await runtime.aclose()
 
 

@@ -21,6 +21,11 @@
 #                                                    never over anything already there
 #   <prefix>/current -> versions/... or envs/... switched last
 #   <prefix>/.install.lock                       the lock every run and setup take, kept
+# For new terminals, the command's directory goes on PATH: a block marked as AlphaAvatar's in the
+# login shell's startup file (~/.bashrc, ~/.zshrc or ~/.profile), added once and replaced whole,
+# the rest of the file left as it is. In a terminal, a first installation then offers to run
+# `alphaavatar setup` there, on the terminal's own input; --non-interactive never asks, and
+# neither Doctor nor the Host is ever started.
 # Installing the version current already runs keeps its setup environment. A failed or
 # interrupted run removes only what it created, judged by where current points when it ends;
 # the current version, the command and existing data stay as they were, and a path this script
@@ -61,14 +66,15 @@ remove_stage() (
 usage() {
   cat <<EOF
 usage: install.sh [--version X.Y.Z | --file PACKAGE | --url URL] [--sha256 HEX]
-                  [--prefix DIR] [--bin-dir DIR]
+                  [--prefix DIR] [--bin-dir DIR] [--non-interactive]
   none of --version, --file, --url: the latest release
+  --non-interactive  install and put the command on PATH; never ask to run setup
   --prefix   program files (default: \$ALPHAAVATAR_INSTALL_DIR or ~/.local/lib/alphaavatar)
   --bin-dir  where the alphaavatar command goes (default: \$ALPHAAVATAR_BIN_DIR or ~/.local/bin)
 EOF
 }
 
-version="" url="" file="" sha256=""
+version="" url="" file="" sha256="" non_interactive=""
 prefix="${ALPHAAVATAR_INSTALL_DIR:-$HOME/.local/lib/alphaavatar}"
 bin_dir="${ALPHAAVATAR_BIN_DIR:-$HOME/.local/bin}"
 while [[ $# -gt 0 ]]; do
@@ -84,6 +90,7 @@ while [[ $# -gt 0 ]]; do
         --bin-dir) bin_dir="$2" ;;
       esac
       shift 2 ;;
+    --non-interactive) non_interactive=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -321,12 +328,126 @@ fi
 
 echo "Installed AlphaAvatar $package_version, build $id: $entry -> $prefix/current -> $switch"
 if [[ "$previous" == envs/* && "$switch" != "$previous" ]]; then
-  echo "The capabilities \`alphaavatar setup\` installed belong to the previous version."
+  echo "The capabilities \`alphaavatar setup\` installed belong to the previous version:" \
+    "run \`alphaavatar setup <bundle>\` for the bundle you use."
 fi
-[[ "$switch" == envs/* ]] || echo "Next: alphaavatar setup    # choose capabilities; it installs them"
-case ":$PATH:" in
-  *":$bin_dir:"*) ;;
-  *) echo "Add $bin_dir to PATH to run alphaavatar from any directory, e.g. in ~/.profile:"
-     echo "  export PATH=\"$bin_dir:\$PATH\"" ;;
-esac
+
+# The installation is whole: this run's stage goes, and the lock with its descriptor, before
+# anything else runs, so setup takes the lock itself. Signals act as they would anywhere again.
+cleanup
+trap - EXIT INT TERM HUP
+exec 9>&-
+
+# The command's directory as the startup file of the login shell can hold it for new terminals:
+# within double quotes, its \, ", $ and ` escaped.
+quoted="${bin_dir//\\/\\\\}" quoted="${quoted//\"/\\\"}"
+quoted="${quoted//\$/\\\$}" quoted="${quoted//\`/\\\`}"
+begin="# >>> AlphaAvatar >>>" end="# <<< AlphaAvatar <<<"
+block="$begin
+# Where AlphaAvatar's command is, added by its install.sh; replaced whole when it runs again.
+case \":\$PATH:\" in *\":$quoted:\"*) ;; *) export PATH=\"$quoted:\$PATH\" ;; esac
+$end"
+profile="" path_result=""
+configure_path() {
+  # Sets path_result; fails, having changed nothing, where it cannot say the block is in place.
+  local target text line skipping="" placed="" staged
+  case "${SHELL##*/}" in
+    bash) profile="$HOME/.bashrc" ;;
+    zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    sh|dash) profile="$HOME/.profile" ;;
+    *) path_result="not configured: the login shell (${SHELL:-none}) is not bash, zsh or sh"
+       profile=""; return 1 ;;
+  esac
+  if [[ "$bin_dir" == *$'\n'* ]]; then
+    path_result="not configured: the directory's name holds a line break"; return 1
+  fi
+  target="$profile"
+  if [[ -e "$profile" || -L "$profile" ]]; then
+    # A link is followed: the file it names is the one that changes.
+    target="$(realpath -e -- "$profile" 2>/dev/null)" && [[ -f "$target" ]] \
+      || { path_result="not configured: $profile is not a file this installer edits"; return 1; }
+  fi
+  if [[ -f "$target" ]] && grep -qxF -- "$begin" "$target" 2>/dev/null; then
+    grep -qxF -- "$end" "$target" \
+      || { path_result="not configured: $profile holds AlphaAvatar's block unfinished"; return 1; }
+    # The first block in place of every one of them, each other line as it is.
+    text=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ -z "$skipping" && "$line" == "$begin" ]]; then
+        skipping=1
+        [[ -n "$placed" ]] || text+="$block"$'\n' placed=1
+      elif [[ -n "$skipping" ]]; then
+        [[ "$line" != "$end" ]] || skipping=""
+      else
+        text+="$line"$'\n'
+      fi
+    done < "$target"
+    staged="$(mktemp "$(dirname -- "$target")/.alphaavatar-path-XXXXXX" 2>/dev/null)" \
+      || { path_result="not configured: cannot write beside $profile"; return 1; }
+    if ! { printf '%s' "$text" > "$staged" && chmod --reference="$target" -- "$staged"; } \
+        2>/dev/null; then
+      rm -f -- "$staged"; path_result="not configured: cannot write beside $profile"; return 1
+    fi
+    if cmp -s -- "$staged" "$target"; then
+      rm -f -- "$staged"; path_result="$profile already adds $bin_dir, for new terminals"
+      return 0
+    fi
+    mv -f -- "$staged" "$target" 2>/dev/null \
+      || { rm -f -- "$staged"; path_result="not configured: cannot write $profile"; return 1; }
+    path_result="updated $profile with $bin_dir, for new terminals"
+  else
+    { printf '\n%s\n' "$block" >> "$target"; } 2>/dev/null \
+      || { path_result="not configured: cannot write $profile"; return 1; }
+    path_result="added $bin_dir to $profile, for new terminals"
+  fi
+}
+on_path=""
+case ":$PATH:" in *":$bin_dir:"*) on_path=1 ;; esac
+if [[ -n "$on_path" ]]; then
+  echo "PATH: $bin_dir is on PATH already"
+elif configure_path; then
+  echo "PATH: $path_result"
+else
+  echo "PATH: $path_result; to add it yourself:"
+  echo "  export PATH=\"$quoted:\$PATH\""
+fi
+
+# A first setup, offered in a terminal and run on that terminal, its input included: piped to
+# bash, this script's own input is the download. Whatever setup does, the installation stays.
+next="alphaavatar setup    # choose capabilities; it installs them"
+if [[ "$switch" == envs/* || "$previous" == envs/* ]]; then
+  :  # Set up already: the bundles there stay as they are.
+elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
+  # Asked and read by a subshell of its own, where Ctrl-C acts as it would: it ends the reading
+  # and answers no, as the end of input does. Shown only once that reader is there, the
+  # question cannot be answered by a Ctrl-C this script would take instead.
+  trap 'printf "\n" > /dev/tty' INT
+  answer="$(
+    printf 'Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] ' > /dev/tty
+    IFS= read -r line < /dev/tty && printf 'answered:%s' "$line"
+  )" || answer=""
+  trap - INT
+  if [[ "$answer" =~ ^answered:([Yy]([Ee][Ss])?)?$ ]]; then
+    status=0
+    trap ':' INT  # Ctrl-C ends setup, never this script: its report still follows.
+    PATH="$bin_dir:$PATH" "$entry" setup < /dev/tty > /dev/tty 2>&1 || status=$?
+    trap - INT
+    if [[ "$status" -eq 0 ]]; then
+      echo "Setup: done"
+    else
+      echo "Setup: did not finish (exit $status); AlphaAvatar stays installed. Next: $next"
+    fi
+  else
+    echo "Setup: not run. Next: $next"
+  fi
+else
+  echo "Next: $next"
+fi
+if [[ -z "$on_path" ]]; then
+  if [[ -n "$profile" && "$path_result" != "not configured"* ]]; then
+    printf 'This terminal finds alphaavatar in a new terminal, or after: source %q\n' "$profile"
+  else
+    echo "This terminal finds alphaavatar once $bin_dir is on PATH."
+  fi
+fi
 }

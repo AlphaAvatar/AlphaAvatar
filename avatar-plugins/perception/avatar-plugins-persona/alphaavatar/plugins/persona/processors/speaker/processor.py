@@ -213,6 +213,14 @@ class SpeakerProcessor(PersonaProcessorBase):
         state.invalid = True
         self.runtime.participants.bind_segment(state.segment, None, token=state.token)
 
+    def _abandon(self, state: SpeakerSegmentState) -> None:
+        """Stop a segment's remaining work as its source ends. An association it settled bound
+        is a fact of speech already heard and stays, read for its Turn from then on; one not
+        settled yet is invalidated. Once retired, no late identity or attribute is taken."""
+        if self.runtime.participants.segment_association(state.segment) != "bound":
+            self._invalidate(state)
+        self._retire(state)
+
     def _discard_job(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
         state = job.state if isinstance(job, SpeakerWindow) else job
         if isinstance(job, SpeakerWindow):
@@ -387,8 +395,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._shorts.pop(source, None)
         for state in tuple(self._segments.values()):
             if state.segment.source == source:
-                self._invalidate(state)
-                self._retire(state)
+                self._abandon(state)
 
         # Its segments go with it; its voices stay the session's, for its other sources too.
         self.runtime.participants.retire_source(source)

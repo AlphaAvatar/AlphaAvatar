@@ -76,6 +76,18 @@ version and SHA-256, checks it, then enables it. Neither needs Python, Node or a
 
 ```bash
 curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash
+```
+
+In a terminal, a first install then offers to run `alphaavatar setup`; if setup fails or is
+cancelled, the installation stays. `--non-interactive` (`… | bash -s -- --non-interactive`)
+never asks, nor does a run without a terminal.
+
+For new terminals, the installer adds the command's directory to PATH in a block marked
+`# >>> AlphaAvatar >>>`, in `~/.bashrc`, `${ZDOTDIR:-~}/.zshrc` or `~/.profile` by login shell.
+For another shell, or a file it cannot write, it prints the line to add. In the terminal it ran
+in, `source` the file it names, or open a new one:
+
+```bash
 alphaavatar setup                       # a new bundle, asked part by part
 alphaavatar doctor
 ```
@@ -84,9 +96,12 @@ Given no source, `install.sh` installs the latest release. The manifest the rele
 beside its package names the release once; the package and its `.sha256` come from that
 release, the package must hold that manifest, and the run prints the version and build it
 installed. A latest release without these files is an error, never a step back to an older
-release: this entry needs a release that publishes them, as releases do from v0.6.9 on. Bash
-reads the whole script before it runs any of it, so a download cut short runs nothing. One
-source at most:
+release: this entry needs a release that publishes them, as releases do from v0.6.9 on.
+
+Bash reads the whole script before running it, so a download cut short runs nothing. A download
+that fails outright leaves bash an empty script: nothing is installed, yet the pipeline exits 0.
+A script that goes on by exit status therefore downloads first, as the unattended example below
+does, or sets `pipefail`. One source at most:
 
 ```bash
 curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v<version>/install.sh
@@ -105,9 +120,14 @@ off; with no model on the machine but the voice activity detection speech input 
 210 MB. The vectors go to LanceDB in the Avatar workspace or to your Qdrant, and models and
 speech come from OpenAI or from servers of your own with OpenAI's API (Responses for the
 conversation model). For CI and unattended installs, create or edit a bundle, then set up
-that bundle, credentials from the environment, with no question asked:
+that bundle, credentials from the environment, with no question asked, stopping at the first
+step that fails:
 
 ```bash
+set -euo pipefail
+curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh
+bash install.sh --non-interactive
+export PATH="$HOME/.local/bin:$PATH"   # a script reads no startup file
 alphaavatar config init my-avatar --avatar-id my-avatar   # edit its profiles as needed
 alphaavatar setup my-avatar
 alphaavatar config check my-avatar
