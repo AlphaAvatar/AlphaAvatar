@@ -454,21 +454,30 @@ elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
   # script takes it, wherever it finds it, records the question cancelled, and its next look, a
   # tenth of a second on at most, ends the reader. Looking, not a wait: a Ctrl-C reaching a
   # shell as its read or a wait begins can be lost. However this script ends, by a signal too,
-  # the reader ends with it, never left on the terminal to take a line meant for the shell.
-  answer="" reader="" cancelled=""
+  # the reader ends with it, never left on the terminal to take a line meant for the shell:
+  # killed, as a signal it could take might come before it has put down the traps it began
+  # with, this script's, and be held there.
+  answer="" reader="" cancelled="" held=""
   reply="$(mktemp "${TMPDIR:-/tmp}/alphaavatar-reply.XXXXXX" 2>/dev/null)" || reply=""
   if [[ -n "$reply" ]]; then
-    trap 'kill "$reader" 2>/dev/null || :; rm -f -- "$reply"' EXIT
+    trap 'kill -s KILL "$reader" 2>/dev/null || :; rm -f -- "$reply"' EXIT
     trap 'cancelled=1; echo > /dev/tty 2>/dev/null || :' INT
+    # TERM and HUP wait while the reader starts, until its process is recorded: the end they
+    # bring then finds the reader, and ends it with this script.
+    trap 'held=TERM' TERM
+    trap 'held=HUP' HUP
     { trap '' INT; IFS= read -r line < /dev/tty && printf 'answered:%s' "$line" > "$reply"; } &
     reader=$!
+    trap - TERM HUP
+    [[ -z "$held" ]] || kill -s "$held" "$$"
     # A Ctrl-C can cut the question's own writing short: that cancels, never fails the install.
     printf 'Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] ' > /dev/tty \
       2>/dev/null || :
     while [[ -z "$cancelled" ]] && kill -0 "$reader" 2>/dev/null; do sleep 0.1 || :; done
     trap - INT
-    kill "$reader" 2>/dev/null || :
+    kill -s KILL "$reader" 2>/dev/null || :
     wait "$reader" 2>/dev/null || :
+    reader=""  # Gone: its process ID may soon be another's.
     [[ -n "$cancelled" ]] || answer="$(< "$reply")"
     rm -f -- "$reply"
     trap - EXIT

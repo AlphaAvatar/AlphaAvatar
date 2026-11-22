@@ -17,6 +17,7 @@ and the data as they were, and nothing the next run does not remove."""
 
 from __future__ import annotations
 
+import ctypes
 import functools
 import hashlib
 import http.server
@@ -33,6 +34,7 @@ import sys
 import tarfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -1127,6 +1129,51 @@ def question_reader(installer: int, terminal: str) -> int | None:
     return None
 
 
+class Tracer:
+    """ptrace, enough to hold a process at each fork it makes: Linux's own, through libc."""
+
+    CONT, DETACH, GETEVENTMSG, SEIZE = 7, 17, 0x4201, 0x4206
+    TRACE_FORKS = 0x2 | 0x4 | 0x8  # Its forks, vforks and clones
+    FORK_EVENTS = (1, 2, 3)
+    WALL = 0x40000000
+
+    def __init__(self) -> None:
+        self.libc = ctypes.CDLL(None, use_errno=True)
+        self.libc.ptrace.restype = ctypes.c_long
+        self.libc.ptrace.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]
+
+    def __call__(self, request: int, pid: int, addr: int = 0, data: int = 0) -> None:
+        if self.libc.ptrace(request, pid, addr, data) == -1:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error))
+
+    def hold_at_fork(self, pid: int, which: Callable[[], bool], signal_number: int) -> int:
+        """Follow ``pid``'s forks; at the first whose moment ``which`` names, the new process
+        made and ``pid`` stopped in the kernel before it goes on, send it ``signal_number``,
+        then let both go. Returns that fork's new process."""
+        try:
+            self(self.SEIZE, pid, 0, self.TRACE_FORKS)
+        except PermissionError:
+            pytest.skip("ptrace is not permitted here")
+        while True:
+            _, status = os.waitpid(pid, self.WALL)
+            assert os.WIFSTOPPED(status), f"it ended first: {status}"
+            event = status >> 16
+            if event not in self.FORK_EVENTS:
+                # A signal it receives, passed on; any other stop, gone on from.
+                self(self.CONT, pid, 0, os.WSTOPSIG(status) if event == 0 else 0)
+                continue
+            made = ctypes.c_ulong()
+            self(self.GETEVENTMSG, pid, 0, ctypes.addressof(made))
+            os.waitpid(made.value, self.WALL)  # Its first stop; untraced from then on
+            self(self.DETACH, made.value)
+            if which():
+                os.kill(pid, signal_number)
+                self(self.DETACH, pid)
+                return made.value
+            self(self.CONT, pid)
+
+
 def test_a_ctrl_c_before_the_installer_waits_for_its_answer_cancels_with_nothing_more_typed(
     layout, releases
 ) -> None:
@@ -1259,6 +1306,63 @@ def test_an_installer_ended_at_its_question_leaves_no_reader_on_the_terminal(
         if process.poll() is None:
             process.kill()
             process.wait()
+
+
+@pytest.mark.parametrize("signal_name", ["SIGTERM", "SIGHUP"])
+def test_a_signal_as_the_reader_starts_before_it_is_recorded_still_ends_it(
+    layout, releases, signal_name: str
+) -> None:
+    """TERM or HUP once the installer has made its question's reader, before it records the
+    reader's process: held by ptrace at that fork, the installer receives the signal there.
+    It still ends with that signal's status and takes the reader with it, asks nothing, and
+    leaves no file; the installation stands. The person's shell stays, as a shell does: had it
+    ended, the terminal's hangup would end what the installer left, and hide it."""
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    spare, told, pids, ended = (tmp_path / name for name in ("spare", "told", "pids", "ended"))
+    spare.mkdir()
+    script = f"echo $$ > {pids}; {entry('README.md')} > {told} 2>&1; echo $? > {ended}; sleep 120"
+    controller, terminal_end = os.openpty()
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "PATH": f"{tools}:/usr/bin:/bin",
+        "SHELL": "/bin/bash",
+        "TERM": "dumb",
+        "TMPDIR": str(spare),
+    }
+    process = subprocess.Popen(
+        ["setsid", "--ctty", "bash", "-c", script],
+        stdin=terminal_end,
+        stdout=terminal_end,
+        stderr=terminal_end,
+        env=env,
+        cwd=tmp_path,
+    )
+    os.close(terminal_end)
+    try:
+        deadline = time.monotonic() + 30
+        installer = None
+        while installer is None:  # The bash the download is piped to, as soon as it is there
+            assert time.monotonic() < deadline, "the installer never started"
+            if pids.exists():
+                installer = next(iter(children(pids.read_text().strip(), "-x", "bash")), None)
+        # The reader's fork is the first once the answer's file is made.
+        reader = Tracer().hold_at_fork(
+            installer, lambda: any(spare.iterdir()), getattr(signal, signal_name)
+        )
+        deadline = time.monotonic() + 30
+        while not ended.exists() or Path(f"/proc/{reader}").exists():
+            assert time.monotonic() < deadline, "the installer's reader was left"
+            time.sleep(0.05)
+        code = 143 if signal_name == "SIGTERM" else 129
+        assert ended.read_text().strip() == str(code) and os.listdir(spare) == []
+        assert "Installed AlphaAvatar" in told.read_text() and OFFER not in told.read_text()
+        assert os.readlink(tmp_path / "home/.local/lib/alphaavatar/current") == f"versions/{ID}"
+    finally:
+        os.close(controller)
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
 
 
 @pytest.mark.parametrize("ending", ["fails", "ctrl-c"])
