@@ -450,28 +450,32 @@ next="alphaavatar setup    # choose capabilities; it installs them"
 if [[ "$switch" == envs/* || "$previous" == envs/* ]]; then
   :  # Set up already: the bundles there stay as they are.
 elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
-  # Read in the background, where Ctrl-C is ignored: this script takes it while it waits, a
-  # wait a trapped signal always ends, then ends the reading. A Ctrl-C reaching a shell as its
-  # read begins can be lost, leaving the question unanswered. It answers no, as the end of
-  # input does. However this script ends, by a signal too, the reader ends with it, never left
-  # on the terminal to take a line meant for the shell.
-  answer="" reader="" reply="$(mktemp "${TMPDIR:-/tmp}/alphaavatar-reply.XXXXXX" 2>/dev/null)" \
-    || reply=""
+  # Read in the background, by a reader that ignores Ctrl-C, whatever the bash version: this
+  # script takes it, wherever it finds it, records the question cancelled, and its next look, a
+  # tenth of a second on at most, ends the reader. Looking, not a wait: a Ctrl-C reaching a
+  # shell as its read or a wait begins can be lost. However this script ends, by a signal too,
+  # the reader ends with it, never left on the terminal to take a line meant for the shell.
+  answer="" reader="" cancelled=""
+  reply="$(mktemp "${TMPDIR:-/tmp}/alphaavatar-reply.XXXXXX" 2>/dev/null)" || reply=""
   if [[ -n "$reply" ]]; then
-    trap '[[ -z "$reader" ]] || kill "$reader" 2>/dev/null; rm -f -- "$reply"' EXIT
-    trap 'printf "\n" > /dev/tty' INT
-    { IFS= read -r line < /dev/tty && printf 'answered:%s' "$line" > "$reply"; } &
+    trap 'kill "$reader" 2>/dev/null || :; rm -f -- "$reply"' EXIT
+    trap 'cancelled=1; echo > /dev/tty 2>/dev/null || :' INT
+    { trap '' INT; IFS= read -r line < /dev/tty && printf 'answered:%s' "$line" > "$reply"; } &
     reader=$!
-    printf 'Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] ' > /dev/tty
-    wait "$reader" || :
+    # A Ctrl-C can cut the question's own writing short: that cancels, never fails the install.
+    printf 'Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] ' > /dev/tty \
+      2>/dev/null || :
+    while [[ -z "$cancelled" ]] && kill -0 "$reader" 2>/dev/null; do sleep 0.1 || :; done
     trap - INT
     kill "$reader" 2>/dev/null || :
     wait "$reader" 2>/dev/null || :
-    answer="$(< "$reply")"
+    [[ -n "$cancelled" ]] || answer="$(< "$reply")"
     rm -f -- "$reply"
     trap - EXIT
   fi
-  if [[ "$answer" =~ ^answered:([Yy]([Ee][Ss])?)?$ ]]; then
+  if [[ -n "$cancelled" ]]; then
+    echo "Setup: cancelled, not run. Next: $next"
+  elif [[ "$answer" =~ ^answered:([Yy]([Ee][Ss])?)?$ ]]; then
     status=0
     trap ':' INT  # Ctrl-C ends setup, never this script: its report still follows.
     PATH="$bin_dir:$PATH" "$entry" setup < /dev/tty > /dev/tty 2>&1 || status=$?

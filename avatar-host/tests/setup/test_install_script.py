@@ -634,7 +634,9 @@ def test_piped_to_bash_it_runs_once_whole_and_a_script_cut_short_runs_nothing(
     text = SCRIPT.read_text()
     short = text[: len(text) // 2] if cut == "half" else text[: text.rindex("}")]
     stopped = run(source=(), piped=short)
-    assert stopped.returncode == 2 and "syntax error" in stopped.stderr, stopped.stderr
+    # Bash's own wording for the unfinished script varies with its version and where the cut
+    # falls; what it does is the same: it refuses the script, runs nothing and says why.
+    assert stopped.returncode == 2 and stopped.stdout == "" and stopped.stderr, stopped.stderr
     assert not (tmp_path / "prefix").exists() and asked == []
     assert not (tmp_path / "bin").exists()
     installed = run(source=(), piped=text)
@@ -1102,9 +1104,101 @@ def test_setup_declined_runs_nothing_and_the_installation_stands(
 
     assert status == 0, shown
     assert not (home / "setup-ran").exists()
-    assert "Setup: not run. Next: alphaavatar setup" in shown
+    result = "cancelled, not run" if reply == b"\x03" else "not run"
+    assert f"Setup: {result}. Next: alphaavatar setup" in shown
     assert os.readlink(home / ".local/lib/alphaavatar/current") == f"versions/{ID}"
     assert settings.read_text() == '{"default_bundle": "mine"}\n'
+
+
+def children(parent: int | str, *name: str) -> list[int]:
+    found = subprocess.run(["pgrep", "-P", str(parent), *name], capture_output=True, text=True)
+    return [int(pid) for pid in found.stdout.split()]
+
+
+def question_reader(installer: int, terminal: str) -> int | None:
+    """The installer's child reading the answer from the terminal, if it is there yet: piped,
+    the installer reads the script, so no other child of its reads the terminal."""
+    for pid in children(installer):
+        try:
+            if os.readlink(f"/proc/{pid}/fd/0") in ("/dev/tty", terminal):
+                return pid
+        except OSError:
+            pass
+    return None
+
+
+def test_a_ctrl_c_before_the_installer_waits_for_its_answer_cancels_with_nothing_more_typed(
+    layout, releases
+) -> None:
+    """Ctrl-C once the reader is there but before the installer waits for it: the installer is
+    held writing its question to a terminal whose output is stopped (XOFF), the one thing it
+    writes there, so it is certainly not waiting yet. Ctrl-C starts the output again and is
+    all that is typed: the question is cancelled, no setup runs, the installation stands, and
+    neither the reader nor its file is left."""
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    spare, told, pids = tmp_path / "spare", tmp_path / "told", tmp_path / "pids"
+    spare.mkdir()
+    # What the installer prints goes to a file: on the terminal it writes its question alone.
+    # The person's shell stays, as a shell does: had it ended, the terminal's hangup would end
+    # what the installer left, and hide it.
+    script = (
+        f'echo $$ > {pids}; exec > {told} 2>&1; {entry("README.md")}; echo "status $?"; sleep 120'
+    )
+    controller, terminal_end = os.openpty()
+    terminal = os.ttyname(terminal_end)
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "PATH": f"{tools}:/usr/bin:/bin",
+        "SHELL": "/bin/bash",
+        "TERM": "dumb",
+        "TMPDIR": str(spare),
+    }
+    os.write(controller, b"\x13")  # Output stopped before anything is written
+    process = subprocess.Popen(
+        ["setsid", "--ctty", "bash", "-c", script],
+        stdin=terminal_end,
+        stdout=terminal_end,
+        stderr=terminal_end,
+        env=env,
+        cwd=tmp_path,
+    )
+    os.close(terminal_end)
+
+    def held(pid: int) -> bool:
+        """Asleep in the kernel, as it is once its write waits for the stopped output."""
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "S"
+
+    try:
+        deadline = time.monotonic() + 60
+        installer = reader = None
+        while reader is None or not held(installer):
+            assert time.monotonic() < deadline, told.read_text()
+            if pids.exists() and installer is None:
+                installer = next(iter(children(pids.read_text().strip(), "-x", "bash")), None)
+            if installer is not None:  # The reader: its child reading the terminal
+                reader = question_reader(installer, terminal)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        assert held(installer) and Path(f"/proc/{reader}").exists()  # Still held there
+        os.write(controller, b"\x03")
+        shown = bytearray()
+        deadline = time.monotonic() + 30
+        while "status " not in told.read_text():  # Nothing more is typed.
+            assert time.monotonic() < deadline, f"it waited on: {bytes(shown)!r}"
+            if select.select([controller], [], [], 0.1)[0]:
+                shown.extend(os.read(controller, 65536))
+        out = told.read_text()
+        assert "Setup: cancelled, not run. Next: alphaavatar setup" in out and "status 0" in out
+        assert not Path(f"/proc/{reader}").exists() and os.listdir(spare) == []
+        assert not (tmp_path / "home/setup-ran").exists()
+        assert os.readlink(tmp_path / "home/.local/lib/alphaavatar/current") == f"versions/{ID}"
+    finally:
+        os.close(controller)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
 
 @pytest.mark.parametrize("signal_name", ["SIGTERM", "SIGHUP"])
@@ -1124,6 +1218,7 @@ def test_an_installer_ended_at_its_question_leaves_no_reader_on_the_terminal(
     # terminal's hangup would end what it left, and hide it.
     script = f"echo $$ > {pids}; {entry('README.md')}; echo $? > {ended}; sleep 120"
     controller, terminal_end = os.openpty()
+    terminal = os.ttyname(terminal_end)
     env = {
         "HOME": str(tmp_path / "home"),
         "PATH": f"{tools}:/usr/bin:/bin",
@@ -1142,10 +1237,6 @@ def test_an_installer_ended_at_its_question_leaves_no_reader_on_the_terminal(
     os.close(terminal_end)
     shown = bytearray()
 
-    def children(parent: int) -> list[int]:
-        found = subprocess.run(["pgrep", "-P", str(parent)], capture_output=True, text=True)
-        return [int(pid) for pid in found.stdout.split()]
-
     try:
         deadline = time.monotonic() + 60
         while OFFER.encode() not in shown:
@@ -1153,11 +1244,9 @@ def test_an_installer_ended_at_its_question_leaves_no_reader_on_the_terminal(
             if select.select([controller], [], [], 0.1)[0]:
                 shown.extend(os.read(controller, 65536))
         # The installer: the bash the download is piped to; its one child, the reader.
-        found = subprocess.run(
-            ["pgrep", "-P", pids.read_text().strip(), "-x", "bash"], capture_output=True
-        )
-        (installer,) = map(int, found.stdout.split())
-        (reader,) = children(installer)
+        (installer,) = children(pids.read_text().strip(), "-x", "bash")
+        reader = question_reader(installer, terminal)
+        assert reader is not None
         os.kill(installer, getattr(signal, signal_name))
         deadline = time.monotonic() + 30
         while not ended.exists() or Path(f"/proc/{reader}").exists():

@@ -14,7 +14,8 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | 发布前修复 | KD-50 来源关闭保留已完成的关联；KD-51 安装器为新终端配置 PATH，并在交互安装结束时接续首次 setup；KD-52 下载失败时管道的退出码 | 2026-11-22 | `064222fb` | `09845713` | 已提交 |
-| 第二批 | KD-53 缺口和容量淘汰保留已完成的关联；KD-54 PATH 标记异常时不改文件；KD-55 bash 登录终端的 PATH；KD-56 询问 setup 时 Ctrl-C 可能卡住（范围外，验证中发现） | 2026-11-22 | `09845713` | — | 待审查 |
+| 第二批 | KD-53 缺口和容量淘汰保留已完成的关联；KD-54 PATH 标记异常时不改文件；KD-55 bash 登录终端的 PATH；KD-56 询问 setup 时 Ctrl-C 可能卡住（范围外，验证中发现） | 2026-11-22 | `09845713` | `d9ccfd2b` | 已提交 |
+| 第三批 | KD-56 收尾：Ctrl-C 先于等待到达的窗口；截断下载测试不再检查 bash 的措辞 | 2026-11-22 | `d9ccfd2b` | — | 待审查 |
 
 ## 1. KD-50：来源关闭不能作废此前已完成的语音关联（P1）
 
@@ -333,3 +334,62 @@ PATH 配置：
 - zsh 没有实际启动验证（本机没有 zsh）；`.zprofile` 不写，非交互的登录 zsh 不读 `.zshrc`。
 - 发行版的 `/etc/profile` 改写 PATH 的方式各不相同；本机的 bash 登录测试通过，其他发行版没有验证。
 - KD-53 只有离线回归，没有真实通话；缺口和容量淘汰在真实通话里很少出现。
+
+## 7. 第三批：KD-56 收尾、截断下载测试（基线 `d9ccfd2b`）
+
+- 依据：用户转来的复查（基于 `d9ccfd2b`）。KD-53～KD-55 已通过，保持不变；只处理两项。
+- 范围：不做其他重构，不改版本号。
+
+### 7.1 Ctrl-C 先于等待到达
+
+- review 的复现：问题已显示、尚未进入 `wait "$reader"` 时收到 Ctrl-C，INT 的处理只打印一个换行，之后照样进入 `wait`。后台读取忽略 SIGINT，安装器仍要再输入一次 `n` 才结束。
+- 本机（bash 4.4）上还有两点：
+  - INT 的 trap 在启动读取之前就设好时，bash 4.4 的读取进程收到 Ctrl-C 会自己结束；review 用的 bash 上则忽略。行为随版本不同。
+  - Ctrl-C 恰好打断问题本身的写入时，`printf` 返回 "Interrupted system call"，`set -e` 让安装器以 1 退出，没有任何取消的说明。HEAD 的 `install.sh` 在本机就是这样失败的（下面的新测试，3 次都失败）。
+- 改动（`packaging/linux/install.sh`，只改询问这一段）：
+  - INT 的 trap 记录 `cancelled=1` 并换行；
+  - 不再用 `wait`：每 0.1 秒查看一次取消标记和读取进程是否还在（`kill -0`）。Ctrl-C 无论落在哪一刻，包括 `wait` 这类内建命令刚开始时 bash 自己的空隙，最晚在下一次查看时生效；
+  - 查看结束后结束读取进程并回收；取消时不读回答文件；
+  - 读取进程显式忽略 Ctrl-C（`trap '' INT`），结束它始终由安装器负责，各 bash 版本一致；
+  - 问题的写入失败（被 Ctrl-C 打断）不再算安装失败；
+  - 取消时输出 `Setup: cancelled, not run. Next: …`。不运行 setup，安装保留，退出码 0；
+  - EXIT 的 trap 在读取进程已结束时也不会中途停下，临时文件照样删除。
+- 回归 `test_a_ctrl_c_before_the_installer_waits_for_its_answer_cancels_with_nothing_more_typed`，时序是确定的：
+  - 安装器的输出重定向到文件，终端上只剩它写的问题；启动前先向终端发送 XOFF（Ctrl-S），停止输出；
+  - 等到读取进程已经存在，且安装器停在写问题这一步（进程处于睡眠状态，0.3 秒后仍是）。这时它一定还没开始等待；
+  - 发送一次 Ctrl-C（它同时恢复输出），之后不再输入任何内容；
+  - 断言：安装器输出 `Setup: cancelled, not run.`，退出码 0；读取进程已不存在，临时目录为空；setup 没有运行，安装保留；
+  - 用户的 shell 在安装器结束后继续存在。如果让它退出，终端挂断时内核会结束遗留的读取进程，问题就被掩盖了。
+- 原有测试的调整：
+  - Ctrl-C 的拒绝用例改为断言 `Setup: cancelled, not run.`；
+  - TERM、HUP 的测试和新测试共用 `question_reader()`：按标准输入是终端来找读取进程，因为安装器现在还有一个 `sleep` 子进程。
+- 变异测试（仓库外的文件副本）：
+  - 被发现：不记录取消；问题写入失败时安装失败；查看结束后不结束读取进程；
+  - 没被发现，符合预期：
+    - 用 `[[ -n "$cancelled" ]] || wait` 代替查看：剩下的只是 `wait` 开始时微秒级的空隙，无法确定性地命中；
+    - 读取进程不显式忽略 Ctrl-C：本机 bash 4.4 上它会被 Ctrl-C 结束，两种写法表现相同。显式忽略是为了让其他版本也一致。
+  - HEAD 的 `install.sh`：新测试 3 次都失败。
+
+### 7.2 截断下载测试
+
+- `test_piped_to_bash_it_runs_once_whole_and_a_script_cut_short_runs_nothing[half]` 要求 stderr 含 `syntax error`。截断点落在引号里时，CI 的 bash 只输出 `unexpected EOF while looking for matching`；本机 bash 4.4 两行都输出，所以本地通过。`d9ccfd2b` 的 Quality 因此失败（1 failed, 989 passed）。
+- 改为不检查措辞：退出码 2，stdout 为空，stderr 不为空（bash 说明了原因）。没有下载请求、没有创建安装目录和命令目录，这些断言保留。
+
+### 7.3 验证
+
+- 安装器测试：80 passed。询问相关的 PTY 测试连续 6 轮通过。
+- 离线全量（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 uv run --no-sync pytest -p no:cacheprovider`）：991 passed，47 warnings，350 s；运行前后，未跟踪和被忽略的文件一致。
+- 仓库规范：都通过。
+  - `uv lock --check`、`check_workspace.py`（16 个成员）；
+  - `ruff check .`、`ruff format --check .`（793 个文件）；
+  - `git diff --check`、`bash -n packaging/linux/install.sh`；
+  - 对改动文件跑 pre-commit：全部通过，没有改动任何文件。
+- CI：
+  - `d9ccfd2b`：Linux package 通过，Quality 失败，原因就是 7.2 的措辞断言；
+  - 本批还没有提交，没有对应的 CI。
+
+### 7.4 未验证的边界
+
+- 本机只有 bash 4.4，review 和 CI 用的较新 bash 上，没有在本机运行新测试。新测试要等提交后的 CI 才会在那个版本上运行。
+- 每 0.1 秒查看一次，意味着回答后最多晚 0.1 秒继续，等待期间每秒启动约 10 次 `sleep`。
+- 真实安装流程和真实 setup 的终端界面仍由用户最后验收。
