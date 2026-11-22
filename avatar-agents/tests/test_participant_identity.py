@@ -361,7 +361,7 @@ def test_memory_reads_earlier_turns_as_their_participants_corrected_user(tmp_pat
     spoken_by_a = commit(runtime, "input-2", runtime.get(person.participant_id))
     state.add_turn(spoken_by_a)
 
-    assert state.messages == [spoken_by_b, spoken_by_a]
+    assert state.messages_between(0, state.message_sequence) == [spoken_by_b, spoken_by_a]
     for turn in (spoken_by_b, spoken_by_a):
         owners = state.capture_identity([turn], of_turn=of_turn).owner_refs
         assert MemoryOwnerRef.user("user-a") in owners

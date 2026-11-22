@@ -342,7 +342,11 @@ async def test_finalization_extracts_complete_untruncated_input_without_backgrou
 
     models = runtime.foundation.provider.models
     assert not models["conversation"].prompts and not models["tool"].prompts
-    held = [item for item in state.messages if isinstance(item, TurnSnapshot)]
+    held = [
+        item
+        for item in state.messages_between(0, state.message_sequence)
+        if isinstance(item, TurnSnapshot)
+    ]
     assert all(left is right for left, right in zip(held, [first, *later], strict=True))
     # Core already evicted the early Turn; Memory still owns its unextracted reference.
     assert runtime.turn.get(first.input_id) is None
@@ -747,6 +751,7 @@ async def test_an_owner_never_verified_is_never_kept(tmp_path: Path) -> None:
             participant_refs=[],
             source_refs=[],
             scope=MemoryScope.owner(),
+            identity=state.capture_identity(),
         )
         assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
         assert [ref.key for ref in item.owner_refs] == kept

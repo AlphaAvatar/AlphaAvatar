@@ -1,6 +1,6 @@
 # Memory 修复：一轮未归属导致整批记忆只留在 context（KD-49）— Claude Code 日志
 
-- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批），第三批基线 `90883e9f`（第二批），第四批基线 `68d78414`（第三批）；日期为 CST。
+- 分支：`dev/v0.6.9`；第一批基线 `b2b4af8b`（KD-49 的登记），第二批基线 `be32fbda`（第一批），第三批基线 `90883e9f`（第二批），第四批基线 `68d78414`（第三批），第五批基线 `352b4588`（第四批之后）；日期为 CST。
 - 依据：用户 2026-11-21 的两次真实对话，记忆全部只写进了 `contexts/`；定位后登记为 [KD-49](../../../bugs-zh.md)，用户决定逐步修复。
 - 范围：第一批只加诊断，并做 Router 侧的改名和删减，不改行为；第二批按用户的方案实现；第三批整理 Engine 的准入，不改行为。改动留在工作区，由用户提交。
 
@@ -11,7 +11,8 @@
 | 第一批：诊断 | 每段关联结束、每轮准入、Memory 整批降级各记一行日志；Router 侧 `actors` 改为 `input_devices`，删掉判定上没人读的字段和从未被读取的 `InteractionAddressing` | 2026-11-21 | `b2b4af8b` | `be32fbda` | 已提交 |
 | 第二批：使用时读取参与者 | Turn 不在准入时固定参与者，`ParticipantRuntime.of_turn()` 在使用时读取；段关联保留整个会话；Memory、Persona 改为使用时读取，profiler 在会话结束时分配 | 2026-11-21 | `be32fbda` | `90883e9f` | 已提交 |
 | 第三批：整理准入 | Engine `_admit_decision` 的重复拒绝分支并为一处，去掉重复的来源检查；先补准入各分支的测试 | 2026-11-22 | `90883e9f` | `68d78414` | 已提交 |
-| 第四批：降级后的 owner | 整批降为 `context` 时保留已验证用户的 owner，没有已验证用户时才归 Avatar | 2026-11-22 | `68d78414` | — | 待审查 |
+| 第四批：降级后的 owner | 整批降为 `context` 时保留已验证用户的 owner，没有已验证用户时才归 Avatar | 2026-11-22 | `68d78414` | `d6fa1034` | 已提交 |
+| 第五批：整理 Memory state | `messages.py` 并入 `state.py`；删掉没有调用方的成员，合并冗余的字段，统一 owner 与 participant 的生成；先补 state 的测试 | 2026-11-22 | `352b4588` | — | 待审查 |
 
 ## 1. 问题
 
@@ -288,3 +289,68 @@
 - 离线全量：按 AGENTS.md 第 19 节的方式运行，936 passed（336.57 s；原 933 加新增 3）。工作区前后对比只多出 `docs/bugs-zh.md` 和这份日志，是测试期间写的，测试没有留下文件。
 - 仓库规范：`ruff check .`、`ruff format --check .`、`check_workspace.py`、`git diff --check`、改动文件的 pre-commit 都通过。
 - 证据：`~/alphaavatar-kd49-check/owners/`（`plugin/swap_build.py`、`mutate.py`、`mutate.txt`）。
+
+## 10. 第五批：整理 Memory state（基线 `352b4588`）
+
+### 10.1 范围
+
+- 用户同意的改动：
+  - 我列出的第 1～12 条；
+  - `messages.py` 并入 `state.py` 并删除，这一条是用户追加的。
+- 不改行为，只有一处收紧：构造 context 时不再接受用户类的 ref，原来是静默过滤掉。生产代码从不这样传，所以实际行为不变。
+
+### 10.2 先补测试
+
+- 改动前，用 `sys.monitoring` 记录了这几组测试执行到的 `state.py` 和 `messages.py` 行（438 passed）：Memory、Persona、Router 等插件，`avatar-agents/tests`，以及 Host 的两个参与者用例。
+- 以下分支此前没有任何测试执行到：
+  - `add_messages`：全部重放校验和冲突校验；
+  - `add_turn`：同一轮重复加入、ID 被另一输入重用、属于别的 context 的轮；
+  - `capture_identity`：没有参与者的分支；
+  - `MemoryState.discard`；
+  - `messages.py`：全部投影规则。
+- 新增 `avatar-plugins/perception/avatar-plugins-memory/tests/test_memory_state.py`，前 4 个用例先在旧代码上通过：
+
+| 测试 | 覆盖 |
+|---|---|
+| `test_a_record_is_kept_once_and_a_replay_is_accepted_only_as_it_was` | 用户消息不记为记录；原样重放只保留一次；下列情况各自报错，且一批要么全收要么全不收：内容变了、来源 Turn 变了、身份依据变了、结果与调用的工具名不符、同一调用的第二条结果、ID 与已提交输入相同、身份依据类型不对 |
+| `test_a_turn_is_kept_once_and_its_identities_never_name_another_input` | 同一轮重复加入只保留一次；下列情况各自报错：轮 ID 被另一输入重用、输入 ID 已记录（作为轮，或作为记录）、属于别的 context、不是快照 |
+| `test_records_are_whom_they_were_admitted_for_and_turns_whom_they_are_from` | 记录按准入时的身份依据；没有依据的记录按它那一轮的参与者；`SYSTEM` 轮不归任何人；不传消息时取 context 的参与者。更正身份后，带依据的记录变为未归属，那一轮读作更正后的用户 |
+| `test_memory_state_keeps_each_items_latest_revision_up_to_its_limit_and_forgets_discarded` | 同一条只留最新版本；再次加入会重新激活；超过上限时淘汰最早激活的；按 context 过滤；`discard` |
+| `test_a_contexts_users_are_its_participants_never_fixed_refs` | 新的约束：固定的 owner 或 participant 里有用户时报错；没有 owner 时报错 |
+
+- 写测试时更正了自己的一处预期：已有的条目再次加入，即使是旧版本，也会按"激活时间"重新排到最后（代码注释原本就是这样写的）。
+
+### 10.3 改动
+
+| 位置 | 改动 |
+|---|---|
+| `messages.py` → `state.py` | `memory_message` 原样移入，改为私有的 `_memory_message`；`same_message` 并入 `add_messages` 里的比较；`messages.py` 删除 |
+| 删除 | `MemoryState.all_items`、`render`、`replace`：没有调用方。`MemoryContextState.messages`：只有两个测试在读，改用 `messages_between`。`session_id`、`owner_refs`、`participant_refs` 三个属性：只有类内部在用 |
+| 字段 | `_turn_ids` 与 `_turns` 重复，删掉；`_turn_input_ids` 的值从来没被读过，改为集合 `_input_ids`；`_message_ids`、`_message_turn_ids`、`_message_bases` 合成 `_records`（消息、Turn、身份依据各一份），重放时比较同一条记录 |
+| owner 与 participant | 生产代码只用 Avatar 打开 context，用户一律来自参与者。所以构造时拒绝用户类的 ref，`__init__` 里两次赋值的过滤和 `capture_identity` 里"去掉固定用户"的两段都删掉，由私有的 `_refs(users)` 统一生成并复制 |
+| `MemoryState` | `_buckets` 不再是构造参数（`init=False`），也不再预先列出四种类型；`get` 必须给出 `memory_type`，因为不给类型的调用只来自已删掉的两个成员 |
+| 规范 | 两个类补了 docstring，`__init__` 按用途分组、每组一行注释 |
+| `processors/base.py` | `build_memory_items` 和 `render_context_content` 的 `identity` 改为必填。原来在缺省时调用 `capture_identity()` 兜底，所有生产调用方都会传入，只有上一批的一个测试走兜底，已改为显式传入 |
+
+- `state.py` 加上原来的 `messages.py` 共 531 行，现在 456 行。
+
+### 10.4 验证
+
+- **变异测试**：从仓库外把变异版本的方法换到这两个类上运行，不改工作区。
+  - 没有变异的对照组 50 passed。
+  - 19 个变异全部被发现：
+    - `_refs` 的两个；
+    - 不传消息时没有参与者；
+    - 记录忽略身份依据、忽略所属的轮；
+    - `SYSTEM` 轮被读取；
+    - 重放的内容校验、来源校验；
+    - 与输入 ID 冲突的检查；
+    - 工具名检查、工具记录重复检查；
+    - 身份依据的类型检查；
+    - 轮 ID 重用检查、与记录 ID 冲突的检查；
+    - 不记下输入 ID；
+    - 接受固定的用户 ref；
+    - `MemoryState` 的去重、按 context 过滤、`discard`。
+- **离线全量**：按 AGENTS.md 第 19 节的方式运行，941 passed（337.43 s；原 936 加新增 5），测试前后工作区一致。
+- **没有覆盖的**：`_memory_message` 的投影规则原样移入，没有补测试。这些规则包括：控制项和 provider 项、系统与用户消息、运行时上下文工具不进记忆；推理内容被去掉；媒体替换为占位文本；各种类型校验。
+- **证据**：`~/alphaavatar-kd49-check/state/`（`lines-before.json`、`plugin/`、`mutate.py`、`mutate.txt`、`full.txt`）。

@@ -98,9 +98,8 @@ class MemoryProcessor(MemoryProcessorBase):
         source_refs: list[MemorySourceRef],
         scope: MemoryScope,
         extra_data: dict[str, Any] | None = None,
-        identity: MemoryIdentitySnapshot | None = None,
+        identity: MemoryIdentitySnapshot,
     ) -> list[MemoryItem]:
-        identity = identity or state.capture_identity()
         users = self.memory_runtime.accepted_users(identity.participants, current=False)
         unattributed = (
             identity.unattributed
@@ -190,10 +189,9 @@ class MemoryProcessor(MemoryProcessorBase):
         state: MemoryContextState,
         messages: list[MemoryContextItem],
         *,
-        identity: MemoryIdentitySnapshot | None = None,
+        identity: MemoryIdentitySnapshot,
     ) -> str:
         of_turn = self.runtime.participants.of_turn
-        identity = identity or state.capture_identity(messages, of_turn=of_turn)
         content = MemoryPluginsTemplate.apply_update_template(
             messages, state.cache_type, of_turn=of_turn
         )
