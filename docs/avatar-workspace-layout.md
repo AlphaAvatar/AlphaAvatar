@@ -136,8 +136,10 @@ Do not rename folders to make them match a display name.
 For the default local storage, a feature index can live at
 `data/indexes/memory/lancedb/`. Other features can use their own namespaces below
 `indexes/`. Beside each table of text vectors, `<table>.embedding.json` records the embedding
-model that made them (a Qdrant collection's, in `<collection>__embedding`): an index of another
-model is refused rather than mixed. Back it up with its table. A custom database path or an external database can store the corresponding
+model that made them (a Qdrant collection's, in `<collection>__embedding`, marked as
+AlphaAvatar's by its one named vector): an index of another model, or of another vector size, is
+refused rather than mixed, and a file or collection of the record's name that is not one is left
+as it is. Back the record up with its table. A custom database path or an external database can store the corresponding
 data elsewhere. The layout is a guide to locations, not a list of identical folders
 that every installation must have.
 

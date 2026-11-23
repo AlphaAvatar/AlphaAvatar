@@ -557,6 +557,7 @@ class LanceDBRunner(InferenceRunner):
             raise ValueError("MCP embedding.provider and embedding.model are required")
 
         vdb_config = {key: value for key, value in config.items() if key != "embedding"}
+        named = vdb_config.get("client_path") or None  # As the settings name it, if they do.
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
                 WorkspacePaths.from_root(self.launch.workspace_root)
@@ -581,6 +582,7 @@ class LanceDBRunner(InferenceRunner):
             EmbeddingSpace.configured(embedding, dimension),
             setting="tools.mcp.vdb_config.collection_name",
             ensure=lambda: self._ensure_collection(self._collection_name, dimension),
+            client_path=named,
         )
         self._loop_thread = AsyncLoopThread(name="mcp-loop")
         try:

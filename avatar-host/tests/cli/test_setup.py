@@ -1066,6 +1066,13 @@ def test_a_bundle_naming_another_embedding_for_the_vectors_its_avatar_keeps_is_r
             memory.read_text().replace("collection_name: memory", "collection_name: memory_google")
         )
         assert main(["setup", "mine"]) == 0
+        # The same name in a Qdrant server: another store, not the workspace's table.
+        qdrant = memory.read_text().replace(
+            "collection_name: memory_google", "collection_name: memory"
+        )
+        memory.write_text(qdrant.replace("  url: null", "  url: ${oc.env:QDRANT_URL}"))
+        with mock.patch.dict(os.environ, {"QDRANT_URL": "https://vectors.invalid:6333"}):
+            assert main(["setup", "mine"]) == 0
     assert json.loads((store / "memory.embedding.json").read_text()) == record
 
     # A new bundle for the same Avatar, its embeddings from Google: refused before credentials.

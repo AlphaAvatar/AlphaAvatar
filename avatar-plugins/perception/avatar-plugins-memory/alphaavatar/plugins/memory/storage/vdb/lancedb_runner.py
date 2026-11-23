@@ -543,6 +543,7 @@ class LanceDBRunner(InferenceRunner):
             raise ValueError("collection_name is required in memory.vdb_config")
 
         vdb_config = self._get_vdb_config(config)
+        named = vdb_config.get("client_path") or None  # As the settings name it, if they do.
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
                 WorkspacePaths.from_root(self.launch.workspace_root)
@@ -560,6 +561,7 @@ class LanceDBRunner(InferenceRunner):
             EmbeddingSpace.configured(config.get("embedding") or {}, embedding_dim),
             setting="memory.vdb_config.collection_name",
             ensure=lambda: self._ensure_collection(self._collection_name, embedding_dim),
+            client_path=named,
         )
         self._memory_table = self._client.open_table(self._collection_name)
         self._validate_collection_schema()

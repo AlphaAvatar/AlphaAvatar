@@ -60,27 +60,70 @@ def get_client(
     return client
 
 
-def claim_space(client, collection: str, space, *, setting: str, ensure) -> None:
-    """Open ``collection`` for vectors of ``space``, as ``space.claim`` checks and records it:
-    the record one point of a collection beside it, ``<collection>__embedding``, as a
-    collection keeps no metadata of its own."""
-    from qdrant_client.models import Distance, PointStruct, VectorParams
+LAYOUT = "alphaavatar_embedding_space"  # The record collection's one vector, named as its mark.
 
-    from .space import claim
+
+def claim_space(client, collection: str, space, *, setting: str, ensure) -> None:
+    """Open ``collection`` for vectors of ``space``, as ``space.claim`` checks and records it.
+
+    The record is a collection beside it, ``<collection>__embedding``, as a collection keeps no
+    metadata of its own: created with one vector named ``LAYOUT``, a mark it has from its
+    creation on, and a point per recording, its ID this opening's own, so a Host never
+    overwrites another's record, nor takes one back but its own. One made before marks, its
+    single record at point 0, is read and never written; anything else of the name is refused,
+    and nothing is written to it or beside it.
+    """
+    from uuid import uuid4
+
+    from qdrant_client.models import Distance, PointIdsList, PointStruct, VectorParams
+
+    from .space import EmbeddingSpaceError, claim, is_record, not_a_record
 
     record = f"{collection}__embedding"
+    label = f"Qdrant collection {collection!r}"
+    own = str(uuid4())  # The point this opening records, if it records one.
 
-    def read():
-        if not client.collection_exists(record):
-            return None
-        found = client.retrieve(record, ids=[0], with_payload=True)
-        return dict(found[0].payload) if found else None
+    def layout() -> str | None:
+        vectors = client.get_collection(record).config.params.vectors
+        if isinstance(vectors, dict):
+            params = vectors.get(LAYOUT)
+            marked = set(vectors) == {LAYOUT} and params.size == 1
+            return "marked" if marked and params.distance == Distance.DOT else None
+        earlier = vectors.size == 1 and vectors.distance == Distance.DOT
+        return "earlier" if earlier else None
 
-    def write(found) -> None:
+    def records() -> list[dict]:
         if not client.collection_exists(record):
-            params = VectorParams(size=1, distance=Distance.DOT)
-            client.create_collection(collection_name=record, vectors_config=params)
-        client.upsert(record, points=[PointStruct(id=0, vector=[1.0], payload=found)])
+            return []
+        kind = layout()
+        points, more = client.scroll(record, limit=64, with_payload=True)
+        found = [dict(point.payload or {}) for point in points]
+        if kind == "marked" and more is None:
+            ours = all(is_record(item, store=collection, marked=True) for item in found)
+        elif kind == "earlier" and more is None:
+            ours = [point.id for point in points] == [0]
+            ours = ours and is_record(found[0], store=collection, marked=False)
+        else:
+            ours = False
+        if not ours:
+            raise EmbeddingSpaceError(not_a_record(f"Qdrant collection {record!r}", label))
+        return found
+
+    def register(found: dict) -> None:
+        if not client.collection_exists(record):
+            params = {LAYOUT: VectorParams(size=1, distance=Distance.DOT)}
+            try:
+                client.create_collection(collection_name=record, vectors_config=params)
+            except Exception:
+                if not client.collection_exists(record):
+                    raise  # Not made meanwhile by another Host: a failure of its own.
+        if layout() != "marked":
+            raise EmbeddingSpaceError(not_a_record(f"Qdrant collection {record!r}", label))
+        point = PointStruct(id=own, vector={LAYOUT: [1.0]}, payload=found)
+        client.upsert(record, points=[point], wait=True)
+
+    def withdraw(found: dict) -> None:
+        client.delete(record, points_selector=PointIdsList(points=[own]), wait=True)
 
     def size() -> int | None:
         vectors = client.get_collection(collection).config.params.vectors
@@ -89,12 +132,13 @@ def claim_space(client, collection: str, space, *, setting: str, ensure) -> None
     claim(
         collection,
         space,
-        label=f"Qdrant collection {collection!r}",
+        label=label,
         setting=setting,
         exists=lambda: client.collection_exists(collection),
-        ensure=ensure,
-        read=read,
-        write=write,
-        count=lambda: client.count(collection, exact=True).count,
         size=size,
+        count=lambda: client.count(collection, exact=True).count,
+        records=records,
+        register=register,
+        withdraw=withdraw,
+        ensure=ensure,
     )

@@ -377,6 +377,7 @@ class LanceDBRunner(InferenceRunner):
 
         # init client
         vdb_config = self._get_vdb_config(config)
+        named = vdb_config.get("client_path") or None  # As the settings name it, if they do.
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
                 WorkspacePaths.from_root(self.launch.workspace_root)
@@ -410,6 +411,7 @@ class LanceDBRunner(InferenceRunner):
             EmbeddingSpace.configured(config.get("embedding") or {}, profiler_dim),
             setting="persona.vdb_config.profiler_collection_name",
             ensure=lambda: self._ensure_table(self._profiler_collection_name, profiler_seed),
+            client_path=named,
         )
         self._profiler_table = self._client.open_table(self._profiler_collection_name)
 

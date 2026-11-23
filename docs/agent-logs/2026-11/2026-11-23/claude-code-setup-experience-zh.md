@@ -21,7 +21,7 @@
 | 2 | 统一的配置决策：能力开关、按组件选 Provider 和模型、TTS 兼容性、依赖、凭据、摘要；保留注释的写入 | 已提交（`b14b5894`）；审查发现的两处已修复（§4.1、§4.2） |
 | 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
 | 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 已提交（`01200003`），通过审查 |
-| 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 完成，待审查（§6） |
+| 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 已提交（`e300619e`）；审查发现的四处向量空间记录问题已修复，候选包已重建并复验，待审查（§7） |
 
 ## 1. 批次 0：demo.yaml
 
@@ -698,3 +698,184 @@ alphaavatar setup --artifacts ~/alphaavatar-candidates/0.6.8-012000034544-dirty.
   - 未发布构建上，`config init` 的 `Next` 只给出 `alphaavatar setup <bundle>`，没有带 `--artifacts`，不过 Setup 会在开始时就拒绝并说明用法；
   - 场景 1 中"不读启动文件的 shell"第一次检查的结果无法复现；
   - LanceDB 的 `table_names()` 弃用提示。
+
+## 7. 第五批的审查修复：向量空间记录（基线 `e300619e`）
+
+审查指出批次 5 的向量空间保护有四处问题（第 1 项为 P1，第 2–4 项为 P2）。本轮只修这四处，VAD、寻址策略、默认 Embedding 和已有配置模板的行为不变。四处都登记在 `docs/bugs-zh.md`（KD-58 至 KD-61，已修复）。
+
+### 7.1 基线
+
+- `e300619e` 的 Quality（45220962724）和 Linux package（45220963046）都是 success。
+- 先写回归，在 `e300619e` 的代码上复现，再修复。用法：把推送版本的 `space.py`、`lancedb.py`、`qdrant.py` 放在仓库外，由 pytest 插件替换导入（§7.7）。
+
+### 7.2 记录的归属（第 1 项，P1，KD-58）
+
+- 问题：Qdrant 只凭名称就把 `<collection>__embedding` 当成自己的记录，并写入 point 0，用户同名集合里的数据会被覆盖。
+- 修复（`agents/utils/vdb/qdrant.py`）：
+  - 记录集合在创建时带唯一的命名向量 `alphaavatar_embedding_space`（1 维，DOT）。这个标记从创建起就存在，无法在事后补上；
+  - 集合里的每个点都必须是完整的、带标记的记录（字段集合完全一致，见 `space.is_record`）；
+  - `e300619e` 写的记录集合（无名 1 维 DOT 向量，只有 point 0，记录不带标记）只读，从不写入；
+  - 其他同名集合都拒绝。拒绝发生在创建或写入任何东西之前，主集合也不会被创建。报错写明该集合没有被改动，建议移走它或给存储换一个名字。
+- LanceDB 的 `<table>.embedding.json` 同样要求是完整记录，否则拒绝，文件保持原样。
+
+### 7.3 空表也比较维度（第 2 项，P2，KD-59）
+
+- 问题：没有记录的旧表只在非空时比较实际维度；用 8 维配置打开 4 维的空表，会写下错误的记录，之后原来的 4 维配置也被拒绝。
+- 修复（`space.claim()`）：只要表或集合已存在，不论是否为空，都先比较实际维度；不符时在写记录之前拒绝，原配置照常可以打开。有记录时，实际维度也必须与之相符。不提供自动删除或重建。
+
+### 7.4 Setup 预检只看会打开的存储（第 3 项，P2，KD-60）
+
+- 问题：`recorded_conflicts()` 只按设置路径和集合名匹配记录，改用 Qdrant 或换到新的 `client_path` 后，仍会因为旧 LanceDB 表的记录被拒绝。
+- 修复：按 runner 选择存储的规则找到这次会打开的存储，只核对它：
+  - 后端用 `vdb_backend()` 判断，Qdrant 的不看；
+  - 目录：配置了 `client_path` 时就是这个目录；没有配置时，是 Avatar 自己的 `data/indexes/` 之下、记录里也没有 `client_path` 的那一个；
+  - 名称一致，插件已选且未关闭。
+- 记录新增 `client_path` 字段（设置里写的目录，没写时为 null）。`e300619e` 写的记录没有这个字段，在默认目录里照样核对。
+- 显式目录位于 Avatar 目录之内时，同一份记录会被扫到两次，现在只计一次。
+- 预检仍然只读文件，不需要 LanceDB，所以基础包上可以运行（§7.9）。Qdrant 只在启动时检查，这一点不变。
+
+### 7.5 并发首次登记（第 4 项，P2，KD-61）
+
+- 问题：检查、创建和登记分开执行。
+  - Qdrant：两个 Host 同时登记同一模型时，一方报伴随集合 already exists；伴随集合为空时，两个不同模型可以同时登记成功，后写的覆盖先写的；
+  - LanceDB：有同样的窗口，后写的覆盖先写的，或者并发建表失败。
+- 设计：仲裁放在存储本身，不用进程内的锁（进程锁管不到另一台 Host）。
+  - 登记只新增，不覆盖：
+    - LanceDB：记录先完整写到旁边的临时文件，再用 `os.link` 放到位，只有第一个能成功；文件系统不支持硬链接时，改用 `open("x")` 独占创建；
+    - Qdrant：每次登记写一个属于这次打开的点（uuid4）。撤回时只删自己的点，已经据此打开存储的 Host 的记录不会被别人撤掉。
+  - 登记后重新读取全部记录，发现别的模型就撤回自己的记录并拒绝。所以不论交错顺序如何，两个模型都不可能同时拿到使用权；同一模型的多条记录表示同一个空间，安全复用。
+  - 记录集合或主存储被别的 Host 同时创建时，容忍一次创建失败，再确认它已经存在。
+- 已知的代价：两个不同模型恰好同时首次登记同一个存储时，可能双方都撤回、都拒绝（见 `test_hosts_registering_into_an_empty_record_at_once_never_both_take_it`）。这时没有任何向量被写入，重新启动即可。
+
+### 7.6 兼容与限制
+
+- `e300619e` 写的记录（LanceDB 的 JSON、Qdrant 的 point 0）：读取、遵守，从不改写；新记录才带标记和 `client_path`。
+- 本版之前没有记录的存储：维度相符时只能当作配置的模型接收，记为 `assumed` 并警告。这一点无法核实，仍是明确的限制。
+- 轮换凭据、key 的变量名或服务器地址都不算换模型。
+- 跨 Host 的 Qdrant 仲裁只在 qdrant-client 的本地内存模式下、用受控交错验证过，没有对真实 Qdrant 服务端运行（本次会话里运行本地 Qdrant 服务端的操作未获许可）。正确性依赖服务端让 `wait=True` 的写入对随后的读取可见：单节点成立；多副本集群取决于它的一致性设置，没有验证。
+- LanceDB 的仲裁依赖同一文件系统上 `link`/`O_EXCL` 的原子性；网络文件系统上的行为没有验证。
+
+### 7.7 测试
+
+- `avatar-agents/tests/utils/test_vdb_space.py`：从 6 个函数增加到 17 个（22 个用例），都用真实的临时 LanceDB 和内存 Qdrant：
+  - 第 1 项：同名但不属于自己的集合被拒绝，其中的点、payload、向量都不变，主集合没有被创建；
+  - 第 2 项：空的旧表或集合维度不符时拒绝（LanceDB、Qdrant 各一），什么都没记录，原维度照常打开；
+  - 第 3 项：预检只核对会打开的存储，Qdrant、新的 `client_path`、Avatar 目录之内的显式目录都覆盖；
+  - 第 4 项：受控交错，不靠时序运气。`Interleaved` 包住真实客户端，让两个线程在指定方法的第 n 次调用之前或之后，于同一个 barrier 会合：
+    - 两个 Host 都读到"未登记"之后才登记：同一模型都能打开；两个模型至多一个打开，剩下的记录就是打开者的；
+    - 空的记录集合、两个模型，都登记完才各自重读：都拒绝，都撤回；
+    - LanceDB 的同一组交错；
+    - 有向量的旧集合、同一模型，同时创建记录集合：都打开；
+    - 读到"未登记"之后另一个 Host 才登记（LanceDB、Qdrant 各一）：不覆盖，后来者拒绝；
+    - 撤回只删自己的点；
+  - `e300619e` 写的记录被遵守，而且逐字节不变。
+- `avatar-host/tests/cli/test_setup.py` 的 Embedding 预检测试增加：同名集合在 Qdrant 上不再被拒绝。
+- 在推送版本上：12 个审查用例失败。Qdrant 同一模型、在主集合读取处会合的那个用例在旧代码上通过，旧代码在这一点上的失败（并发创建记录集合）由"有向量的旧集合"用例复现。另有一个旧测试失败，因为它预期的记录字段增加了标记和 `client_path`。Setup 的新增情形在推送版本的 `space.py` 上失败。
+- 变异 10 个，全部被发现：
+  - 任何同名集合都当作记录；
+  - 空表不比较维度；
+  - 预检不看后端；
+  - 预检不看目录；
+  - 登记后不重读；
+  - Qdrant 撤回时不删除；
+  - LanceDB 记录用 `os.replace` 覆盖；
+  - 主存储被并发创建时直接失败；
+  - 已有记录时仍然登记；
+  - 所有 Host 共用按空间计算的点 ID（第一版的设计，撤回会删掉别人的记录）。
+
+  第七个起初没有被发现，为此补了"读到未登记之后另一个 Host 才登记"的两个测试；第十个是在复核时发现的设计缺陷，改为每次打开自己的点 ID 并补了测试。
+
+### 7.8 新候选包
+
+| 项 | 内容 |
+|---|---|
+| 源码 | HEAD `e300619e141a889efe7c2e9f157a17656afefaae` 加本轮未提交的改动：11 个跟踪文件，没有未跟踪文件，`git diff` 的 sha256 前缀 `c794ebec55449211`。构建前后核对过，diff 与构建时一致 |
+| 构建 | `packaging/linux/build.sh --allow-dirty --max-glibc 2.32`；uv 0.10.0（仓库外的私有 venv）、Python 3.13.12；构建机 Alibaba Cloud Linux 3（glibc 2.32） |
+| Build ID | `0.6.8-e300619e141a-dirty.20261123173515`；manifest 中 `release` 为 null，`commit` 为上述 HEAD，uv.lock sha256 `6e2c34f7…`（与 CI 相同） |
+| 内容核对 | 包内基础环境的 `space.py`、`lancedb.py`、`qdrant.py`，以及 Memory、Persona、MCP wheel 中的三个 LanceDB runner，都与工作区逐字节相同 |
+| 位置 | `~/alphaavatar-candidates/0.6.8-e300619e141a-dirty.20261123173515/`：基础包、`.sha256`、12 个 wheel、manifest、`install.sh`（与工作区逐字节相同）、`SHA256SUMS`；`acceptance/` 下是验收屏幕、结果、源码 diff 和构建日志。§6.5 的旧候选包不再作为验收包 |
+| SHA-256 | 包 `f6d14ea74a60f21b0e10e229fb76ecc88e172d4fcc4f99482ee9ce3e9393a058`；manifest `5404e5d2…83ce`；install.sh `02ff07ac…98`；SHA256SUMS `1caa6ad1…8499`；`sha256sum -c SHA256SUMS` 全部 OK |
+
+### 7.9 干净环境复验
+
+环境与 §6.6 相同（`ubuntu-base-24.04.5`、glibc 2.39、bubblewrap 0.4.0、普通用户、没有 python/node/uv/编译器），每个场景用新的 rootfs 副本。
+
+- 场景 1：安装器接续真实 Setup，用 `cat install.sh | bash -s -- --file …` 运行。
+  - 在 Provider 列表处按 Ctrl+C：Setup 退出码 130，安装器报 "Setup did not finish (exit 130); AlphaAvatar stays installed"，自身退出码 0；
+  - 再次安装：方向键上下移动、在 Memory 列表输入 `open` 筛选，其余接受默认，凭据都是虚构的。105 个包 / 514 MB，`PASS · 8 runners`，74 秒，`OK    Setup done`；
+  - 两次的终端设置都恢复，光标显示，没有残留进程；
+  - 之后：`bash -l`、`bash -i` 都能找到命令，不读启动文件的 bash 找不到；`config check avatar` 通过；`doctor avatar --no-metrics` 退出码 0；`config init ref` 通过。
+- 场景 2：代表性分支，在同一个 root 里真实安装。
+
+| Bundle | 结果 |
+|---|---|
+| own（ENV 关闭、Qdrant、自建服务器） | 105 个包 / 427 MB，`PASS · 8 runners` |
+| mixed（Voice 关闭、Anthropic、OpenRouter、Google Embedding） | 112 个包 / 521 MB，`PASS · 2 runners` |
+| speech（realtime STT、`tts-1`） | 复用环境，`PASS · 8 runners` |
+| voiceai | 复用环境，`PASS · 8 runners` |
+
+  四次的终端设置都恢复，没有残留进程。
+- YAML 检查，范围是 7 个 Bundle：场景 1 的 `avatar`、`ref`，场景 2 的四个，场景 4 的 `small`。
+  - 注释行和空行都按原顺序保留，缩进每层两个空格，没有出现任何凭据值；
+  - 变化只出现在所选的设置上；`avatar` 唯一的不同是场景 5 手改的语速，被保留。
+- 场景 3：只有基础包。`config init` 写出 12 个 profile，与包内模板完全相同；`config check` 退出码 2，逐个列出缺失的插件和 `alphaavatar setup all`；`Next` 给出 `alphaavatar setup --artifacts /srv/cand`。
+- 场景 6（新增）：基础包上的 Setup 预检，在场景 3 的 root 里进行。这里没有任何插件，也没有 LanceDB（`import lancedb` 失败）。先在 Avatar 默认的索引目录写一份 openai `text-embedding-3-small` 的记录，再运行 `setup all --plan`：
+  - Embedding 相同：给出计划，退出码 0；
+  - 改为 Google：退出码 1，报"holds vectors of openai text-embedding-3-small"；
+  - 同名集合改用 Qdrant：给出计划；
+  - 用 `client_path` 指定另一个目录：给出计划；
+  - 没有安装任何东西；第二轮运行前后 `~/.local` 下的文件完全一致。第一轮在基础运行时里写了两个标准库 `.pyc`，这是已有的打包问题，登记为 O-35，与本轮无关。第一轮另外因为我的脚本用错了 Python 路径而重跑。
+- 场景 5（新增）：已有配置的保护，在场景 1 的 root 里、Setup 之后进行。
+  - 在终端里对已有的 `avatar` 再运行 Setup：只问是否安装并启用。configs 和 settings 下的全部文件（包括凭据文件和 `settings.yaml`）哈希都不变；
+  - 手改 `voice.yaml` 的语速后，不带终端再运行 Setup：通过，手改的内容逐字节保留；
+  - 用包内的代码在 Avatar 的 Memory 表旁写下记录（带标记，`client_path` 为 null），再把 Bundle 的 Embedding 改为 Google：Setup 退出码 1，"Setup failed; nothing was enabled"，所有文件不变；
+  - 同名集合改用 Qdrant：不再拒绝，安装 Qdrant 依赖（112 个包 / 521 MB），`PASS · 8 runners`；之后 YAML 改回原样；
+  - 用包内的代码复核存储层：
+    - Qdrant 同名集合里有用户数据：拒绝，数据不变，主集合没有被创建；
+    - 维度不同的空集合、空表（Qdrant、LanceDB 各一）：拒绝，什么都没记录，原维度照常打开；
+    - LanceDB 读到"未登记"之后另一个 Host 才登记：拒绝，记录不变。
+- 场景 4：升级与 cleanup。
+  - 旧版是 CI 为 `e300619e` 构建的包：`0.6.8-e300619e141a`，Linux package 运行 45220963046，artifact 14841461318，`SHA256SUMS` 全部 OK；新版是 §7.8 的候选包。
+  - 用旧版自己的 `install.sh` 和 Setup 建 Bundle `small`（Voice 关闭、本机模型关闭），再用旧版的代码在 Memory 表旁写下记录：不带标记，也没有 `client_path`，正是旧版的格式。另写入 `records.sqlite3` 和用户 profile，并记录所有应用数据文件的哈希。
+
+| 步骤 | 结果 |
+|---|---|
+| `upgrade --sha256 000…` | 退出码 1，"does not match its SHA-256"，报 "0.6.8-e300619e141a stays current"；current、versions、envs 不变 |
+| 准备失败：在候选包第一次成功安装之前进行，包和 `.sha256` 放在没有 wheel 的目录 | 计划 77 个包 / 188 MB；取本构建的第一个自带 wheel 时失败（"No such file or directory"），报 "stays current"；current、versions、envs 不变；`config check small` 通过 |
+| `upgrade --file`（包旁有 wheel） | 77 个包 / 188 MB，`PASS · 2 runners`；current 切到新环境，旧版保留到 cleanup；`config check` 通过 |
+| 旧版写的记录 | 候选包按同一模型打开；换成 Google 时存储层拒绝，Setup 也在安装之前拒绝；记录内容不变 |
+| `cleanup --dry-run` | 预计释放 795 MB；`~/.local` 下所有文件的大小和修改时间前后一致 |
+| `cleanup` | 只删除旧环境（577 MB）和旧基础包（218 MB）；current 保留；`config check` 通过；应用数据（包括旧版的记录和 LanceDB 表）的哈希与升级前一致 |
+
+### 7.10 验证
+
+- 相关测试：Agents、Memory、Persona、tools 插件、Host 的 CLI 和 setup，648 passed。
+- 离线全量（机器空闲时）：1155 passed，221 warnings，378 s；运行前后，未跟踪和被忽略的文件一致。
+- 仓库规范：`uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`（797 个文件）、`bash -n`、`git diff --check`、对改动文件的 pre-commit 都通过，pre-commit 没有改动文件。
+- CI：基线 `e300619e` 都是 success；本轮的改动尚未提交，没有对应的 CI。
+
+### 7.11 给用户的候选包命令
+
+未发布的候选包要用 `--file` 安装，Setup 需要 `--artifacts`：
+
+```bash
+cd ~/alphaavatar-candidates/0.6.8-e300619e141a-dirty.20261123173515
+sha256sum -c SHA256SUMS
+bash install.sh --file ./alphaavatar-0.6.8-e300619e141a-dirty.20261123173515-linux-x86_64.tar.gz
+# 在终端里回答 Y：安装器提供的 setup 会自动带上 --artifacts（本目录）
+# 以后，或者另开终端：
+alphaavatar setup --artifacts ~/alphaavatar-candidates/0.6.8-e300619e141a-dirty.20261123173515
+# 已有安装时，改用升级：
+alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-e300619e141a-dirty.20261123173515/alphaavatar-0.6.8-e300619e141a-dirty.20261123173515-linux-x86_64.tar.gz
+```
+
+- 升级前请先停止 `alphaavatar start`。要与现有安装隔离，可以加 `--prefix DIR --bin-dir DIR`，并设置另一个 `ALPHAAVATAR_HOME`。
+- 正式 Release 发布后的默认入口仍是 `curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash`，不需要 `--file` 或 `--artifacts`。
+
+### 7.12 未验证与剩余
+
+- 本轮代码对应的 CI：待用户提交推送后核对；候选包是本地构建的，不是 CI 产物。
+- Qdrant 的跨 Host 仲裁没有对真实服务端验证，多副本集群的一致性设置也没有验证（§7.6）。LanceDB 的仲裁在网络文件系统上没有验证。
+- 没有调用任何模型或远程服务，没有运行 Doctor 的运行时诊断，没有产生费用。Qdrant 和自建服务器都只是配置。
+- §6.10 列出的限制不变：本地 llama-cpp wheel 需要 glibc ≥ 2.32；干净环境是 bwrap 运行的 Ubuntu 用户态，不是完整的虚拟机；Setup 写出的 profile 头部注释；`config init` 的 `Next` 不带 `--artifacts`；LanceDB 的弃用提示。
+- 新登记、未修复：O-35，基础包内标准库的 `.pyc` 过期，安装后首次导入时会重新编译并写回基础包目录。
