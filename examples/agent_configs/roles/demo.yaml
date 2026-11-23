@@ -43,6 +43,14 @@ loop:
       provider: openai
       model: gpt-5.6-luna
       temperature: null
+    reasoning:
+      default_effort: none
+      supported_efforts: [none, low, medium, high, xhigh, max]
+      # Used only when a trusted caller supplies query_difficulty; no classifier is installed.
+      difficulty_efforts:
+        simple: none
+        moderate: low
+        complex: medium
     # Keep the configured model identifier; availability/credentials are deployment-specific.
     # Enabled plugins grant their capabilities to this deployment's Runs.
     # Per-capability enabled: false denies access; approval_required: true needs an authorizer.
@@ -187,7 +195,7 @@ memory:
           mode: session_merge
           resolve_superseded_items: null
           item_ops: [add]
-          candidate_source: consolidated_lookup
+          candidate_source: union
           similarity_threshold: 0.4
           max_candidates_per_item: 5
           timeout: 30.0
@@ -281,3 +289,27 @@ tools:
           ecosystem, allowing you to search documentation, explore GitHub code
           across livekit and livekit-examples repositories, retrieve package
           changelogs, and browse Python Agents SDK examples—all in one place.
+
+
+# ============================================================
+# 6. Host & RTC Access
+# ============================================================
+
+host:
+  rtc:
+    backend: livekit
+    init_config:
+      connection_mode: dispatch
+      # Dispatch uses avatar.name; the assignment supplies the room and token.
+
+  execution:
+    on_session_end: finish_execution
+    # Finish affected executions before reconnecting for new dispatch jobs.
+    on_control_loss: finish_execution
+
+  log:
+    conversation:
+      enabled: true
+      content: dev
+      max_chars: 2048
+      file_content: false
