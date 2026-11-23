@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
 VectorStore = Literal["lancedb", "qdrant"]
 OPENAI_KEY = "OPENAI_API_KEY"
+GOOGLE_KEY = "GOOGLE_API_KEY"  # ENV memory's Gemini, on in the reference configuration.
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
@@ -276,6 +277,7 @@ def credentials(selection: Selection) -> tuple[Credential, ...]:
         servers.append(selection.speech.url)
     for name, url in {server_key(url): url for url in servers}.items():
         found.append(Credential(name, f"your server {url}; any text if it needs none"))
+    found.append(Credential(GOOGLE_KEY, "ENV memory, from Google's Gemini"))
     found += [
         Credential("LIVEKIT_URL", "the LiveKit server sessions use", secret=False),
         Credential("LIVEKIT_API_KEY", "LiveKit"),
@@ -317,6 +319,7 @@ def capabilities(selection: Selection) -> tuple[str, ...]:
     else:
         found.append("no other models on this machine")
     found.append(f"memory and persona: vectors in {store[selection.vector_store]}")
+    found.append("ENV memory: memories from the session's audio and video, by Google's Gemini")
     return tuple(found)
 
 

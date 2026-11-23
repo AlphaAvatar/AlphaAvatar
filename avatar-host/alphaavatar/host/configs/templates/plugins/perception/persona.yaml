@@ -1,0 +1,59 @@
+plugin: default
+
+vdb_config:
+  profiler_collection_name: persona_profiler
+  speaker_collection_name: persona_speaker
+  face_collection_name: persona_face
+  url: null  # null: LanceDB in the Avatar workspace; a Qdrant URL moves the vectors there.
+  embedding:
+    provider: openai
+    model: text-embedding-3-small
+
+init_config:
+  profiler:
+    enabled: true
+
+    provider:
+      profile_delta_task: persona.profile_delta
+      gateway:
+        trace:
+          enabled: true
+          save_prompt: true
+          save_raw_response: false
+          max_pending: 256
+
+        tasks:
+          persona.profile_delta:
+            kind: llm
+            backend: langchain
+            provider: openai
+            model: gpt-4o
+            temperature: 0.1
+            timeout: 30.0
+            prompt_version: null
+            input_adapter: null
+            input_options: {}
+            extra: {}
+
+  speaker:
+    enabled: true  # Who is speaking, from voice; stored in speaker_collection_name_campplus.
+    inference_queue_size: 1
+    identity_wait_sec: 0.1
+    max_segments: 32
+    max_speaker_caches: 64
+    identity_match_threshold: 0.6
+    track_match_threshold: 0.55
+    track_match_margin: 0.0
+    segment_consistency_threshold: 0.4
+    short_segment_sec: 1.0
+    short_merge_sec: 2.0
+
+  face:
+    enabled: true  # Who is present, from video frames; stored in face_collection_name.
+    sample_interval_sec: 0.2
+    frame_queue_sec: 0.4
+    max_faces: 16
+    max_face_caches: 128
+    identity_match_threshold: 0.4
+    track_match_threshold: 0.65
+    track_match_margin: 0.08

@@ -1,0 +1,52 @@
+perception:
+  retention_sec: 60
+  headroom: 1.25
+  video_publish_interval_sec: 0.1
+  audio_frame_size_ms: 20
+  text_maxlen: 1024
+  event_maxlen: 8192
+
+  temporal_alignment:
+    mode: auto
+    interval_sec: 1.0
+    min_interval_sec: 0.5
+    max_interval_sec: 2.0
+    speech_context_sec: 0.5
+    include_gap_slices: true
+
+turn:
+  snapshot_maxlen: 128
+  event_maxlen: 256
+  context_ready_timeout_sec: 0.5
+
+engine:
+  max_turn_inputs: 4096
+  max_pending_admissions: 32
+  max_input_bytes: 262144
+  depth: auto
+
+  loop_limits:
+    max_model_steps: 6
+    max_tool_rounds: 4
+    max_tool_calls: 12
+    max_parallel_tools: 3
+    total_timeout: 60.0
+    finalization_reserve: 12.0
+    tool_timeout: 15.0
+    max_same_call: 1
+    max_no_progress_steps: 2
+    max_arguments_bytes: 65536
+    max_result_bytes: 262144
+    max_output_tokens: 4096
+    final_output_tokens: 1536
+
+inference:
+  max_pending: 64
+  queue_timeout: 30.0
+  request_timeout: 30.0
+  client_timeout: 35.0
+  initialize_timeout: 300.0
+  close_timeout: 5.0
+  restart_limit: 2
+  restart_window_seconds: 300.0
+  methods: {}  # Per runner, for example alphaavatar.voice.vad.silero: {workers: 2}

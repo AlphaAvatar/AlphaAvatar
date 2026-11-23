@@ -8,15 +8,15 @@
 avatar:
   id: alphaavatar_demo
   name: AlphaAvatar
+  timezone: null  # IANA zone the Avatar tells times in, such as Asia/Shanghai; null: none set
 
   introduction: >
-    You are AlphaAvatar, a real-time multimodal personal assistant demo.
-    Your role is to show how AlphaAvatar can combine memory, persona awareness,
-    tool use, RAG, MCP, DeepResearch, and voice interaction to help users solve
-    practical problems. Communicate naturally, stay concise by default, and adapt
-    your response style to the current interaction mode. When tools or external
-    context are useful, choose them thoughtfully and explain results clearly.
-    Your goal is to demonstrate a helpful, proactive, and privacy-aware personal assistant experience.
+    You are AlphaAvatar, a real-time multimodal personal assistant. You can listen,
+    see and speak with the people you help, remember what matters to each of them
+    across conversations, and recognize them when they return. Be genuinely useful
+    in everyday life: answer questions, help people think things through, and notice
+    what is happening around you when it is relevant. Be honest about what you know
+    and what you are unsure of, and keep what each person shares with you private to them.
 
 
 # ============================================================
@@ -29,6 +29,9 @@ runtime:
 
     temporal_alignment:
       mode: auto
+
+  inference:
+    methods: {}  # Per runner, for example alphaavatar.voice.vad.silero: {workers: 2}
 
 
 # ============================================================
@@ -43,6 +46,11 @@ loop:
       provider: openai
       model: gpt-5.6-luna
       temperature: null
+      timeout: 30.0
+    trace:
+      enabled: true
+      save_prompt: true
+      save_raw_response: false
     reasoning:
       default_effort: none
       supported_efforts: [none, low, medium, high, xhigh, max]
@@ -60,15 +68,24 @@ loop:
 context:
   plugin: default
   init_config:
+    behavior_rules: NONE  # Stable rules added to the system prompt; NONE adds none.
     max_pending_preparations: 16
 
 voice:
   vad:
     plugin: silero
+    min_speech_duration: 0.05
+    # Silence after speech before a segment closes; the next segment continues the same input.
+    min_silence_duration: 0.3
+    activation_threshold: 0.5
+    deactivation_threshold: null  # null: activation_threshold - 0.15
 
   stt:
     plugin: openai_segment
     model: gpt-4o-transcribe
+    language: null  # An ISO-639-1 code (zh, en) the model takes as given; null or auto: detected
+    prompt: null  # openai_segment: names and style to guide the transcription; null: none
+    delay: low  # openai_realtime: latency against quality
 
   tts:
     plugin: openai
@@ -85,6 +102,11 @@ voice:
       and clear pronunciation for names, numbers, and English words.
       Read only the supplied text. Do not add greetings, fillers, reactions,
       translations, or explanations, and do not rewrite or omit words.
+    timeout: 30.0
+    first_audio_timeout: 5.0
+    # A second request when the first audio is this late; it may be billed twice. null: never.
+    first_audio_hedge_after: 2.5
+    max_retries: 1
 
 vision:
   enabled: true
@@ -125,13 +147,17 @@ router:
 
       visual:
         enabled: true
+        toward_threshold: 0.72
+        away_threshold: 0.35
 
     turn_taking:
       enabled: true
       addressing_wait_sec: 0.5
       transcript_wait_sec: 3.0
+      transcript_timeout_sec: 3.0
       unsegmented_alignment_sec: 0.75
       speech_completion_wait_sec: 1.5
+      commit_timeout_sec: 3.0
 
       fusion:
         conflict_margin: 0.1
@@ -228,6 +254,9 @@ memory:
               temperature: 0.1
               input_adapter: langchain_gemini
 
+      scheduler:
+        max_batch_duration_sec: 30.0  # The longest stretch of events one extraction covers.
+
 persona:
   plugin: default
 
@@ -253,9 +282,12 @@ persona:
     speaker:
       enabled: true
       inference_queue_size: 1
+      identity_match_threshold: 0.6
 
     face:
       enabled: true
+      sample_interval_sec: 0.2
+      identity_match_threshold: 0.4
 
 
 # ============================================================
@@ -306,10 +338,21 @@ host:
     on_session_end: finish_execution
     # Finish affected executions before reconnecting for new dispatch jobs.
     on_control_loss: finish_execution
+    max_session_seconds: 1800  # A session ends after this long; 0: no limit.
+
+  health:
+    bind: 127.0.0.1  # 0.0.0.0 would expose the unauthenticated status to the network.
+    port: null  # null: 8081 for start, a free port for dev.
 
   log:
+    level: null  # null: DEBUG for dev, INFO for start.
+    file: true  # Log files in the workspace's .logs/host.
     conversation:
       enabled: true
       content: dev
       max_chars: 2048
       file_content: false
+
+  doctor:
+    external_services: false  # true: doctor may call the model, speech and other paid services.
+    test_stores: false  # true: the remote vector stores named here hold test data doctor may write.

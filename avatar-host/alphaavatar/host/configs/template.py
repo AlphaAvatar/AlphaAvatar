@@ -11,7 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""A minimal bundle and its layered profiles a person completes, then loads like any other."""
+"""The default bundle and its layered profiles, which a person edits, then loads like any other.
+
+The profiles are the reference configuration (``examples/agent_configs/roles/demo.yaml``) with
+every public setting written out, its schema's default where the reference names none, and
+no tool on; they ship in this package as files, one per profile, comments and all.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +42,7 @@ from .bundles import (
 # Credentials stay in the environment (or the .env file named by ENV_FILE), never in the files.
 REQUIRED_ENVIRONMENT = (
     ("OPENAI_API_KEY", "model, speech, embedding and memory/persona providers"),
+    ("GOOGLE_API_KEY", "ENV memory (memory.init_config.environment), from Google's Gemini"),
     ("LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET", "session transport (host.rtc)"),
 )
 
@@ -49,13 +55,21 @@ _BUNDLE = """\
 # Each profiles entry is configs/profiles/<entry>.yaml in this application home and may be
 # shared by several bundles: host, agent runtime, and plugins by layer (foundation,
 # perception, tools). The Avatar identity belongs in this file.
-# examples/agent_configs has more options. The application home (per platform, or
-# ALPHAAVATAR_HOME) holds this file, so do not set application.home here.
+# The application home (per platform, or ALPHAAVATAR_HOME) holds this file, so do not set
+# application.home here.
 
 avatar:
   id: {avatar_id}
-  name: Assistant
-  introduction: You are a helpful voice AI assistant.
+  name: AlphaAvatar
+  timezone: null  # IANA zone the Avatar tells times in, such as Asia/Shanghai; null: none set
+
+  introduction: >
+    You are AlphaAvatar, a real-time multimodal personal assistant. You can listen,
+    see and speak with the people you help, remember what matters to each of them
+    across conversations, and recognize them when they return. Be genuinely useful
+    in everyday life: answer questions, help people think things through, and notice
+    what is happening around you when it is relevant. Be honest about what you know
+    and what you are unsure of, and keep what each person shares with you private to them.
 
 profiles:
 {profiles}
@@ -63,130 +77,23 @@ profiles:
 
 _PROFILE = """\
 # AlphaAvatar {section} profile, created by `alphaavatar config init`. Bundles reference it as
-# {reference}. Never write credentials here; the bundle lists the environment it needs.
+# {reference}. Every setting is written out; edit any, then `alphaavatar config check`.
+# Never write credentials here; the bundle lists the environment it needs.
 
 {body}"""
 
-# The minimal template's selections and defaults, one section per profile, by layer.
-# Switches shown are the defaults, written out to be edited; `alphaavatar setup` starts from
-# them and replaces the sections its choices change.
-SECTIONS = {
-    "host": """\
-rtc:
-  backend: livekit  # Session transport; LIVEKIT_* in the environment hold its credentials.
-health:
-  bind: 127.0.0.1  # Health server; 0.0.0.0 would expose it to the network.
-log:
-  file: true  # Diagnostic log files in the workspace's .logs/host.
-doctor:
-  external_services: false  # true: doctor may call the model, speech and other paid services.
-""",
-    "runtime": """\
-inference:
-  methods: {}  # Per runner, for example alphaavatar.voice.vad.silero: {workers: 2}
-""",
-    "context": """\
-plugin: default
-init_config:
-    max_pending_preparations: 16
-""",
-    "loop": """\
-plugin: realtime
-init_config:
-  model:
-    backend: openai
-    provider: openai
-    model: gpt-5.6-luna
-""",
-    "voice": """\
-vad:
-  plugin: silero
-stt:
-  plugin: openai_segment
-  model: gpt-4o-transcribe
-tts:
-  plugin: openai
-  model: gpt-4o-mini-tts
-  speaker: ash
-""",
-    "vision": """\
-enabled: true  # Camera frames reach the loop's model as images; false keeps the Avatar blind.
-""",
-    "status": """\
-plugin: default
-enabled: true  # Intermediate status events, such as searching, sent to the client.
-""",
-    "router": """\
-plugin: default
-init_config:
-  audio_activity:
-    enabled: true
-  addressing:
-    semantic:
-      enabled: true
-      avatar_identities: [AlphaAvatar]  # Names people use to address the Avatar.
-    visual:
-      enabled: true
-  turn_taking:
-    enabled: true
-    interruption:
-      enabled: true
-""",
-    "character": """\
-plugin: null  # airi shows a virtual character; see the character plugin's README to install.
-""",
-    "memory": """\
-vdb_config:
-  collection_name: memory
-  embedding: {provider: openai, model: text-embedding-3-small}
-init_config:
-  conversation:
-    provider:
-      gateway:
-        tasks:
-          memory.conversation_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
-  tool:
-    provider:
-      gateway:
-        tasks:
-          memory.tool_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
-  environment:
-    enabled: false  # ENV memory; enabling it also needs provider.task and its gateway task.
-""",
-    "persona": """\
-vdb_config:
-  profiler_collection_name: persona_profiler
-  speaker_collection_name: persona_speaker
-  face_collection_name: persona_face
-  embedding: {provider: openai, model: text-embedding-3-small}
-init_config:
-  profiler:
-    enabled: true
-    provider:
-      gateway:
-        tasks:
-          persona.profile_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
-  speaker:
-    enabled: true  # Who is speaking, from voice; stored in speaker_collection_name_campplus.
-    inference_queue_size: 1
-  face:
-    enabled: true  # Who is present, from video frames; stored in face_collection_name.
-""",
-    "tools": """\
-deepresearch:
-  plugin: null  # Tavily research reads TAVILY_API_KEY when enabled.
-rag:
-  plugin: null
-mcp:
-  enabled: false
-  # Reference credentials with <ENV_VAR> placeholders; they resolve when the file loads:
-  # servers:
-  #   docs:
-  #     url: https://example.com/mcp
-  #     headers:
-  #       Authorization: Bearer <MCP_DOCS_TOKEN>
-""",
-}
+TEMPLATES = Path(__file__).with_name("templates")
+
+
+def _template(section: str) -> Path:
+    """Where a section's default profile ships: the plugins' by their layer, the rest on top."""
+    layer = LAYERS[section]
+    return TEMPLATES / (layer if layer.startswith("plugins/") else "") / f"{section}.yaml"
+
+
+# The default profiles, one section each, by layer; `alphaavatar setup` starts from them and
+# replaces the sections its choices change.
+SECTIONS = {section: _template(section).read_text("utf-8") for section in LAYERS}
 
 
 @dataclass(frozen=True, slots=True)

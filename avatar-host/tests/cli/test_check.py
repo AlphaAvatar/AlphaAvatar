@@ -487,6 +487,7 @@ def test_init_reports_the_bundle_its_credentials_by_name_and_what_to_run_next(
         "",
         "Required credentials",
         "  OPENAI_API_KEY",
+        "  GOOGLE_API_KEY",  # ENV memory, on as the reference has it.
         "  LIVEKIT_URL · LIVEKIT_API_KEY · LIVEKIT_API_SECRET",
         "",
         "Next",

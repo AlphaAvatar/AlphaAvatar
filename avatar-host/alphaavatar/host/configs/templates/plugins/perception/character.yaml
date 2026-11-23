@@ -1,0 +1,2 @@
+plugin: null  # airi shows a virtual character; see the character plugin's README to install.
+init_config: {}

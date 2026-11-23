@@ -52,35 +52,6 @@ from alphaavatar.plugins.persona.config import DefaultPersonaConfig
 from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
 from alphaavatar.plugins.router.config import RouterConfig
 
-# The single-file template `config init` wrote before bundles, its YAML anchors included.
-SINGLE_FILE_TEMPLATE = """\
-avatar: {id: my-avatar, name: Assistant, introduction: You are a helpful voice AI assistant.}
-defaults:
-  embedding: &embedding {provider: openai, model: text-embedding-3-small}
-  task: &task {provider: openai, model: gpt-4o, temperature: 0.1}
-loop:
-  plugin: realtime
-  init_config: {model: {backend: openai, provider: openai, model: gpt-5.6-luna}}
-voice:
-  vad: {plugin: silero}
-  stt: {plugin: openai_segment, model: gpt-4o-transcribe}
-  tts: {plugin: openai, model: gpt-4o-mini-tts, speaker: ash}
-vision: {enabled: false}
-memory:
-  vdb_config: {collection_name: memory, embedding: *embedding}
-  init_config:
-    conversation: {provider: {gateway: {tasks: {memory.conversation_delta: *task}}}}
-    tool: {provider: {gateway: {tasks: {memory.tool_delta: *task}}}}
-persona:
-  vdb_config:
-    profiler_collection_name: persona_profiler
-    speaker_collection_name: persona_speaker
-    face_collection_name: persona_face
-    embedding: *embedding
-  init_config:
-    profiler: {provider: {gateway: {tasks: {persona.profile_delta: *task}}}}
-tools: {deepresearch: {plugin: null}, rag: {plugin: null}, mcp: {enabled: false}}
-"""
 # The Context profile body `config init` wrote while the history had capacity limits.
 LEGACY_CONTEXT = """\
 plugin: default
@@ -113,6 +84,7 @@ print(json.dumps({
 """
 HANG_GUARD = 30
 VOICE = f"alpha/{LAYOUT['voice']}"
+REFERENCE = Path(__file__).resolve().parents[3] / "examples/agent_configs/roles/demo.yaml"
 
 
 LOCK = "application/settings/.write.lock"
@@ -179,18 +151,17 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
         assert not any(getattr(event, "anchor", None) for event in events)
         assert str(tmp_path) not in text
         assert [name for name, secret in SECRETS.items() if secret in text] == []
-    assert yaml.safe_load(bundle.read_text()) == {
-        "avatar": {
-            "id": "my-avatar",
-            "name": "Assistant",
-            "introduction": "You are a helpful voice AI assistant.",
-        },
-        "profiles": {section: f"my-avatar/{LAYOUT[section]}" for section in SECTIONS},
+    written = yaml.safe_load(bundle.read_text())
+    assert written["profiles"] == {section: f"my-avatar/{LAYOUT[section]}" for section in SECTIONS}
+    assert written["avatar"] == {
+        "id": "my-avatar",
+        "name": "AlphaAvatar",
+        "timezone": None,
+        "introduction": yaml.safe_load(REFERENCE.read_text())["avatar"]["introduction"],
     }
     assert yaml.safe_load(settings.read_text()) == {"default_bundle": "my-avatar"}
 
-    # The composed configuration is the previous single-file template as the plugins read it:
-    # the added profiles spell out defaults that the single file left implicit.
+    # The bundle by name, by path or as the default: one configuration, as the plugins read it.
     def effective(loaded: object) -> dict:
         payload = json.loads(loaded.payload)
         for section, schema in (
@@ -203,11 +174,8 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
             payload[section]["init_config"] = options.model_dump(mode="json")
         return payload
 
-    single = tmp_path / "single.yaml"
-    single.write_text(SINGLE_FILE_TEMPLATE)
-    # The reference bundle sees: vision is on, where the single file left it off.
-    expected = effective(load_application(single, ["vision.enabled=true"]))
-    for target in (None, "my-avatar", str(bundle)):
+    expected = effective(load_application(select_configuration("my-avatar")))
+    for target in (None, str(bundle)):
         loaded = load_application(select_configuration(target))
         assert effective(loaded) == expected
     assert main(["config", "check", "--json"]) == 0
@@ -488,12 +456,13 @@ def test_an_stt_setting_its_implementation_does_not_take_is_refused_where_it_is_
 ) -> None:
     assert create("alpha", "alpha") == 0
     voice = profile(home, VOICE)
-    block = "stt:\n  plugin: openai_segment\n  model: gpt-4o-transcribe\n"
-    assert block in voice.read_text()
+    # The whole stt block, up to the blank line before tts: no setting of it left behind.
+    text = voice.read_text()
+    start = text.index("\nstt:\n") + 1
+    end = text.index("\n\n", start) + 1
+    assert text[start:end].startswith("stt:\n  plugin: openai_segment\n")
     voice.write_text(
-        voice.read_text().replace(
-            block, "stt:\n" + "".join(f"  {line}\n" for line in stt.splitlines())
-        )
+        text[:start] + "stt:\n" + "".join(f"  {line}\n" for line in stt.splitlines()) + text[end:]
     )
     capsys.readouterr()
     code = main(["config", "check", "alpha", "--json"])

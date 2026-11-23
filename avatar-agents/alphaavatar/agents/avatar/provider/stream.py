@@ -17,14 +17,12 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 
-from alphaavatar.agents.avatar.provider.base import StreamingLLMBase
-from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
-from alphaavatar.agents.avatar.provider.schemas import ModelRequest
-from alphaavatar.agents.avatar.provider.schemas.stream import (
-    ModelResponseCompleted,
-    ModelStreamEvent,
-)
 from alphaavatar.core.cleanup import wait_for_cleanup
+
+from .base import StreamingLLMBase
+from .errors import ModelProtocolError
+from .schemas import ModelRequest
+from .schemas.stream import ModelResponseCompleted, ModelStreamEvent
 
 logger = logging.getLogger(__name__)
 

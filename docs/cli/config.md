@@ -128,8 +128,10 @@ neither empty nor only whitespace ([`cleanup`](cleanup.md) reads the first two s
 
 ## `config init`
 
-Create the reference bundle, its profiles and, if none is set, the default bundle: voice and
-vision on, memory and persona, the models from OpenAI.
+Create the reference bundle, its profiles and, if none is set, the default bundle: the
+reference configuration (`examples/agent_configs/roles/demo.yaml`) with no tool on. Voice and
+vision are on, memory with ENV memory and persona, the models from OpenAI and ENV memory's from
+Google.
 
 ```bash
 alphaavatar config init <name> --avatar-id <id>
@@ -146,6 +148,7 @@ Configuration
 
 Required credentials
   OPENAI_API_KEY
+  GOOGLE_API_KEY
   LIVEKIT_URL · LIVEKIT_API_KEY · LIVEKIT_API_SECRET
 
 Next
@@ -158,10 +161,10 @@ Next
   `Next` is `alphaavatar setup my-avatar`, which installs what the bundle needs, checks it and
   enables it.
 
-- Writes the given Avatar ID with OpenAI model, voice, Memory and Persona profiles; tools are
-  disabled. Host, runtime, context, status, router and character profiles write out their
-  defaults to be edited, as does memory's `environment` (ENV memory) switch, off. The composed
-  result behaves as the former single-file template.
+- Writes the given Avatar ID with every public setting written out: the reference's value,
+  or its schema's default where the reference names none, with comments, to be edited. The
+  profiles ship in the package; the reference file is not needed. Tools are off: each one,
+  switched on in `tools.yaml`, is installed by `alphaavatar setup <bundle>`.
 
 ```text
 configs/bundles/my-avatar.yaml                 avatar, plus the profiles below

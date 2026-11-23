@@ -1,0 +1,37 @@
+plugin: realtime
+
+init_config:
+  model:
+    kind: llm
+    backend: openai  # OpenAI's Responses API, or a server of your own that speaks it.
+    provider: openai
+    model: gpt-5.6-luna
+    temperature: null
+    timeout: 30.0
+    prompt_version: null
+    input_adapter: null
+    input_options: {}
+    extra: {}  # A server of your own: {base_url: https://host/v1, api_key_env: ITS_KEY_VARIABLE}
+
+  trace:
+    enabled: true
+    save_prompt: true
+    save_raw_response: false
+    max_pending: 256
+
+  reasoning:
+    default_effort: none
+    supported_efforts: [none, low, medium, high, xhigh, max]
+    # Used only when a trusted caller supplies query_difficulty; no classifier is installed.
+    difficulty_efforts:
+      simple: none
+      moderate: low
+      complex: medium
+
+  # Keep the configured model identifier; availability/credentials are deployment-specific.
+  # Enabled plugins grant their capabilities to this deployment's Runs.
+  # Per-capability enabled: false denies access; approval_required: true needs an authorizer.
+  # read_only/parallel_safe describe execution safety, not permission to call a tool.
+  tool_policies: {}
+  feedback_timeout: 2.0
+  max_retiring_runs: 4

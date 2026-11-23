@@ -37,6 +37,7 @@ from alphaavatar.host.tools.setup.choices import Selection, requirements, sectio
 
 CREDENTIALS = {
     "OPENAI_API_KEY": "sk-fictional-0042",
+    "GOOGLE_API_KEY": "google-fictional-0042",  # ENV memory's, on as the reference has it.
     "LIVEKIT_URL": "wss://livekit.invalid",
     "LIVEKIT_API_KEY": "lk-fictional",
     "LIVEKIT_API_SECRET": "lk-fictional-secret",
@@ -272,7 +273,7 @@ def test_typed_session_credentials_are_checked_before_anything_is_stored_or_inst
 ) -> None:
     # The key and secret typed as the URL, as a host and a port: the values that take
     # effect, typed over what the environment holds, are the ones checked.
-    typed = ("sk-new", "wss://lk-key:lk-fictional-secret", "lk-key", "lk-fictional-secret")
+    typed = ("sk-new", "", "wss://lk-key:lk-fictional-secret", "lk-key", "lk-fictional-secret")
     asked, hidden = answers("", "", "", "", "", "", "second", "", *typed)
     caplog.set_level(logging.DEBUG)
     with (
@@ -373,7 +374,7 @@ def test_a_plan_declined_installs_and_enables_nothing(
 ) -> None:
     installed = mock.Mock(side_effect=AssertionError("nothing installs"))
     # No local models, its name and ID, the credentials set already, not stored; then no.
-    asked, hidden = answers("", "", "n", "", "", "", "remote", "", "", "", "", "", "n", "n")
+    asked, hidden = answers("", "", "n", "", "", "", "remote", "", "", "", "", "", "", "n", "n")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
@@ -427,7 +428,7 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
         enable()
         return installation.environment(plan)
 
-    typed = ("sk-new", "wss://livekit.invalid", "lk-key", "lk-secret")
+    typed = ("sk-new", "google-new", "wss://livekit.invalid", "lk-key", "lk-secret")
     asked, hidden = answers("", "", "", "", "", "", "second", "", *typed, "y", "n", "y")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
@@ -463,7 +464,7 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
 
     def setup(name: str, server: str, *typed: str) -> int:
         # No voice, vision, no local models, LanceDB, the models from `server`; then the
-        # name, the Avatar ID, the server's key, LiveKit's (set: Enter keeps them).
+        # name, the Avatar ID, the server's key, Google's and LiveKit's (set: Enter keeps them).
         queue = ["n", "y", "n", "1", "n", server, "chat", "", "embed", name, "", *typed]
 
         def answer(prompt: str = "") -> str:
@@ -471,6 +472,7 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
             return queue.pop(0)
 
         livekit = {
+            "GOOGLE_API_KEY": "google-fictional-0042",
             "LIVEKIT_URL": "wss://lk.invalid",
             "LIVEKIT_API_KEY": "k",
             "LIVEKIT_API_SECRET": "s",
@@ -490,11 +492,11 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
         return next(p for p in reversed(prompts) if p.strip().startswith(server_key(server)))
 
     paths = application_paths()
-    assert setup("first", a, "key-a", "", "", "", "y", "y") == 0
+    assert setup("first", a, "key-a", "", "", "", "", "y", "y") == 0
     # Another server's key is not this one's, nor is a blank set for it: Enter keeps nothing,
     # and the key is missing.
     with mock.patch.dict(os.environ, {server_key(b): " \t"}):
-        assert setup("second", b, "", "", "", "") == 1
+        assert setup("second", b, "", "", "", "", "") == 1
     assert "Enter keeps" not in asked(b)
     assert f"Missing credentials: {server_key(b)}" in capsys.readouterr().err
     assert stored_credentials(paths)[server_key(a)] == "key-a"
@@ -502,16 +504,16 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
     dotenv = Path("b.env")
     dotenv.write_text(f"{server_key(b)}=key-b-file\n")
     with mock.patch.dict(os.environ, {server_key(b): " \t", "ENV_FILE": str(dotenv.resolve())}):
-        assert setup("from-file", b, "", "", "", "", "n", "y") == 0  # Not stored; enabled.
+        assert setup("from-file", b, "", "", "", "", "", "n", "y") == 0  # Not stored; enabled.
     assert "Enter keeps it" in asked(b) and server_key(b) not in stored_credentials(paths)
     # Storing the other server's key leaves the first server's, which the first bundle reads.
-    assert setup("third", b, "key-b", "", "", "", "y", "y") == 0
+    assert setup("third", b, "key-b", "", "", "", "", "y", "y") == 0
     stored = stored_credentials(paths)
     assert (stored[server_key(a)], stored[server_key(b)]) == ("key-a", "key-b")
     first = load_application(select_configuration("first")).avatar.loop.init_config["model"]
     assert first["extra"] == {"base_url": a, "api_key_env": server_key(a)}
     # The same server again: its stored key serves it, kept with Enter.
-    assert setup("fourth", a, "", "", "", "", "y") == 0
+    assert setup("fourth", a, "", "", "", "", "", "y") == 0
     assert "Enter keeps it" in asked(a)
     assert stored_credentials(paths)[server_key(a)] == "key-a"
 
@@ -574,7 +576,7 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
             os.kill(os.getpid(), signal.SIGTERM)
         return written
 
-    typed = ("sk-new", "wss://livekit.invalid", "lk-key", "lk-secret")
+    typed = ("sk-new", "google-new", "wss://livekit.invalid", "lk-key", "lk-secret")
     asked, hidden = answers("", "", "", "", "", "", "second", "", *typed, "y", "y")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),

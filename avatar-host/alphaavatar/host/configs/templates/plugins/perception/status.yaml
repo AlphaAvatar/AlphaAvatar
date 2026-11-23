@@ -1,0 +1,22 @@
+plugin: default
+enabled: true  # Intermediate status events, such as searching, sent to the client.
+action_topic: agent.status.action
+
+init_config:
+  activity:
+    max_pending: 128
+    max_runs: 128
+
+  presentation:
+    narrate_reasoning: true
+    waiting_delay: 1.5
+    min_narration_interval: 4.0
+    max_narrations_per_turn: 3
+    decision_ttl: 5.0
+    publish_timeout: 0.5
+    system_decisions: true
+
+  narration:
+    enabled: true
+    language: en
+    publish_timeout: 1.0

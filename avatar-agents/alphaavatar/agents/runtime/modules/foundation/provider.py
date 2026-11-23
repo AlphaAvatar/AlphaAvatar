@@ -26,6 +26,7 @@ from alphaavatar.agents.avatar.provider.errors import ModelCapabilityError
 from alphaavatar.agents.avatar.provider.factory import create_llm_model
 from alphaavatar.agents.avatar.provider.schemas import ModelRequest, ProviderTraceRecord
 from alphaavatar.agents.avatar.provider.schemas.stream import ModelResponseCompleted
+from alphaavatar.agents.avatar.provider.stream import ProviderStream
 from alphaavatar.agents.avatar.provider.trace import ProviderTracer
 from alphaavatar.agents.configs.plugins.foundation.provider_config import (
     ProvidersConfig,
@@ -33,8 +34,6 @@ from alphaavatar.agents.configs.plugins.foundation.provider_config import (
     ProviderTraceConfig,
 )
 from alphaavatar.core.cleanup import wait_for_cleanup
-
-from .stream import ProviderStream
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.gateway import ProviderGateway

@@ -253,21 +253,6 @@ class AvatarContextManager(ContextManager):
 
         return snapshot_input(result.model_input)
 
-    async def _prepare_input(
-        self, request: ContextPrepareRequest, state: StateRuntime
-    ) -> ModelInput:
-        async def build(snapshot: TurnSnapshot, base_input: ModelInput) -> ModelInput:
-            return await asyncio.to_thread(
-                self._compose,
-                snapshot,
-                base_input,
-                state if snapshot is request.turn else None,
-                request,
-            )
-
-        captured = await self._history.capture(request.turn, request.context_id, build)
-        return await asyncio.to_thread(self._compress_history, captured, request.input_id)
-
     def _compress_history(self, captured: ModelInput, input_id: str) -> ModelInput:
         # The Builder prepends the system message. Only items before the current Turn are history.
         items = captured.items
@@ -283,6 +268,21 @@ class AvatarContextManager(ContextManager):
 
         history = self._compressor.compress(items[1:current_index])
         return replace(captured, items=(items[0], *history, *items[current_index:]))
+
+    async def _prepare_input(
+        self, request: ContextPrepareRequest, state: StateRuntime
+    ) -> ModelInput:
+        async def build(snapshot: TurnSnapshot, base_input: ModelInput) -> ModelInput:
+            return await asyncio.to_thread(
+                self._compose,
+                snapshot,
+                base_input,
+                state if snapshot is request.turn else None,
+                request,
+            )
+
+        captured = await self._history.capture(request.turn, request.context_id, build)
+        return await asyncio.to_thread(self._compress_history, captured, request.input_id)
 
     async def prepare(self, request: ContextPrepareRequest) -> ModelInput:
         self._ensure_open()

@@ -1,0 +1,50 @@
+vad:
+  plugin: silero
+  min_speech_duration: 0.05
+  # Silence after speech before a segment closes; the next segment continues the same input.
+  min_silence_duration: 0.3
+  activation_threshold: 0.5
+  deactivation_threshold: null  # null: activation_threshold - 0.15
+  smoothing_alpha: 0.35
+  queue_size: 256
+  inference_timeout_sec: 0.5
+
+stt:
+  plugin: openai_segment
+  model: gpt-4o-transcribe
+  language: null  # An ISO-639-1 code (zh, en) the model takes as given; null or auto: detected
+  prompt: null  # openai_segment: names and style to guide the transcription; null: none
+  delay: low  # openai_realtime: latency against quality
+  base_url: null  # A server of your own with OpenAI's audio API; null: OpenAI's.
+  api_key_env: null  # The variable holding its key; null: OPENAI_API_KEY.
+
+tts:
+  plugin: openai
+  model: gpt-4o-mini-tts
+  speaker: ash
+  speed: 1.15
+  instructions: >
+    Speak naturally, as if having a relaxed, attentive conversation with one person.
+    Use a warm voice, a steady conversational rhythm, and clear articulation.
+    Keep pauses brief and meaningful. Connect phrases smoothly without stretching
+    vowels or lingering at sentence endings. Use subtle, natural intonation;
+    avoid a formal announcer style or exaggerated emotion.
+    Follow the language of the supplied text. Use natural Mandarin for Chinese
+    and clear pronunciation for names, numbers, and English words.
+    Read only the supplied text. Do not add greetings, fillers, reactions,
+    translations, or explanations, and do not rewrite or omit words.
+  base_url: null  # A server of your own with OpenAI's audio API; null: OpenAI's.
+  api_key_env: null  # The variable holding its key; null: OPENAI_API_KEY.
+  timeout: 30.0
+  first_audio_timeout: 5.0
+  read_timeout: 15.0
+  slow_response_after: 2.5
+  trust_env: false
+  # A second request when the first audio is this late; it may be billed twice. null: never.
+  first_audio_hedge_after: 2.5
+  max_retries: 1
+  retry_interval: 0.1
+  frame_size_ms: 20
+  queue_frames: 64
+  max_streams: 4
+  max_audio_seconds: 120.0
