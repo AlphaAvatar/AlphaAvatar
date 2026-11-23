@@ -46,16 +46,20 @@
 | 每个 method 同时在途的峰值 | 4（等于会话数） |
 | 延迟 | p50 1.19 ms，最大 11.77 ms |
 
-资源每 15 秒采样一次，共 121 次，覆盖整个进程树：
+资源每 15 秒采样一次，共 121 次，覆盖整个进程树。表中的身份按采样记录的 PID 和命令行核对：
 
-| 项 | 第 150 s → 第 1800 s |
-|---|---|
-| 进程数 | 8 → 8 |
-| Runner 进程 RSS | 14／37／40／40 MB → 14／38／41／41 MB |
-| Runner 进程 fd | 5／9／9／9 → 不变 |
-| 主进程 fd、线程 | 44、2 → 不变 |
-| 主进程 RSS | 124 MB → 760 MB，线性增长，约 0.39 MB/s |
-| 测试写的 journal | 0 → 420 MB（测试自己的记录） |
+| 进程（PID） | 身份 | 第 150 s → 第 1800 s |
+|---|---|---|
+| 3803371 | 采样所挂的 shell（`bash -c`） | 3 MB、4 fd，不变 |
+| 3803379、3803380 | `timeout` 和 `uv run` | 0 MB、3 fd；37 MB、11 fd，不变 |
+| 3803388 | pytest 主进程，推理运行时就在其中 | RSS 124 MB → 760 MB，线性增长，约 0.39 MB/s；fd 44、线程 2，不变 |
+| 3803395 | `multiprocessing.resource_tracker`，辅助进程，不是 Runner | 14 MB、5 fd，不变 |
+| 3803396、3803397、3803398 | 3 个 Runner（`multiprocessing.spawn` 的 `spawn_main`），每个 method 一个 | 37／40／40 MB → 38／41／41 MB；各 9 fd，不变 |
+| — | 测试写的 journal | 0 → 420 MB（测试自己的记录） |
+
+- 共 8 个进程，从第 15 秒到结束一直是这 8 个 PID，没有新增或替换。
+- 3 个 Runner 各对应哪个 method，无法从采样确认：命令行在 90 个字符处截断，3 个都是 `spawn_main`；测试的 journal 文件里有进程号，但运行结束后已随临时目录删除。
+- 此前把 resource tracker 也算作 Runner，写成了"4 个 Runner"，这里已更正。
 
 - 主进程 RSS 增长的归因：同一用例另跑 90 秒，用 tracemalloc 比较第 20 秒和第 80 秒：
   - Python 层 60 秒内共增长 1.7 MB，其中 1.48 MB 是测试自己的延迟列表（`test_stress.py:108`）；
@@ -73,10 +77,10 @@
 | `…[2]` | 120 s | 46,336 个请求，386 req/s；延迟 p50 44.9 ms、最大 84.3 ms；排队估计 p50 39.8 ms；峰值 2，用了 2 个进程；其余同上，都是 0 |
 
 - 积压的恢复：每一轮都在 worker 数量的上限内排空，下一轮从零开始。两次运行中，延迟最大值稳定在 166 ms 和 84 ms，没有持续增长。
-- 复跑时每 5 秒采样一次：
-  - 故障恢复：fd 保持 21，子进程 3 个，RSS 在 115 秒内增长 3.2 MB。用 tracemalloc 查明，这是 pytest 的日志捕获保留的 LogRecord，每次恢复两条。关掉捕获（`-p no:logging`）后，约 490 次恢复只增长 0.3 MB，主要是测试自己的列表；运行时代码约 0.02 MB，属于采样时仍在途的对象。
-  - 重复启停：fd 和子进程数随启停所处的阶段在两个值之间变化；RSS 增长 0.8 MB。
-  - 2 个 worker：fd 36，子进程 4 个；RSS 增长 1.9 MB，就是测试的 46k 项延迟列表。
+- 复跑时每 5 秒采样一次。下面的"子进程"按命令行核对，都包含 1 个 resource tracker：
+  - 故障恢复：fd 保持 21，子进程 3 个，即 2 个 Runner（journal、echo）和 resource tracker；被杀的 Runner 由新进程替换，采样时数量不变。RSS 在 115 秒内增长 3.2 MB。用 tracemalloc 查明，这是 pytest 的日志捕获保留的 LogRecord，每次恢复两条。关掉捕获（`-p no:logging`）后，约 490 次恢复只增长 0.3 MB，主要是测试自己的列表；运行时代码约 0.02 MB，属于采样时仍在途的对象。
+  - 重复启停：fd 和子进程数随启停所处的阶段变化。25 次采样中，13 次是 2 个 Runner 加 tracker，10 次是 1 个 Runner 加 tracker，其余两次在启动前后。RSS 增长 0.8 MB。
+  - 2 个 worker：fd 36，子进程 4 个，即 echo Runner、2 个 parallel worker 和 tracker；RSS 增长 1.9 MB，就是测试的 46k 项延迟列表。
 - 第一次运行这几项时，采样脚本写错了：`( … & )` 里的 `$BASHPID` 让采样器只采到了它自己。所以资源数据以复跑为准，第一次运行只用它的测试结果。
 
 ### 1.3 其他 stress 用例，各 60 秒
@@ -163,36 +167,137 @@
 
 本地没有运行完整的 setup，也就是没有下载模型和 wheel。CI 的 verify 任务完成过 `setup reference --artifacts`。
 
-发现（O-33，未改，待用户决定）：
+O-33：未发布 CI 包的使用限制（用户 2026-11-23 决定保留，不改）：
 
 - 安装器在终端里接着提供的 setup 不带 `--artifacts`。对 CI 构建，这一步会在问完全部问题、下载前 5 个包之后失败，报"not published; pass --artifacts"；安装本身保留。正式 release 不受影响。
-- 验收时对安装器的询问回答 `n`，再自己运行 `setup --artifacts`。
-- 如果要修，改 `install.sh` 就会换成新的候选 SHA。
+- 安装 CI 构建时，对安装器的询问回答 `n`，再运行 `alphaavatar setup --artifacts <产物目录>`。
 
-## 5. 验收步骤（供用户执行）
+## 5. 最终安装验收步骤（供用户执行）
 
-假设两个构建分别放在 `~/aa/fbef` 和 `~/aa/fa02`。下载：`gh run download <run> -R AlphaAvatar/AlphaAvatar -n <artifact 名> -D <目录>`，或者从上面的链接下载后解压。
+### 5.1 依据
 
-1. 校验：`cd ~/aa/fbef && sha256sum -c SHA256SUMS`。
-2. 干净安装：`bash ~/aa/fbef/install.sh --file ~/aa/fbef/alphaavatar-0.6.8-fbef4a3a29c7-linux-x86_64.tar.gz`。询问是否运行 setup 时回答 `n`（O-33）。
-3. 新开一个终端，检查 PATH：`command -v alphaavatar`、`alphaavatar --version`。
-4. 真实交互 setup：`alphaavatar setup --artifacts ~/aa/fbef`。
-5. `alphaavatar doctor`。
-6. `alphaavatar start`，之后按 Ctrl+C 或发送 SIGTERM 正常停止，退出码为 0。
-7. 升级成功（先停 Host）：
-   - `alphaavatar upgrade --check --file ~/aa/fa02/alphaavatar-0.6.8-fa022e9d5628-linux-x86_64.tar.gz`；
-   - `alphaavatar upgrade --file` 同一个包，wheel 从它旁边取；
-   - 再 `alphaavatar upgrade --file ~/aa/fbef/alphaavatar-0.6.8-fbef4a3a29c7-linux-x86_64.tar.gz`，回到候选构建。
-8. 准备失败时保留原环境：
-   - `mkdir ~/aa/bare && cp ~/aa/fa02/alphaavatar-0.6.8-fa022e9d5628-linux-x86_64.tar.gz{,.sha256} ~/aa/bare/`；
-   - `alphaavatar upgrade --file ~/aa/bare/alphaavatar-0.6.8-fa022e9d5628-linux-x86_64.tar.gz`：旁边没有本构建的 wheel，安装阶段失败，退出码 1，提示 "stays current"；
-   - 或者给一个错误的 `--sha256`，在 Package 阶段就失败；
-   - 之后 `readlink ~/.local/lib/alphaavatar/current`、`alphaavatar --version` 都不变，`alphaavatar doctor` 照常。
-9. cleanup 预览和数据保护：
-   - `alphaavatar cleanup --dry-run`，列出 `current` 没在用的环境和基础包，以及保留的项和原因；
-   - 停掉 Host 后运行 `alphaavatar cleanup`；
-   - 前后对比应用目录（默认 `~/.local/share/alphaavatar`）的文件清单和校验值，应完全不变。
-10. 实际通话沿用已通过的验收结果。
+- **判断实际构建：** 两个包的 `--version` 都只显示 `0.6.8`，不能用来区分构建。
+  - `current` 指向 `envs/<plan>` 时，看该环境 `share/alphaavatar/plan.json` 的 `base`；
+  - `current` 指向 `versions/<build>` 时，目录名就是 build ID，也可以看基础包 `share/alphaavatar/manifest.json` 的 `id`。
+- **升级失败测试的顺序：**
+  - 升级时，目标计划的环境如果已经存在且完整，`upgrade` 会直接复用（"installed already"），不再取 wheel（`upgrade.py`、`Installation.reusable`）；已经解压的同一个基础包也会复用。
+  - 所以缺 wheel 的升级失败，必须在 `fa02` 的基础包和环境都还没安装时进行，也就是在任何一次 `fa02` 正常升级之前。
+  - 两个构建自带的 12 个 wheel 内容都不同，setup 也没有自己的下载缓存，所以 `fbef` 的文件替代不了 `fa02` 的。
+  - 失败的那次运行会删除它自己解压的 `fa02` 基础包和环境暂存。
+- **错误的 SHA：** 只验证包校验，在 Package 阶段、解压之前就失败，不能替代环境准备失败的验收。
+
+### 5.2 步骤
+
+每个新终端里先定义：
+
+```bash
+P=~/.local/lib/alphaavatar
+FBEF=~/aa/fbef/alphaavatar-0.6.8-fbef4a3a29c7-linux-x86_64.tar.gz
+FA02=~/aa/fa02/alphaavatar-0.6.8-fa022e9d5628-linux-x86_64.tar.gz
+build() {  # current points to, and the build it runs
+  echo "current -> $(readlink "$P/current")"
+  grep -h '"base"' "$P/current/share/alphaavatar/plan.json" 2>/dev/null \
+    || grep -h '"id"' "$P/current/share/alphaavatar/manifest.json"
+}
+```
+
+1. **下载并校验。** 前提是干净的 Linux x86_64 用户，没有 `~/.local/lib/alphaavatar` 和应用目录。
+
+   ```bash
+   mkdir -p ~/aa/fbef ~/aa/fa02
+   gh run download 45053394322 -R AlphaAvatar/AlphaAvatar -n alphaavatar-linux-x86_64-fbef4a3a29c7c1693c9ec2a5c185f43a9b9945a4 -D ~/aa/fbef
+   gh run download 45042934752 -R AlphaAvatar/AlphaAvatar -n alphaavatar-linux-x86_64-fa022e9d5628f13a8d02eb1b7c7e1bb57b9ee44c -D ~/aa/fa02
+   (cd ~/aa/fbef && sha256sum -c SHA256SUMS) && (cd ~/aa/fa02 && sha256sum -c SHA256SUMS)
+   ```
+
+   预期：各 15 项 OK。从浏览器下载的是 zip，解压到对应目录即可。
+
+2. **干净安装候选构建。**
+
+   ```bash
+   bash ~/aa/fbef/install.sh --file "$FBEF"
+   ```
+
+   - 预期输出 `Installed AlphaAvatar 0.6.8, build 0.6.8-fbef4a3a29c7`，以及 `PATH: added …` 两行（bash 写 `~/.bashrc` 和登录时读的文件）。
+   - 询问 `Run alphaavatar setup now…? [Y/n]` 时回答 `n`（O-33），输出 `Setup: not run. Next: alphaavatar setup …`。
+   - `build` 显示 `current -> versions/0.6.8-fbef4a3a29c7`。
+
+3. **新终端里的 PATH。** 新开一个终端，先定义上面的变量，再运行：
+
+   ```bash
+   command -v alphaavatar       # ~/.local/bin/alphaavatar
+   bash -lc 'command -v alphaavatar'   # 登录 shell 也能找到
+   alphaavatar --version        # AlphaAvatar 0.6.8
+   ```
+
+4. **真实交互 setup。**
+
+   ```bash
+   alphaavatar setup --artifacts ~/aa/fbef
+   ```
+
+   按提示回答，以成功结束。`build` 显示 `current -> envs/<plan>` 和 `"base": "0.6.8-fbef4a3a29c7"`。把这个 `<plan>` 记作 `ENV_FBEF`。
+
+5. **Doctor：** `alphaavatar doctor`。
+
+6. **启动和正常停止：** `alphaavatar start`，按 Ctrl+C，或者在另一个终端发送 SIGTERM。`echo $?` 应为 0。
+
+7. **环境准备失败，原环境保留。** 先停掉 Host。确认前提：`ls "$P/versions" "$P/envs"` 只有 `0.6.8-fbef4a3a29c7` 和 `ENV_FBEF`，`fa02` 从未装过。
+
+   ```bash
+   mkdir -p ~/aa/bare
+   cp "$FA02" "$FA02.sha256" ~/aa/bare/
+   alphaavatar upgrade --file ~/aa/bare/alphaavatar-0.6.8-fa022e9d5628-linux-x86_64.tar.gz; echo "exit=$?"
+   ```
+
+   - 预期：Package 一步通过 SHA-256 校验；Install 一步在第一个本构建自带的 wheel（`alpha_avatar_plugins_context`）处失败，因为包旁边没有它；`FAIL  Upgrade failed; AlphaAvatar 0.6.8-fbef4a3a29c7 stays current`，`exit=1`。
+   - 之后检查：
+     - `build` 仍是 `ENV_FBEF` 和 `0.6.8-fbef4a3a29c7`；
+     - `ls -a "$P/versions" "$P/envs"` 只有原来的两项，没有 `0.6.8-fa022e9d5628`，也没有 `.install-*`、`.setup-*` 暂存；
+     - `alphaavatar config check` 通过；可以再 `alphaavatar start`、Ctrl+C。
+
+8. **包校验失败**（单独一项，不替代第 7 步）：
+
+   ```bash
+   alphaavatar upgrade --file "$FA02" --sha256 0000000000000000000000000000000000000000000000000000000000000000; echo "exit=$?"
+   ```
+
+   预期在 Package 阶段失败，`exit=1`，`build` 不变。
+
+9. **正常升级到 `fa02`。**
+
+   ```bash
+   alphaavatar upgrade --check --file "$FA02"   # Upgradable to 0.6.8-fa022e9d5628, Current 0.6.8-fbef4a3a29c7
+   alphaavatar upgrade --file "$FA02"; echo "exit=$?"
+   ```
+
+   - 预期 `Upgraded to AlphaAvatar 0.6.8-fa022e9d5628`，`Previous 0.6.8-fbef4a3a29c7`，`exit=0`。wheel 从包旁边的 `~/aa/fa02` 取。
+   - `build` 显示新的 `envs/<plan>`（记作 `ENV_FA02`）和 `"base": "0.6.8-fa022e9d5628"`；`--version` 仍是 `0.6.8`。
+
+10. **返回候选构建。**
+
+    ```bash
+    alphaavatar upgrade --file "$FBEF"; echo "exit=$?"
+    ```
+
+    预期 `Upgraded to AlphaAvatar 0.6.8-fbef4a3a29c7`，`exit=0`。计划与之前相同时，Plan 一步显示 "installed already"，复用 `ENV_FBEF`。`build` 显示 `"base": "0.6.8-fbef4a3a29c7"`。
+
+11. **cleanup 预览和数据保护。** 先停掉所有 `alphaavatar start`、`dev`、`doctor`。应用目录默认是 `${XDG_DATA_HOME:-~/.local/share}/alphaavatar`；设置了 `ALPHAAVATAR_HOME` 时以它为准。
+
+    ```bash
+    H=~/.local/share/alphaavatar
+    (cd "$H" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > ~/aa/home-before.txt
+    alphaavatar cleanup --dry-run
+    alphaavatar cleanup; echo "exit=$?"
+    (cd "$H" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > ~/aa/home-after.txt
+    diff ~/aa/home-before.txt ~/aa/home-after.txt && echo "application home unchanged"
+    build; ls "$P/versions" "$P/envs"; alphaavatar config check
+    ```
+
+    - 预期：`--dry-run` 列出要删的 `envs/ENV_FA02` 和 `versions/0.6.8-fa022e9d5628`，保留 `ENV_FBEF`（current）和 `versions/0.6.8-fbef4a3a29c7`，并说明原因，不做任何改动。
+    - `cleanup` 删除上述两项，`exit=0`；应用目录前后完全相同；`build` 仍是候选构建；`config check` 通过。
+
+12. **实际通话：** 沿用已通过的验收结果。
 
 ## 6. 本批的改动与验证
 
@@ -210,3 +315,24 @@
 - 完整安装、真实交互 setup、Doctor、启停、升级和 cleanup 的实际执行，由用户验收。本地只做了第 4 节的冒烟。
 - 合成压力用的是模型无关的 Runner 和替身，不代表真实模型的延迟或吞吐，也不代表设备上的表现。
 - 本机只有 bash 4.4；KD-56 的新测试在较新 bash 上的结果，以 CI 为准。
+
+## 8. 验收文档整理（基线 `ca8d5f52`）
+
+- 依据：用户复查。这轮持续稳定性验证按约定的合成负载范围接受，KD-57 也已通过复查。
+- 基线：`ca8d5f52` 相对 `fbef4a3a` 只改了 `test_stress.py` 和文档，生产代码不变，安装产物继续用 `fbef4a3a` 的构建。Linux package 的路径过滤不包括测试和文档，所以 `ca8d5f52` 没有新的安装包构建。
+- 本轮只整理文档和证据，没有重跑压力测试或离线全量：
+  - 5.1、5.2 改写验收步骤：
+    - 缺 wheel 的 `fa02` 升级失败放到任何一次 `fa02` 正常升级之前，并写明前提和原因（环境复用）；
+    - 错误的 SHA 单列为包校验失败；
+    - 每一步用 `current`、`plan.json` 的 `base` 或 manifest 的 `id` 判断实际构建。
+  - 1.1、1.2 按采样记录的 PID 和命令行，更正进程身份：
+    - 30 分钟运行中是 3 个 Runner 加 1 个 resource tracker，不是 4 个 Runner；
+    - 复跑表里的"子进程"也包含 tracker；
+    - Runner 与 method 的对应关系无法确认，已如实注明。
+  - O-33 按用户决定，作为未发布 CI 包的使用限制保留。
+- CI：`ca8d5f52` 的 Quality（[run 45120681604](https://github.com/AlphaAvatar/AlphaAvatar/actions/runs/45120681604)）最终为 failure：
+  - lint、build 都通过；
+  - install 任务的 "Run deterministic offline tests" 一步，993 个用例全部通过，用时 600.81 s，随后超过这一步 10 分钟的上限，被判超时；
+  - 同样 993 个用例，`fbef4a3a` 在 CI 上用了 429 s。更早几次是 504 s、534 s、578 s，这次最慢的几个用例也都变慢了，说明是 CI 机器速度的波动，不是某个用例的回归；
+  - `ca8d5f52` 相对 `fbef4a3a` 只改了测试（KD-57，只会更快）和文档。
+  - 登记为 O-34。没有改 workflow，也没有重跑 CI，由用户决定。候选构建 `fbef4a3a` 的 Quality 和 Linux package 都通过。
