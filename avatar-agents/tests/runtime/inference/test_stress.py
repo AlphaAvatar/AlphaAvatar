@@ -287,7 +287,8 @@ async def test_parallel_workers_stay_bounded_owned_and_reclaimed_under_session_l
         running += step
         peak = max(peak, running)
     executions = [end - start for _, start, end, _ in spans]
-    waits = sorted(latency - statistics.median(executions) for latency in latencies)
+    execution = statistics.median(executions)  # Once: per latency, it made this quadratic
+    waits = sorted(latency - execution for latency in latencies)
     after = descriptors()
     leaked = sum((after - fds).values()) if fds is not None and after is not None else 0
     print(
