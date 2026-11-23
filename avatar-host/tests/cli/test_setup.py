@@ -16,6 +16,7 @@ installing."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ import re
 import signal
 import stat
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
 
@@ -33,7 +35,12 @@ import yaml
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.tools.setup import environment
-from alphaavatar.host.tools.setup.choices import Selection, requirements, sections
+from alphaavatar.host.tools.setup.choices import (
+    Selection,
+    requirements,
+    requirements_offered,
+    sections,
+)
 
 CREDENTIALS = {
     "OPENAI_API_KEY": "sk-fictional-0042",
@@ -60,11 +67,12 @@ def installed_plugins() -> dict[str, dict[str, str]]:
 
 @pytest.fixture
 def package(tmp_path: Path) -> environment.Installation:
-    """An installed base whose catalog holds what the reference configuration needs."""
+    """An installed base whose catalog holds what any selection setup offers needs."""
     base = tmp_path / "prefix" / "versions" / "base-1"
     (base / "share" / "alphaavatar").mkdir(parents=True)
-    names = [text.split("[")[0] for text in requirements(Selection())]
-    keys = {text: [text.split("[")[0]] for text in requirements(Selection())}
+    offered = sorted(requirements_offered())
+    names = sorted({text.split("[")[0] for text in offered})
+    keys = {text: [text.split("[")[0]] for text in offered}
     keys |= {name: [name] for name in names}
     catalog = {
         "format": 1,
@@ -276,18 +284,23 @@ def test_typed_session_credentials_are_checked_before_anything_is_stored_or_inst
 ) -> None:
     # The key and secret typed as the URL, as a host and a port: the values that take
     # effect, typed over what the environment holds, are the ones checked.
-    typed = ("sk-new", "", "wss://lk-key:lk-fictional-secret", "lk-key", "lk-fictional-secret")
-    asked, hidden = answers("", "", "", "", "", "", "", "second", "", *typed)
+    person = Person(
+        ("Bundle name", "second"),
+        ("OPENAI_API_KEY, for", "sk-new"),
+        ("LIVEKIT_URL, for", "wss://lk-key:lk-fictional-secret"),
+        ("LIVEKIT_API_KEY, for", "lk-key"),
+        ("LIVEKIT_API_SECRET, for", "lk-fictional-secret"),
+    )
     caplog.set_level(logging.DEBUG)
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install") as install,
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch.dict(os.environ, CREDENTIALS),
-        asked,
-        hidden,
+        person.answering(),
     ):
         assert main(["setup"]) == 1
+    assert person.rules == []
     output = capsys.readouterr()
     assert "The session transport (livekit) cannot start: LiveKit URL is not valid" in output.err
     assert "as typed or in the environment" in output.err
@@ -302,8 +315,11 @@ def test_an_existing_bundle_is_enabled_only_by_a_successful_install(
     assert main(["config", "init", "earlier", "--avatar-id", "earlier"]) == 0
     assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
     capsys.readouterr()
+    # Edited as a person edits it: setup installs for it as it is, never resetting it.
+    edit(profile("reference", "voice"), "tts", "speed", value=1.3)
     before = home_files()
     home = Path.home() / ".local/share/alphaavatar"
+    configs = {p: p.read_bytes() for p in (home / "configs").rglob("*") if p.is_file()}
 
     def default() -> str:
         return yaml.safe_load((home / "settings/settings.yaml").read_text())["default_bundle"]
@@ -330,31 +346,69 @@ def test_an_existing_bundle_is_enabled_only_by_a_successful_install(
         with mock.patch.object(environment, "install", installed):
             assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 0
     assert default() == "reference"  # Enabled: the default now.
+    assert {p: p.read_bytes() for p in (home / "configs").rglob("*") if p.is_file()} == configs
     # The environment's credentials stay there: nothing stores them.
     assert "credentials" not in yaml.safe_load((home / "settings/settings.yaml").read_text())
     assert not [path.name for path in (home / "settings").iterdir() if "credentials" in path.name]
     shown = capsys.readouterr().out.splitlines()
-    assert "02  Credentials    From the environment, .env or those stored" in shown
+    assert "02  Models         As the bundle's settings choose them" in shown
+    assert "03  Credentials    From the environment, .env or those stored" in shown
     assert shown[-4:] == ["", "Next", "  alphaavatar doctor reference", ""]
 
 
-def answers(*lines: str):
-    """input() and getpass() answering in order, as a person at the terminal would."""
-    queue = list(lines)
-    return mock.patch("builtins.input", lambda prompt="": queue.pop(0)), mock.patch(
-        "getpass.getpass", lambda prompt="": queue.pop(0)
-    )
+class Person:
+    """A person at the terminal: each question answered by what it asks, the first rule whose
+    text the prompt holds taken once, in order; any other answered with Enter, its default.
+    Each prompt is kept, and shown as input() shows it."""
+
+    def __init__(self, *rules: tuple[str, str | type[BaseException]]) -> None:
+        self.rules = list(rules)
+        self.prompts: list[str] = []
+
+    def __call__(self, prompt: str = "") -> str:
+        self.prompts.append(prompt)
+        sys.stdout.write(prompt)
+        for index, (asked, answer) in enumerate(self.rules):
+            if asked in prompt:
+                del self.rules[index]
+                if isinstance(answer, type):
+                    raise answer
+                return answer
+        return ""
+
+    def asked(self, text: str) -> list[str]:
+        return [prompt for prompt in self.prompts if text in prompt]
+
+    @contextlib.contextmanager
+    def answering(self) -> Iterator[Person]:
+        # Wide: each question is one prompt, as the rules read them, never wrapped.
+        with (
+            mock.patch("builtins.input", self),
+            mock.patch("getpass.getpass", self),
+            mock.patch.dict(os.environ, {"COLUMNS": "1000"}),
+        ):
+            yield self
+
+
+TYPED = (
+    ("OPENAI_API_KEY, for", "sk-new"),
+    ("GOOGLE_API_KEY, for", "google-new"),
+    ("LIVEKIT_URL, for", "wss://livekit.invalid"),
+    ("LIVEKIT_API_KEY, for", "lk-key"),
+    ("LIVEKIT_API_SECRET, for", "lk-secret"),
+)
 
 
 def test_the_plan_alone_goes_to_stdout_even_when_setup_asks(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
-    # Voice, vision, no local models, LanceDB, OpenAI's models and speech; the name, its ID.
-    queue = ["", "", "n", "", "", "", "", "remote", ""]
+    # Voice, vision, no local models, ENV memory, LanceDB; the name; then Enter: each default.
+    # Asked on stderr, the prompt is shown there before input() reads: answered in order.
+    queue = ["", "", "n", "", "", "remote"]
 
     def typed(prompt: str = "") -> str:
         sys.stdout.write(prompt)  # As input() shows its prompt.
-        return queue.pop(0)
+        return queue.pop(0) if queue else ""
 
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
@@ -366,11 +420,15 @@ def test_the_plan_alone_goes_to_stdout_even_when_setup_asks(
     planned = json.loads(output.out)["requirements"]
     assert planned == list(requirements(Selection(local_models=False)))
     # The step and its questions went to stderr: stdout is the plan for a tool to read.
-    assert "From the reference configuration" in output.err
+    assert "Each question starts from the reference configuration" in output.err
+    assert "Provider for the conversation [1]: " in output.err
     # (Answered here without a terminal's echo, so a prompt and the next line share one.)
     assert (
-        "01  Capabilities   Voice on · Vision on · Local models off · ENV memory on\n" in output.err
+        "01  Capabilities   Bundle remote · Voice on · Vision on · Local models off · ENV memory on\n"
+        in output.err
     )
+    assert "02  Models         OpenAI · Google\n" in output.err
+    assert queue == [] and output.out.count("Provider for") == 0
     assert home_files() == []
 
 
@@ -378,43 +436,57 @@ def test_a_plan_declined_installs_and_enables_nothing(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
     installed = mock.Mock(side_effect=AssertionError("nothing installs"))
-    # No local models, its name and ID, the credentials set already, not stored; then no.
-    asked, hidden = answers("", "", "n", "", "", "", "", "remote", "", "", "", "", "", "", "n", "n")
+    # No local models, its name, the credentials set already, not stored; then no.
+    person = Person(
+        ("Models on this machine", "n"),
+        ("Bundle name", "remote"),
+        ("Store ", "n"),
+        ("Install and enable?", "n"),
+    )
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch.dict(os.environ, CREDENTIALS),
-        asked,
-        hidden,
+        person.answering(),
     ):
         assert main(["setup"]) == 1
     output = capsys.readouterr()
     # The plan and what it downloads were shown before the question; then nothing changed.
     assert re.search(r"\n    \d+ packages · 0 MB to download\n", output.out)
+    assert person.rules == []
     assert output.err == "WARN  Cancelled; nothing was enabled\n\n"
     assert home_files() == []
 
 
-def test_ctrl_c_at_a_question_enables_nothing_and_says_so(
-    package: environment.Installation, capsys: pytest.CaptureFixture
+@pytest.mark.parametrize(
+    ("question", "stop", "code", "said"),
+    [
+        ("Bundle name [avatar]: ", KeyboardInterrupt, 130, "Interrupted"),
+        ("Provider for memory [2]: ", KeyboardInterrupt, 130, "Interrupted"),
+        ("Model for the conversation [gpt-5.6-luna]: ", EOFError, 1, "The input ended"),
+    ],
+    ids=["a-name", "a-provider", "the-input-ending"],
+)
+def test_ctrl_c_or_the_input_ending_at_a_question_enables_nothing_and_says_so(
+    package: environment.Installation,
+    capsys: pytest.CaptureFixture,
+    question: str,
+    stop: type[BaseException],
+    code: int,
+    said: str,
 ) -> None:
-    def answer(prompt: str = "") -> str:
-        sys.stdout.write(prompt)  # As input() shows its prompt.
-        if "Bundle name" in prompt:
-            raise KeyboardInterrupt
-        return ""  # Each part as the reference has it.
-
+    person = Person((question.strip(), stop))  # Each other part as the reference has it.
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch("sys.stdin.isatty", return_value=True),
-        mock.patch("builtins.input", answer),
+        person.answering(),
     ):
-        assert main(["setup"]) == 130
+        assert main(["setup"]) == code
     output = capsys.readouterr()
-    assert output.err == "WARN  Interrupted; nothing was enabled\n\n"
+    assert output.err == f"WARN  {said}; nothing was enabled\n\n"
     # The question's line ends, then a blank line: the outcome stands apart from the steps.
-    assert output.out.endswith("    Bundle name [avatar]: \n\n")
+    assert output.out.endswith(f"{question}\n\n") and person.rules == []
     assert home_files() == []
 
 
@@ -433,17 +505,22 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
         enable()
         return installation.environment(plan)
 
-    typed = ("sk-new", "google-new", "wss://livekit.invalid", "lk-key", "lk-secret")
-    asked, hidden = answers("", "", "", "", "", "", "", "second", "", *typed, "y", "n", "y")
+    person = Person(
+        ("Bundle name", "second"),
+        *TYPED,
+        ("Store ", "y"),
+        ("OPENAI_API_KEY is stored already", "n"),
+        ("Install and enable?", "y"),
+    )
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch.dict(os.environ),
-        asked,
-        hidden,
+        person.answering(),
     ):
         assert main(["setup"]) == 0
+    assert person.rules == []
     output = capsys.readouterr().out
     stored = credentials_path(paths).read_text()
     # The earlier bundle's key stays; what was new is stored, readable only by the person.
@@ -456,14 +533,14 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
 def test_env_memory_switched_off_asks_no_google_key_and_keeps_its_settings_to_switch_on(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
-    prompts: list[str] = []
-    # Each part as the reference has it but ENV memory; then the name and ID, the credentials
-    # the environment holds (Enter keeps them), not stored, and yes to installing.
-    queue = ["", "", "", "n", "", "", "", "quiet", "", "", "", "", "", "n", "y"]
-
-    def answer(prompt: str = "") -> str:
-        prompts.append(prompt)
-        return queue.pop(0)
+    # Each part as the reference has it but ENV memory; then the name, the credentials the
+    # environment holds (Enter keeps them), not stored, and yes to installing.
+    person = Person(
+        ("ENV memory:", "n"),
+        ("Bundle name", "quiet"),
+        ("Store ", "n"),
+        ("Install and enable?", "y"),
+    )
 
     def installed(installation, plan, sources, *, check, enable, **kwargs):
         enable()
@@ -475,11 +552,12 @@ def test_env_memory_switched_off_asks_no_google_key_and_keeps_its_settings_to_sw
         mock.patch.object(environment, "install", installed),
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch.dict(os.environ, without | {"COLUMNS": "1000"}),
-        mock.patch("builtins.input", answer),
-        mock.patch("getpass.getpass", answer),
+        person.answering(),
     ):
         assert main(["setup"]) == 0
-    assert queue == [] and not [prompt for prompt in prompts if "GOOGLE_API_KEY" in prompt]
+    # Off, it asks nothing of its own: no model, no Google key.
+    assert person.rules == [] and person.asked("GOOGLE_API_KEY") == []
+    assert person.asked("ENV memory") == [person.prompts[3]] and person.asked("Model for") != []
     assert "ENV memory off" in capsys.readouterr().out
     memory = Path.home() / ".local/share/alphaavatar/configs/profiles/quiet/plugins/perception"
     text = (memory / "memory.yaml").read_text()
@@ -503,14 +581,25 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
         enable()
         return installation.environment(plan)
 
-    def setup(name: str, server: str, *typed: str) -> int:
-        # No voice, vision, no local models, ENV memory, LanceDB, the models from `server`; then the
-        # name, the Avatar ID, the server's key, Google's and LiveKit's (set: Enter keeps them).
-        queue = ["n", "y", "n", "", "1", "n", server, "chat", "", "embed", name, "", *typed]
-
-        def answer(prompt: str = "") -> str:
-            prompts.append(prompt)
-            return queue.pop(0)
+    def setup(name: str, server: str, key: str, *, store: str | None, install: bool = True) -> int:
+        # No voice, no local models; each model from `server`, the conversation's taken for
+        # memory and persona; then the server's key, Google's and LiveKit's (Enter keeps them).
+        person = Person(
+            ("Voice:", "n"),
+            ("Models on this machine", "n"),
+            ("Bundle name", name),
+            ("Provider for the conversation", "2"),
+            ("Server URL for the conversation", server),
+            ("Model for the conversation", "chat"),
+            ("Provider for memory", "1"),
+            ("Provider for tool memory", "1"),
+            ("Provider for persona profiles", "1"),
+            ("Provider for embeddings", "3"),
+            ("Model for embeddings", "embed"),
+            (server_key(server), key),
+            *((("Store ", store),) if store is not None else ()),
+            *((("Install and enable?", "y"),) if install else ()),
+        )
 
         livekit = {
             "GOOGLE_API_KEY": "google-fictional-0042",
@@ -525,20 +614,24 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
             # Wide: each question is one prompt, as this test reads them, the parts a server's
             # key serves included.
             mock.patch.dict(os.environ, livekit | {"COLUMNS": "1000"}),
-            mock.patch("builtins.input", answer),
-            mock.patch("getpass.getpass", answer),
+            person.answering(),
         ):
-            return main(["setup"])
+            code = main(["setup"])
+        prompts.extend(person.prompts)
+        assert person.rules == []
+        # The embeddings' server question offered the server typed before.
+        assert person.asked(f"Server URL for embeddings [{server}]: ") != []
+        return code
 
     def asked(server: str) -> str:
         return next(p for p in reversed(prompts) if p.strip().startswith(server_key(server)))
 
     paths = application_paths()
-    assert setup("first", a, "key-a", "", "", "", "", "y", "y") == 0
+    assert setup("first", a, "key-a", store="y") == 0
     # Another server's key is not this one's, nor is a blank set for it: Enter keeps nothing,
     # and the key is missing.
     with mock.patch.dict(os.environ, {server_key(b): " \t"}):
-        assert setup("second", b, "", "", "", "", "") == 1
+        assert setup("second", b, "", store=None, install=False) == 1
     assert "Enter keeps" not in asked(b)
     assert f"Missing credentials: {server_key(b)}" in capsys.readouterr().err
     assert stored_credentials(paths)[server_key(a)] == "key-a"
@@ -546,16 +639,16 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
     dotenv = Path("b.env")
     dotenv.write_text(f"{server_key(b)}=key-b-file\n")
     with mock.patch.dict(os.environ, {server_key(b): " \t", "ENV_FILE": str(dotenv.resolve())}):
-        assert setup("from-file", b, "", "", "", "", "", "n", "y") == 0  # Not stored; enabled.
+        assert setup("from-file", b, "", store="n") == 0  # Not stored; enabled.
     assert "Enter keeps it" in asked(b) and server_key(b) not in stored_credentials(paths)
     # Storing the other server's key leaves the first server's, which the first bundle reads.
-    assert setup("third", b, "key-b", "", "", "", "", "y", "y") == 0
+    assert setup("third", b, "key-b", store="y") == 0
     stored = stored_credentials(paths)
     assert (stored[server_key(a)], stored[server_key(b)]) == ("key-a", "key-b")
     first = load_application(select_configuration("first")).avatar.loop.init_config["model"]
     assert first["extra"] == {"base_url": a, "api_key_env": server_key(a)}
     # The same server again: its stored key serves it, kept with Enter.
-    assert setup("fourth", a, "", "", "", "", "", "y") == 0
+    assert setup("fourth", a, "", store=None) == 0
     assert "Enter keeps it" in asked(a)
     assert stored_credentials(paths)[server_key(a)] == "key-a"
 
@@ -618,8 +711,9 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
             os.kill(os.getpid(), signal.SIGTERM)
         return written
 
-    typed = ("sk-new", "google-new", "wss://livekit.invalid", "lk-key", "lk-secret")
-    asked, hidden = answers("", "", "", "", "", "", "", "second", "", *typed, "y", "y")
+    person = Person(
+        ("Bundle name", "second"), *TYPED, ("Store ", "y"), ("Install and enable?", "y")
+    )
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "check_environment", lambda *args: None),
@@ -627,8 +721,7 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
         mock.patch.object(stored, "write_credentials", writing),
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch.dict(os.environ),
-        asked,
-        hidden,
+        person.answering(),
     ):
         assert main(["setup"]) == (0 if then == "OSError" else 128 + signal.SIGTERM)
     if then == "SIGTERM":
@@ -640,3 +733,154 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
         yaml.safe_load((home / "settings/settings.yaml").read_text())["default_bundle"] == "second"
     )
     assert 'LIVEKIT_API_SECRET="lk-secret"' in credentials_path(application_paths()).read_text()
+
+
+def enabled(installation, plan, sources, *, check, enable, **kwargs):
+    enable()
+    return installation.environment(plan)
+
+
+def test_each_part_is_asked_its_provider_then_its_model_and_each_key_once(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    from alphaavatar.host.configs import load_application, select_configuration
+
+    # Without a terminal to redraw, each list is numbered: answered here by the text of one.
+    person = Person(
+        ("Bundle name", "mixed"),
+        ("Provider for memory", "anthropic"),
+        ("Model for memory", "claude-sonnet-4-5"),
+        ("Provider for tool memory", "as for memory"),
+        ("Provider for persona profiles", "openrouter"),
+        ("Model for persona profiles", "openai/gpt-4.1-mini"),
+        ("Provider for embeddings", "google"),
+        ("Model for embeddings", "text-embedding-004"),
+        ("Provider for speech recognition", "realtime"),
+        ("Model for speech recognition", "gpt-realtime-whisper"),
+        ("Provider for speech synthesis", "voice.ai"),
+        ("Model for speech synthesis", "voiceai-tts-v1"),
+        ("ANTHROPIC_API_KEY, for", "ant-fictional"),
+        ("OPENROUTER_API_KEY, for", "or-fictional"),
+        ("VOICEAI_API_KEY, for", "vai-fictional"),
+        ("Store ", "n"),
+        ("Install and enable?", "y"),
+    )
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", enabled),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        person.answering(),
+    ):
+        assert main(["setup"]) == 0
+    out = capsys.readouterr().out
+    assert person.rules == []
+    # The reference's model is offered from its own provider only; from another, none is.
+    assert person.asked("Model for the conversation [gpt-5.6-luna]: ") != []
+    for part in ("memory", "persona profiles", "embeddings", "speech recognition"):
+        assert person.asked(f"Model for {part}: ") != [], part
+    # Voice.ai takes no speed and needs no voice: neither is asked for.
+    assert person.asked("Speed") == [] and person.asked("  Voice [") == []
+    # Each key once, naming every part that reads it.
+    keys = [p.split(",")[0].strip() for p in person.prompts if "_API_KEY, for" in p]
+    assert sorted(keys) == sorted(set(keys)) and "ANTHROPIC_API_KEY" in keys
+    assert person.asked("ANTHROPIC_API_KEY, for memory, tool memory, from Anthropic") != []
+    assert person.asked("GOOGLE_API_KEY, for ENV memory, embeddings, from Google") != []
+    assert "02  Models         OpenAI · Anthropic · Google · OpenRouter · Voice.ai\n" in out
+    # The summary, after the questions and before anything is installed.
+    summary = "    memory: Anthropic claude-sonnet-4-5; tool memory Anthropic claude-sonnet-4-5\n"
+    assert out.index("03  Credentials    Ready") < out.index(summary) < out.index("Install and")
+    assert "    speech out: voiceai voiceai-tts-v1, speed 1, no instructions\n" in out
+    assert "fictional" not in out
+    # The bundle runs as answered.
+    avatar = load_application(select_configuration("mixed")).avatar
+    tasks = {
+        part: avatar.memory.init_config[part]["provider"]["gateway"]["tasks"]
+        for part in ("conversation", "tool")
+    }
+    assert tasks["conversation"]["memory.conversation_delta"]["provider"] == "anthropic"
+    assert tasks["tool"]["memory.tool_delta"]["model"] == "claude-sonnet-4-5"
+    profiler = avatar.persona.init_config["profiler"]["provider"]["gateway"]["tasks"]
+    assert profiler["persona.profile_delta"]["provider"] == "openrouter"
+    assert avatar.memory.vdb_config["embedding"]["provider"] == "google"
+    assert (avatar.voice.stt.plugin, avatar.voice.stt.model) == (
+        "openai_realtime",
+        "gpt-realtime-whisper",
+    )
+    tts = avatar.voice.tts
+    assert (tts.plugin, tts.speaker, tts.speed, tts.instructions) == ("voiceai", None, 1.0, None)
+
+
+def test_voice_off_asks_nothing_of_speech_and_vectors_in_qdrant_read_its_url(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    profiles = Path.home() / ".local/share/alphaavatar/configs/profiles"
+    url = "https://qdrant.invalid:6333"
+
+    def setup(name: str, *typed: tuple[str, str]) -> Person:
+        person = Person(
+            ("Voice:", "n"),
+            ("Vectors for memory and persona", "2"),
+            ("Bundle name", name),
+            *typed,
+            ("Store ", "n"),
+            ("Install and enable?", "y"),
+        )
+        with (
+            mock.patch.object(environment.Installation, "running", return_value=package),
+            mock.patch.object(environment, "install", enabled),
+            mock.patch("sys.stdin.isatty", return_value=True),
+            mock.patch.dict(os.environ, CREDENTIALS),
+            person.answering(),
+        ):
+            os.environ.pop("QDRANT_URL", None)
+            assert main(["setup"]) == 0
+        assert person.rules == []
+        return person
+
+    # Asked with the other credentials, before anything resolves the bundle that reads it.
+    person = setup("vectors", ("QDRANT_URL, for", url))
+    assert person.asked("for speech") == [] and person.asked("Voice ID") == []
+    assert "Enter keeps" not in person.asked("QDRANT_URL")[0]
+    memory = (profiles / "vectors/plugins/perception/memory.yaml").read_text()
+    assert "  url: ${oc.env:QDRANT_URL}  # Your Qdrant server.\n" in memory
+    assert not [p for p in profiles.rglob("*.yaml") if url in p.read_text()]  # Read, not written.
+    voice = yaml.safe_load((profiles / "vectors/plugins/foundation/voice.yaml").read_text())
+    assert [voice[part]["plugin"] for part in ("vad", "stt", "tts")] == [None, None, None]
+    # Held by the .env file start reads, it is set: Enter keeps it.
+    dotenv = Path("qdrant.env")
+    dotenv.write_text(f"QDRANT_URL={url}\n")
+    with mock.patch.dict(os.environ, {"ENV_FILE": str(dotenv.resolve())}):
+        person = setup("from-file")
+    assert "(set; Enter keeps it)" in person.asked("QDRANT_URL")[0]
+    capsys.readouterr()
+
+
+def test_a_name_a_bundle_has_is_asked_again_and_refused_as_given(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    from alphaavatar.host.configs import application_paths
+    from alphaavatar.host.configs.template import create_bundle
+
+    create_bundle(application_paths(), "taken", avatar_id="taken")
+    before = home_files()
+    person = Person(
+        ("Bundle name", "taken"), ("Bundle name", "fresh"), ("Install and enable?", "n")
+    )
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        person.answering(),
+    ):
+        assert main(["setup"]) == 1  # Declined at the end: nothing written.
+        assert "Bundle 'taken' exists" in capsys.readouterr().out
+        assert person.rules == [] and len(person.asked("Bundle name")) == 2
+        assert person.asked("Avatar ID [fresh]: ") != []
+        # Given, the name is refused at once, before any other question.
+        given = Person()
+        with given.answering():
+            assert main(["setup", "--name", "taken"]) != 0
+        assert "Bundle 'taken' exists" in capsys.readouterr().err
+        assert given.asked("Provider for") == []
+    assert home_files() == before

@@ -36,6 +36,26 @@ from typing import Any
 from alphaavatar.core.log.records import clean
 from alphaavatar.host.cli.render import STATUS, Report, home_relative
 
+LOCAL_SERVER = "http://localhost:8000/v1"
+# How the speech implementations are offered.
+SPEECH = {
+    "openai_segment": "OpenAI, segment by segment",
+    "openai_realtime": "OpenAI Realtime, as it is spoken",
+    "openai": "OpenAI",
+    "voiceai": "Voice.ai",
+}
+# What each part's questions call it.
+PARTS = {
+    "loop": "the conversation",
+    "conversation": "memory",
+    "tool": "tool memory",
+    "profiler": "persona profiles",
+    "environment": "ENV memory",
+    "embedding": "embeddings",
+    "transcription": "speech recognition",
+    "synthesis": "speech synthesis",
+}
+
 
 def _ask(out: Report, question: str, default: str) -> str:
     answer = out.ask(f"{question} [{default}]: ").strip()
@@ -50,14 +70,14 @@ def _needed(out: Report, question: str, default: str = "") -> str:
     return answer
 
 
-def _server(out: Report, question: str, *, speech: bool) -> str:
+def _server(out: Report, question: str, *, speech: bool, default: str) -> str:
     from alphaavatar.host.tools.setup.choices import server_problem
 
     while True:
-        url = _needed(out, question, "http://localhost:8000/v1").rstrip("/")
+        url = _needed(out, question, default).rstrip("/")
         if (problem := server_problem(url, speech=speech)) is None:
             return url
-        out.wrapped(problem.capitalize(), indent=6)
+        out.wrapped(problem[0].upper() + problem[1:], indent=6)
 
 
 def _yes(out: Report, question: str, default: bool = True) -> bool:
@@ -69,15 +89,13 @@ def _yes(out: Report, question: str, default: bool = True) -> bool:
             return answer.startswith("y")
 
 
-def _choose(out: Report):
-    """Each part of the reference configuration, kept or changed; a server of one's own for
-    the models or speech, if chosen."""
-    from alphaavatar.host.tools.setup.choices import Model, Selection, Synthesis, Transcription
+def _switches(out: Report) -> dict[str, Any]:
+    """The capabilities on or off, and where vectors are kept."""
+    from alphaavatar.host.cli.render import Option
+    from alphaavatar.host.tools.setup.choices import TOOLS
 
     out.wrapped(
-        "From the reference configuration: voice and vision on, memory with ENV memory and "
-        "persona, each model from the backend chosen below.",
-        indent=4,
+        "Each question starts from the reference configuration: Enter keeps its answer.", indent=4
     )
     voice = _yes(out, "Voice: speech in and out, voice activity detected on this machine?")
     vision = _yes(out, "Vision: camera frames reach the model?")
@@ -89,62 +107,176 @@ def _choose(out: Report):
         "ENV memory: memories drawn from the session's audio and video by Google's Gemini, "
         "an external model?",
     )
-    out.write("    Vectors for memory and persona:")
-    out.item("1  ", "LanceDB in the Avatar workspace", indent=6)
-    out.item("2  ", "your Qdrant", indent=6)
-    while (store := _ask(out, "Vector store", "1")) not in ("1", "2"):
-        pass
-    chosen: dict[str, object] = {}
-    if not _yes(
-        out, "Models from OpenAI? No: a server of your own with OpenAI's API, Responses included"
-    ):
-        url = _server(out, "  Server URL", speech=False)
-        chat = _needed(out, "  Conversation model")
-        tasks = Model("openai", _needed(out, "  Memory and persona model", chat), url)
-        chosen = {
-            "loop": Model("openai", chat, url),
-            "conversation": tasks,
-            "tool": tasks,
-            "profiler": tasks,
-            "embedding": Model("openai", _needed(out, "  Embedding model"), url),
-        }
-    if voice and not _yes(
-        out, "Speech from OpenAI? No: a server of your own with OpenAI's audio API"
-    ):
-        url = _server(out, "  Server URL", speech=True)
-        chosen["transcription"] = Transcription(
-            "openai_segment", _needed(out, "  Transcription model"), url
-        )
-        model = _needed(out, "  Speech model")
-        chosen["synthesis"] = Synthesis("openai", model, _needed(out, "  Voice"), server=url)
-    store = "lancedb" if store == "1" else "qdrant"
-    return Selection(
-        voice=voice, vision=vision, local_models=local, env_memory=env, vector_store=store, **chosen
+    stores = [Option("LanceDB in the Avatar workspace", "lancedb"), Option("Your Qdrant", "qdrant")]
+    store = out.choose("Vectors for memory and persona", stores)
+    out.wrapped(TOOLS[0].upper() + TOOLS[1:] + ".", indent=4)
+    return {
+        "voice": voice,
+        "vision": vision,
+        "local_models": local,
+        "env_memory": env,
+        "vector_store": store,
+    }
+
+
+def _model(out: Report, part: str, chosen: dict[str, Any], servers: list[str]):
+    """A part's provider, from a list with the reference's marked, or a model chosen for an
+    earlier part; then its model: the reference's offered only from the reference's provider."""
+    from alphaavatar.host.cli.render import Option
+    from alphaavatar.host.tools.setup.choices import (
+        NAMES,
+        PROVIDERS,
+        REFERENCE,
+        REUSE,
+        SERVED,
+        Model,
+        default_model,
+        reusable,
     )
 
+    what = PARTS[part]
+    options = [Option(NAMES[provider], provider) for provider in PROVIDERS[part]]
+    if part in SERVED:
+        api = "OpenAI's Responses API" if part == "loop" else "OpenAI's API"
+        options.append(Option(f"A server of your own with {api}", "server"))
+    default = [option.value for option in options].index(REFERENCE[part].provider)
+    for earlier in REUSE.get(part, ()):
+        model = chosen[earlier]
+        taken = [option.value for option in options]
+        if reusable(part, model) and model != REFERENCE[part] and model not in taken:
+            options.insert(0, Option(f"As for {PARTS[earlier]}: {model.describe()}", model))
+            default += 1
+    if len(options) == 1:
+        out.wrapped(f"{what[0].upper()}{what[1:]}: from {options[0].label}, the only one", indent=4)
+        picked = options[0].value
+    else:
+        picked = out.choose(f"Provider for {what}", options, default)
+    if isinstance(picked, Model):
+        return picked
+    server = None
+    if picked == "server":
+        server = _server(
+            out, f"  Server URL for {what}", speech=False, default=(servers or [LOCAL_SERVER])[-1]
+        )
+        servers.append(server)
+        picked = "openai"
+    model = _needed(out, f"  Model for {what}", default_model(part, picked, server) or "")
+    return Model(picked, model, server)
 
-def _described(
-    *, voice: bool, vision: bool, local: bool, env: bool, qdrant: bool, own: list[str]
-) -> str:
+
+def _speech(out: Report, servers: list[str]) -> dict[str, Any]:
+    """Speech in and out: each implementation, or a server of one's own with OpenAI's audio
+    API; its model; for speech out, its voice and speed where it takes them."""
+    from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
+    from alphaavatar.host.cli.render import Option
+    from alphaavatar.host.tools.setup.choices import (
+        REFERENCE,
+        SPEECH_SERVED,
+        SYNTHESIS,
+        TRANSCRIPTION,
+        Synthesis,
+        Transcription,
+        default_model,
+        server_problem,
+    )
+
+    def implementation(part: str, offered: tuple[str, ...]) -> tuple[str, str | None, str]:
+        """The implementation, the server if one's own, and the model."""
+        what = PARTS[part]
+        options = [Option(f"{SPEECH[plugin]} ({plugin})", plugin) for plugin in offered]
+        served = SPEECH_SERVED[part]
+        options.append(Option(f"A server of your own with OpenAI's audio API ({served})", None))
+        plugin, url = out.choose(f"Provider for {what}", options), None
+        if plugin is None:
+            # The speech server typed before, else a model server speech may use as well.
+            fit = [typed for typed in servers if server_problem(typed, speech=True) is None]
+            default = (fit or [LOCAL_SERVER])[-1]
+            url = _server(out, f"  Server URL for {what}", speech=True, default=default)
+            servers.append(url)
+            plugin = served
+        model = _needed(out, f"  Model for {what}", default_model(part, plugin, url) or "")
+        return plugin, url, model
+
+    plugin, url, model = implementation("transcription", TRANSCRIPTION)
+    stt = Transcription(plugin, model, url)
+    plugin, url, model = implementation("synthesis", SYNTHESIS)
+    reference = REFERENCE["synthesis"]
+    if plugin == "voiceai":
+        speaker = out.ask("  Voice ID (Enter: the model's own): ").strip() or None
+    elif url is None and plugin == reference.plugin:
+        speaker = _needed(out, "  Voice", reference.speaker)
+    else:
+        speaker = _needed(out, "  Voice")
+    if not TTSConfig.takes_instructions(plugin, model):
+        out.note(f"{model} takes no instructions: the reference's are left out.", indent=6)
+    speed = None
+    if not TTSConfig.takes_speed(plugin):
+        out.note(f"{SPEECH[plugin]} speaks at 1.0: it takes no speed.", indent=6)
+    else:
+        while True:
+            answer = _ask(out, "  Speed, 0.25 to 4.0", f"{REFERENCE['speed']:g}")
+            try:
+                speed = float(answer)
+            except ValueError:
+                out.wrapped("A number", indent=6)
+                continue
+            try:
+                Synthesis(plugin, model, speaker, speed, url)
+                break
+            except ValueError as error:  # Out of range.
+                out.wrapped(str(error), indent=6)
+    return {"transcription": stt, "synthesis": Synthesis(plugin, model, speaker, speed, url)}
+
+
+def _models(out: Report, switches: dict[str, Any]) -> dict[str, Any]:
+    """Each running part's provider and model, then speech's if voice is on."""
+    chosen: dict[str, Any] = {}
+    servers: list[str] = []  # Each server typed, offered again to the next.
+    for part in ("loop", "conversation", "tool", "profiler", "environment", "embedding"):
+        if part != "environment" or switches["env_memory"]:
+            chosen[part] = _model(out, part, chosen, servers)
+    if switches["voice"]:
+        chosen |= _speech(out, servers)
+    return chosen
+
+
+def _name(out: Report, paths, given: str | None) -> str:
+    """A new bundle's name: given, or asked until it is one no bundle has."""
+    from alphaavatar.host.configs import ConfigReferenceError
+    from alphaavatar.host.configs.bundles import bundle_path
+
+    while True:
+        name = given or _ask(out, "Bundle name", "avatar")
+        try:
+            path = bundle_path(paths, name)
+            if path.exists():
+                raise ConfigReferenceError(
+                    f"Bundle {name!r} exists: {path}; choose another name, or set it up as it "
+                    f"is: `alphaavatar setup {name}`"
+                )
+        except ConfigReferenceError as error:
+            if given is not None:
+                raise
+            out.wrapped(str(error), indent=6)
+            continue
+        return name
+
+
+def _described(*, voice: bool, vision: bool, local: bool, env: bool, qdrant: bool) -> str:
     """What a bundle runs with, on one line."""
     on = {True: "on", False: "off"}
     parts = [f"Voice {on[voice]}", f"Vision {on[vision]}", f"Local models {on[local]}"]
     parts.append(f"ENV memory {on[env]}")
-    return " · ".join([*parts, *(["Qdrant"] if qdrant else []), *own])
+    return " · ".join([*parts, *(["Qdrant"] if qdrant else [])])
 
 
-def _selection_line(selection) -> str:
-    own = ["Models from your server"] if selection.loop.server is not None else []
-    if selection.voice and selection.synthesis.server is not None:
-        own.append("Speech from your server")
-    return _described(
-        voice=selection.voice,
-        vision=selection.vision,
-        local=selection.local_models,
-        env=selection.env_memory,
-        qdrant=selection.vector_store == "qdrant",
-        own=own,
-    )
+def _models_line(selection) -> str:
+    """The providers the running parts' models come from, each once."""
+    from alphaavatar.host.tools.setup.choices import NAMES
+
+    parts = list(selection.models().values()) + list(selection.speech() or ())
+    found = ["your server" if part.server else NAMES[part.provider] for part in parts]
+    return " · ".join(dict.fromkeys(found))
 
 
 def _bundle_line(avatar, needs: dict[str, str]) -> str:
@@ -162,7 +294,6 @@ def _bundle_line(avatar, needs: dict[str, str]) -> str:
         # ENV memory runs only where its settings switch it on.
         env=isinstance(environment, dict) and environment.get("enabled") is True,
         qdrant=vdb_requirement("qdrant") in needs,
-        own=[],
     )
 
 
@@ -243,6 +374,17 @@ def _credentials(selection, paths, out: Report, rtc) -> tuple[dict[str, str], di
     return values, saved
 
 
+def _host(texts: dict[str, str], name: str):
+    """A new bundle's Host settings, from its host profile alone: the Avatar's sections may read
+    credentials, such as QDRANT_URL, that are still to be asked for."""
+    import yaml
+
+    from alphaavatar.host.service.application.config import HostConfig
+
+    profile = yaml.safe_load(texts[f"bundles/{name}.yaml"])["profiles"]["host"]
+    return HostConfig.model_validate(yaml.safe_load(texts[f"profiles/{profile}.yaml"]))
+
+
 def _single_file(texts: dict[str, str], name: str, home: Path, target: Path) -> None:
     """The bundle with its profiles inlined, as config check reads it before files exist."""
     import yaml
@@ -284,14 +426,17 @@ def setup(args: argparse.Namespace) -> int:
 
 def _setup(args: argparse.Namespace) -> int:
     from alphaavatar.host.configs import (
-        ConfigReferenceError,
         application_paths,
         format_failure,
         load_selections,
         select_configuration,
     )
-    from alphaavatar.host.configs.bundles import bundle_path, check_bundle_name, read_settings
-    from alphaavatar.host.configs.credentials import load_environment, stored_credentials
+    from alphaavatar.host.configs.bundles import check_bundle_name, read_settings
+    from alphaavatar.host.configs.credentials import (
+        fill_configured,
+        load_environment,
+        stored_credentials,
+    )
     from alphaavatar.host.configs.template import create_bundle, render_bundle, set_default_bundle
     from alphaavatar.host.tools.setup import choices
     from alphaavatar.host.tools.setup.environment import (
@@ -327,15 +472,20 @@ def _setup(args: argparse.Namespace) -> int:
         read_settings(paths)  # Unreadable settings refuse before anything happens.
         if existing is None:
             out.begin(1, "Capabilities")
-            selection = _choose(out)
-            name = args.name or _ask(out, "Bundle name", "avatar")
+            switches = _switches(out)
+            name = _name(out, paths, args.name)
             avatar_id = args.avatar_id or _ask(out, "Avatar ID", name)
-            if bundle_path(paths, name).exists():
-                raise ConfigReferenceError(
-                    f"Bundle {name!r} exists: {bundle_path(paths, name)}; choose another name, "
-                    f"or set it up as it is: `alphaavatar setup {name}`"
-                )
-            out.step(1, "Capabilities", _selection_line(selection))
+            line = _described(
+                voice=switches["voice"],
+                vision=switches["vision"],
+                local=switches["local_models"],
+                env=switches["env_memory"],
+                qdrant=switches["vector_store"] == "qdrant",
+            )
+            out.step(1, "Capabilities", f"Bundle {name} · {line}")
+            out.begin(2, "Models")
+            selection = choices.Selection(**switches, **_models(out, switches))
+            out.step(2, "Models", _models_line(selection))
             sections = choices.sections(selection)
             environment = [(c.name, c.purpose) for c in choices.credentials(selection)]
             texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
@@ -350,6 +500,7 @@ def _setup(args: argparse.Namespace) -> int:
                     "This release's setup installs nothing for: " + "; ".join(unserved)
                 )
             out.step(1, "Capabilities", f"Bundle {name} · {_bundle_line(avatar, found)}")
+            out.step(2, "Models", "As the bundle's settings choose them")
             needed = tuple(sorted(found))
         # Installing for this bundle never takes from another: what the current environment
         # holds stays planned, and the same plan reuses it.
@@ -363,20 +514,20 @@ def _setup(args: argparse.Namespace) -> int:
         target = installation.environment(plan)
         reused = installation.reusable(plan)
         if existing is None:
-            out.begin(2, "Credentials")
-            with tempfile.TemporaryDirectory() as scratch:
-                _single_file(texts, name, paths.root, Path(scratch) / f"{name}.yaml")
-                host, _ = load_selections(Path(scratch) / f"{name}.yaml", (), settings)
-            values, saved = _credentials(selection, paths, out, host.rtc)
-            out.step(2, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
+            out.begin(3, "Credentials")
+            # What the new bundle reads, filled where the environment holds none from .env or
+            # the stored credentials, as start fills them: Enter keeps those as well.
+            fill_configured([variable for variable, _ in environment], settings)
+            values, saved = _credentials(selection, paths, out, _host(texts, name).rtc)
+            out.step(3, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
         else:
             values, saved = {}, {}
             _session_credentials(host.rtc, os.environ)
-            out.step(2, "Credentials", "From the environment, .env or those stored")
+            out.step(3, "Credentials", "From the environment, .env or those stored")
 
         size = "installed already" if reused else megabytes(plan.download_bytes)
         planned = f"{len(plan.artifacts)} packages · {size}"
-        out.begin(3, "Install")
+        out.begin(4, "Install")
         if extra := sorted(set(kept) - set(needed)):
             out.wrapped(f"Kept from the current environment: {', '.join(extra)}", indent=4)
         if terminal:
@@ -394,13 +545,13 @@ def _setup(args: argparse.Namespace) -> int:
                 errors.status("WARN", "Cancelled; nothing was enabled")
                 errors.write()
                 return 1
-            out.begin(3, "Install")  # Its progress, on the step's line again.
+            out.begin(4, "Install")  # Its progress, on the step's line again.
 
         def check(environment: Path) -> None:
-            out.step(3, "Install", planned)
-            out.begin(4, "Validate")
+            out.step(4, "Install", planned)
+            out.begin(5, "Validate")
             count = check_environment(environment, config if existing is None else name, env)
-            out.step(4, "Validate", "PASS" + (f" · {count} runners" if count is not None else ""))
+            out.step(5, "Validate", "PASS" + (f" · {count} runners" if count is not None else ""))
 
         def progress(line: str) -> None:
             # Each artifact, then the check: the step's line on a terminal shows the latest.
@@ -456,6 +607,12 @@ def _setup(args: argparse.Namespace) -> int:
         if isinstance(stop, KeyboardInterrupt):
             return 130
         return stop.code if isinstance(stop.code, int) else 1
+    except EOFError:
+        # The input ended at a question: nothing chosen is kept.
+        _apart(out, started)
+        errors.status("WARN", "The input ended; nothing was enabled")
+        errors.write()
+        return 1
     except (SetupError, PlanError) as error:
         _apart(out, started)
         errors.status("FAIL", "Setup failed; nothing was enabled")

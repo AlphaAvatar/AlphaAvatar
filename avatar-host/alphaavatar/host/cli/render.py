@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""The look config init, config check, setup and doctor share in their text reports.
+"""The look config init, config check, setup and doctor share in their text reports, and how
+setup asks its questions.
 
 A report is a title, a status, then groups of rows: labels in one column, values aligned in
 the next. A value too long for the terminal goes below its label, indented and wrapped at
@@ -27,6 +28,7 @@ import os
 import sys
 import textwrap
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -48,8 +50,10 @@ STATUS = 6  # A status and its gap: "ERROR " and the rest, padded alike.
 GAP = 3  # Between a label and its value.
 LABEL = 10  # The narrowest label column, before its gap.
 STEP = 15  # A setup step's name and its gap.
+VISIBLE = 8  # The options a list shows at once; it scrolls past them.
 # Where a stream cannot encode them, as an ASCII terminal.
-_ASCII = str.maketrans({"·": "-", "→": "->", "—": "-", "…": "..."})
+_ASCII = str.maketrans({"·": "-", "→": "->", "—": "-", "…": "...", "›": ">", "↑": "^", "↓": "v"})
+_ARROWS = {b"\x1b[A": -1, b"\x1bOA": -1, b"\x1b[B": 1, b"\x1bOB": 1}
 
 
 def _width(stream: TextIO) -> int:
@@ -68,12 +72,32 @@ def _width(stream: TextIO) -> int:
     return 100
 
 
+def _key(fd: int) -> bytes:
+    """One key from a terminal: a character, or an arrow's whole sequence."""
+    import select
+
+    key = os.read(fd, 1)
+    # An arrow sends its sequence at once; Escape alone sends nothing after it.
+    while key[:1] == b"\x1b" and len(key) < 3 and select.select([fd], [], [], 0.05)[0]:
+        key += os.read(fd, 1)
+    return key
+
+
 def home_relative(path: str | Path) -> str:
     """A path for people to read: under the home directory, from ``~``."""
     try:
         return "~/" + str(Path(path).relative_to(Path.home()))
     except ValueError:
         return str(path)
+
+
+@dataclass(frozen=True, slots=True)
+class Option:
+    """One answer to a question with options: what is shown, which typing narrows a list to,
+    and what choosing it gives."""
+
+    label: str
+    value: Any
 
 
 class Report:
@@ -330,3 +354,117 @@ class Report:
         except (KeyboardInterrupt, EOFError):
             self._emit("\n", flush=True)
             raise
+
+    def _numbered(self, question: str, options: Sequence[Option], default: int) -> Any:
+        """The options numbered, then the question: a number takes its option, as does text
+        only one option's label holds; Enter, the default."""
+        for index, option in enumerate(options, 1):
+            mark = "  (default)" if index - 1 == default else ""
+            self.item(f"{index:<3}", option.label + mark, indent=6)
+        while True:
+            answer = self.ask(f"{question} [{default + 1}]: ").strip()
+            if not answer:
+                return options[default].value
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                return options[int(answer) - 1].value
+            held = [option for option in options if answer.casefold() in option.label.casefold()]
+            if len(held) == 1:
+                return held[0].value
+            self.wrapped(f"A number from 1 to {len(options)}, or text one option holds", indent=6)
+
+    def _fit(self, text: str, used: int) -> str:
+        """Text cut to the terminal's width after ``used`` columns: a list redraws only lines it
+        can count, none wrapped. The cut's mark is three columns where a stream is ASCII."""
+        room = max(self.width - used - 1, 8)
+        return text if len(text) <= room else text[: room - 3] + "…"
+
+    def _listed(self, question: str, options: Sequence[Option], default: int) -> Any:
+        """The options under the question, one marked: the arrows move the mark, typing
+        narrows the list to the labels holding what is typed, Escape clears it, Enter takes
+        the one marked. The terminal is as it was however this ends."""
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+        typed, marked, shown = "", default, 0
+        head = self._fit(f"{question}:", 4)
+        asked = self.paint(head, SIGNAL_CYAN)
+        room = self.width - 1 - 4 - len(head) - 1  # What the hint, or what is typed, may take.
+
+        def erase() -> None:
+            # Back to the question's line, and everything below it cleared.
+            self._emit((f"\033[{shown}A" if shown else "") + "\r\033[J", flush=True)
+
+        try:
+            tty.setcbreak(fd)  # Each key as typed, none echoed; Ctrl+C still interrupts.
+            self._settle()
+            self._emit("\033[?25l")  # No cursor blinking through the list as it redraws.
+            while True:
+                held = [
+                    index
+                    for index, option in enumerate(options)
+                    if typed.casefold() in option.label.casefold()
+                ]
+                if held and marked not in held:
+                    marked = held[0]
+                at = held.index(marked) if held else 0
+                start = max(0, min(at - VISIBLE + 1, len(held) - VISIBLE))
+                hint = "↑↓ to move, type to narrow, Enter to choose"
+                if typed:  # Its end, where it is typed.
+                    hint = self.paint(typed[-max(room, 0) :] if room > 0 else "", SIGNAL_CYAN)
+                else:
+                    hint = self.paint(hint if len(hint) <= room else "", DIM)
+                lines = [f"    {asked} {hint}".rstrip()]
+                for index in held[start : start + VISIBLE]:
+                    mark = "  (default)" if index == default else ""
+                    label = self._fit(clean(options[index].label), 6 + len(mark))
+                    label += self.paint(mark, DIM)
+                    lines.append(
+                        "    " + self.paint(f"› {label}", SIGNAL_CYAN)
+                        if index == marked
+                        else f"      {label}"
+                    )
+                if not held:
+                    lines.append("      " + self.paint("No option holds that", DIM))
+                erase()
+                self._emit("\n".join(lines) + "\n", flush=True)
+                shown = len(lines)
+                key = _key(fd)
+                if key in (b"", b"\x04"):  # The input's end, or Ctrl+D.
+                    raise EOFError
+                if key in _ARROWS and held:
+                    marked = held[(at + _ARROWS[key]) % len(held)]
+                elif key in (b"\r", b"\n") and held:
+                    break
+                elif key in (b"\x7f", b"\x08"):
+                    typed = typed[:-1]
+                elif key == b"\x1b":
+                    typed = ""
+                elif len(key) == 1 and 32 <= key[0] < 127:
+                    typed += key.decode()
+            erase()
+            self._emit(f"    {asked} {clean(options[marked].label)}\n", flush=True)
+            return options[marked].value
+        except BaseException:
+            # Ended here: the question stays, its line ended, for what follows.
+            erase()
+            self._emit(f"    {asked}\n", flush=True)
+            raise
+        finally:
+            self._emit("\033[?25h", flush=True)
+            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+    def choose(self, question: str, options: Sequence[Option], default: int = 0) -> Any:
+        """The value of the option chosen: from a list on a terminal that redraws, the
+        report's and the input's both; otherwise by number, as with ``TERM=dumb``,
+        ``NO_COLOR`` or no terminal. Ctrl+C and the input's end leave as ``ask`` does."""
+        if not options:
+            raise ValueError("A question with options needs one")
+        try:
+            import termios  # noqa: F401
+        except ImportError:  # No terminal control here: numbered.
+            return self._numbered(question, options, default)
+        if self.live and sys.stdin.isatty():
+            return self._listed(question, options, default)
+        return self._numbered(question, options, default)

@@ -19,24 +19,45 @@ alphaavatar setup my-avatar --plan   # print the install plan, change nothing
 
 ## Asked: a new bundle
 
-`alphaavatar setup` starts from the reference configuration `config init` writes: voice and
-vision on, memory with ENV memory, and persona; no tool on. In a terminal, it asks:
+`alphaavatar setup` starts from the reference configuration `config init` writes, and Enter
+keeps each of its answers. In a terminal, it asks step by step:
 
-1. Each part, kept with Enter or switched off: voice (speech in and out, voice activity
-   detected on this machine), vision (camera frames reach the model), models on this machine
-   (turn taking, addressing, face and speaker recognition), ENV memory (memories drawn from the
-   session's audio and video by Google's Gemini, an external model), and the vector store for
-   memory and persona (LanceDB in the Avatar workspace, or your Qdrant). A part switched off
-   keeps its settings in the profiles, to switch it on later, and needs no credential.
-2. Where the models come from, and the speech if voice is on: OpenAI, or a server of your own
-   with OpenAI's API. A server of your own is asked for its URL, then the models (conversation
-   through the Responses API, memory and persona tasks, embeddings) or speech (transcription,
-   synthesis, voice). Speech needs `https://` unless the server is on this machine; a URL the
-   backends would refuse is asked again.
-3. The bundle name and Avatar ID.
-4. The credentials the choice needs, each once with the parts that read it; then whether to
-   store them. ENV memory off asks for no Google key.
-5. The plan, then whether to install and enable it.
+1. **Capabilities**: voice (speech in and out, voice activity detected on this machine), vision
+   (camera frames reach the model), models on this machine (turn taking, addressing, face and
+   speaker recognition), ENV memory (memories drawn from the session's audio and video by
+   Google's Gemini), and where memory and persona keep vectors (LanceDB in the Avatar
+   workspace, or your Qdrant). A part switched off keeps its settings, to switch it on later,
+   and asks nothing more: no model, no credential. No tool is on: switch DeepResearch or MCP on
+   in the bundle's tools profile, then run `alphaavatar setup <bundle>`; this release's setup
+   does not install RAG. Then the bundle name, asked again if a bundle has it, and the Avatar ID.
+2. **Models**: each running part's provider, then its model.
+
+   | Part | Providers |
+   | --- | --- |
+   | The conversation | OpenAI, or a server of your own with OpenAI's Responses API |
+   | Memory, tool memory, persona profiles | OpenAI, Anthropic, Google, OpenRouter, or a server of your own |
+   | ENV memory | Google |
+   | Embeddings | OpenAI, Google, or a server of your own |
+   | Speech recognition | `openai_segment`, `openai_realtime`, or a server of your own with OpenAI's audio API |
+   | Speech synthesis | `openai`, `voiceai`, or a server of your own with OpenAI's audio API |
+
+   The reference's provider is the default, with its model offered; another provider's model is
+   typed, none carried over. Memory, tool memory and persona profiles can take a model chosen for
+   an earlier part (`As for memory: …`). A server of your own is asked for its URL, the one typed
+   before offered; speech needs `https://` unless the server is on this machine, and a URL the
+   backends would refuse is asked again. Speech synthesis asks for a voice (optional for
+   Voice.ai) and a speed where the implementation takes one; a model that reads no instructions
+   (`tts-1`, `tts-1-hd`, Voice.ai) is written with `instructions: null`.
+3. **Credentials**: each variable the choice reads, once, with the parts that read it; then
+   whether to store them.
+4. **Install**: what the bundle runs with, the plan and its download, then whether to install
+   and enable it.
+
+On a terminal, a provider is chosen from a list: the arrow keys move, typing narrows it to the
+options holding what is typed, Escape clears that, Enter takes the marked one. With `TERM=dumb`
+or `NO_COLOR`, the options are numbered: a number, or text only one option holds; Enter takes
+the default. Ctrl+C or the input's end (Ctrl+D) leaves the terminal as it was and writes
+nothing.
 
 Without a terminal, setup refuses with exit code 1 and names `alphaavatar setup <bundle>`.
 
@@ -84,6 +105,7 @@ there too, and nothing is enabled.
 | Variable | Asked for |
 | --- | --- |
 | `OPENAI_API_KEY` | What comes from OpenAI: models, embeddings, tasks, speech |
+| `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `VOICEAI_API_KEY` | The parts chosen from that provider; Google's for ENV memory too, while it is on |
 | `ALPHAAVATAR_SERVER_KEY_<hash>` | Each server of your own, named after its URL; any text if it needs none |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Session transport |
 | `QDRANT_URL`, `QDRANT_API_KEY` | Your Qdrant, when the vectors go there; the key only if it asks for one |
@@ -124,7 +146,7 @@ there too, and nothing is enabled.
   prefix is refused while one runs. A lock that is not a regular file, a link or a pipe, is
   refused and left as it is.
 
-It reports in four steps, each on one line once done. On a terminal, the current step is in
+It reports in five steps, each on one line once done. On a terminal, the current step is in
 signal cyan, and its line shows the download in progress; a pipe, a log or `NO_COLOR` gets each
 artifact on a line of its own. Asked, each step's questions go under it, and the plan comes
 before the confirmation:
@@ -133,24 +155,31 @@ before the confirmation:
 AlphaAvatar / Setup
 
 01  Capabilities
-    From the reference configuration: voice and vision on, memory and persona, each model from the
-    backend chosen below.
+    Each question starts from the reference configuration: Enter keeps its answer.
     Voice: speech in and out, voice activity detected on this machine? [Y/n]:
-    Vision: camera frames reach the model? [Y/n]:
     Models on this machine: turn taking, addressing, face and speaker recognition? [Y/n]: n
     …
-01  Capabilities   Voice on · Vision on · Local models off
-02  Credentials    Ready
-03  Install
+01  Capabilities   Bundle first · Voice on · Vision on · Local models off · ENV memory on
+02  Models
+    Provider for the conversation: OpenAI
+      Model for the conversation [gpt-5.6-luna]:
+    Provider for memory: ↑↓ to move, type to narrow, Enter to choose
+      As for the conversation: OpenAI gpt-5.6-luna
+    › OpenAI  (default)
+      Anthropic
+      …
+02  Models         OpenAI · Google
+03  Credentials    Ready
+04  Install
     AlphaAvatar 0.6.9 (linux-x86_64), plan 97138f31be7bfc50
-    sessions through LiveKit
-    model and embeddings from OpenAI
+    voice on · vision on · models on this machine off · ENV memory on
+    conversation: OpenAI gpt-5.6-luna
     …
     85 packages · 212 MB to download
     Environment ~/.local/lib/alphaavatar/envs/97138f31be7bfc50; bundle first, made the default
     Install and enable? [Y/n]: y
-03  Install        85 packages · 212 MB
-04  Validate       PASS · 3 runners
+04  Install        85 packages · 212 MB
+05  Validate       PASS · 3 runners
 
 OK    Bundle enabled
       Default       first
@@ -165,16 +194,17 @@ Next
 An existing bundle reports the same steps from its settings:
 
 ```text
-01  Capabilities   Bundle reference · Voice on · Vision on · Local models on
-02  Credentials    From the environment, .env or those stored
-03  Install        105 packages · 514 MB
-04  Validate       PASS · 8 runners
+01  Capabilities   Bundle reference · Voice on · Vision on · Local models on · ENV memory on
+02  Models         As the bundle's settings choose them
+03  Credentials    From the environment, .env or those stored
+04  Install        105 packages · 514 MB
+05  Validate       PASS · 8 runners
 ```
 
 `Validate` counts the inference runners the new environment's `config check` plans. A failure,
 a declined plan or Ctrl+C is reported on stderr, `FAIL  Setup failed; nothing was enabled`,
-`WARN  Cancelled; nothing was enabled` or `WARN  Interrupted; nothing was enabled`, with the
-reason below; with `--plan`, the steps go to stderr too, leaving stdout to the plan's JSON.
+`WARN  Cancelled; nothing was enabled`, `WARN  Interrupted; nothing was enabled` or
+`WARN  The input ended; nothing was enabled`, with the reason below; with `--plan`, the steps go to stderr too, leaving stdout to the plan's JSON.
 Then diagnose the bundle with [`alphaavatar doctor`](doctor.md), and start it with
 [`alphaavatar start`](start.md) or [`alphaavatar dev`](dev.md). Each screen, colors and all, is
 in [cli.html](cli.html).
@@ -184,6 +214,6 @@ in [cli.html](cli.html).
 | Code | Meaning |
 | --- | --- |
 | 0 | Enabled, or `--plan` printed |
-| 1 | Nothing enabled: answered no, no terminal to ask in and no bundle given, a selection setup does not install, missing credentials, the machine or free space, a download or the check failed, another installation running |
-| 2 | Refused before installing: a bundle of that name exists, unreadable settings, another error |
+| 1 | Nothing enabled: answered no, the input ended, no terminal to ask in and no bundle given, a selection setup does not install, missing credentials, the machine or free space, a download or the check failed, another installation running |
+| 2 | Refused before installing: `--name` names a bundle that exists, unreadable settings, another error |
 | 130 | Interrupted with Ctrl+C; 143 for SIGTERM, 129 for SIGHUP |

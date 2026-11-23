@@ -56,8 +56,18 @@ PROVIDERS = {
 }
 # The parts a server of one's own with OpenAI's API can serve, besides speech.
 SERVED = frozenset({"loop", "conversation", "tool", "profiler", "embedding"})
+# The earlier parts whose model a part can take as well, where it takes their provider: the
+# chat models'. ENV memory's reads audio and video, and embeddings are a kind of their own.
+REUSE = {
+    "conversation": ("loop",),
+    "tool": ("loop", "conversation"),
+    "profiler": ("loop", "conversation", "tool"),
+}
 TRANSCRIPTION = ("openai_segment", "openai_realtime")
 SYNTHESIS = ("openai", "voiceai")
+# What a speech server of one's own with OpenAI's audio API runs as: OpenAI's realtime
+# transcription is a WebSocket API of its own.
+SPEECH_SERVED = {"transcription": "openai_segment", "synthesis": "openai"}
 KEYS = {
     "openai": OPENAI_KEY,
     "anthropic": "ANTHROPIC_API_KEY",
@@ -145,7 +155,13 @@ class Transcription:
         if self.plugin not in TRANSCRIPTION:
             raise ValueError(f"Speech recognition takes {' or '.join(TRANSCRIPTION)}")
         _model(self.model)
-        if self.server is not None and (problem := server_problem(self.server, speech=True)):
+        if self.server is None:
+            return
+        if self.plugin != SPEECH_SERVED["transcription"]:
+            raise ValueError(
+                "A speech server of your own speaks OpenAI's audio API: openai_segment"
+            )
+        if problem := server_problem(self.server, speech=True):
             raise ValueError(f"Speech server {self.server}: {problem}")
 
     @property
@@ -182,7 +198,7 @@ class Synthesis:
         if self.speed is not None and not 0.25 <= self.speed <= 4.0:
             raise ValueError("A speed from 0.25 to 4.0")
         if self.server is not None:
-            if self.plugin != "openai":
+            if self.plugin != SPEECH_SERVED["synthesis"]:
                 raise ValueError("A speech server of your own speaks OpenAI's audio API: openai")
             if problem := server_problem(self.server, speech=True):
                 raise ValueError(f"Speech server {self.server}: {problem}")
@@ -194,6 +210,12 @@ class Synthesis:
     @property
     def key(self) -> str:
         return server_key(self.server) if self.server else KEYS[self.plugin]
+
+
+TOOLS = (
+    "tools: none on; to use DeepResearch or MCP, switch it on in the bundle's tools profile, "
+    "then run `alphaavatar setup <bundle>`; this release's setup does not install RAG"
+)
 
 
 def _reference() -> dict[str, Any]:
@@ -227,6 +249,20 @@ def _reference() -> dict[str, Any]:
 
 
 REFERENCE = _reference()
+
+
+def default_model(part: str, provider: str, server: str | None = None) -> str | None:
+    """The model a part's question offers: the reference's, from its own provider only; from
+    another provider, or a server of one's own, none, so none is carried over to it. Speech
+    names its implementation as the provider."""
+    reference = REFERENCE[part]
+    same = (getattr(reference, "plugin", None) or reference.provider) == provider
+    return reference.model if same and server is None else None
+
+
+def reusable(part: str, chosen: Model) -> bool:
+    """Whether a part can take a model chosen for another, as ``REUSE`` names them."""
+    return chosen.provider in PROVIDERS[part] and (chosen.server is None or part in SERVED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +302,11 @@ class Selection:
         if self.synthesis.speed is not None:
             return self.synthesis.speed
         return REFERENCE["speed"] if TTSConfig.takes_speed(self.synthesis.plugin) else 1.0
+
+    def speech(self) -> tuple[Transcription, Synthesis] | None:
+        """Speech in and out as the bundle runs them: none while voice is off, whatever was
+        chosen for them; the choice stays in its settings, to switch voice on again."""
+        return (self.transcription, self.synthesis) if self.voice else None
 
     def models(self) -> dict[str, Model]:
         """The parts that run a model: ENV memory's only while it is on."""
@@ -447,8 +488,8 @@ def credentials(selection: Selection) -> tuple[Credential, ...]:
     """What the chosen services read: each variable once, with every part that reads it; a
     part switched off reads none, so ENV memory off asks no Google key of its own."""
     parts: dict[str, Model | Transcription | Synthesis] = dict(selection.models())
-    if selection.voice:
-        parts |= {"transcription": selection.transcription, "synthesis": selection.synthesis}
+    if speech := selection.speech():
+        parts |= dict(zip(("transcription", "synthesis"), speech, strict=True))
     readers: dict[str, list[str]] = {}
     servers: dict[str, str] = {}
     owners: dict[str, str] = {}
@@ -479,6 +520,12 @@ def credentials(selection: Selection) -> tuple[Credential, ...]:
     return tuple(found)
 
 
+def _takes_instructions(synthesis: Synthesis) -> bool:
+    from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
+
+    return TTSConfig.takes_instructions(synthesis.plugin, synthesis.model)
+
+
 def capabilities(selection: Selection) -> tuple[str, ...]:
     """What the selection runs with, in words, as shown before anything is installed."""
     on = {True: "on", False: "off"}
@@ -496,8 +543,8 @@ def capabilities(selection: Selection) -> tuple[str, ...]:
         f"persona profiles: {selection.profiler.describe()}",
         f"embeddings: {selection.embedding.describe()}",
     ]
-    if selection.voice:
-        stt, tts = selection.transcription, selection.synthesis
+    if speech := selection.speech():
+        stt, tts = speech
         found.append(
             f"speech in: {stt.plugin} {stt.model}" + (f" on {stt.server}" * bool(stt.server))
         )
@@ -505,15 +552,12 @@ def capabilities(selection: Selection) -> tuple[str, ...]:
         found.append(
             f"speech out: {tts.plugin} {tts.model}{voice}, speed {selection.speed:g}"
             + (f" on {tts.server}" * bool(tts.server))
+            + ("" if _takes_instructions(tts) else ", no instructions")
         )
     if selection.local_models:
         local = "turn taking, addressing, speaker and face recognition"
         found.append(f"models on this machine: {local if selection.voice else 'face recognition'}")
-    found += [
-        f"memory and persona: vectors in {store[selection.vector_store]}",
-        "tools: none on; switched on in the tools profile, `alphaavatar setup <bundle>` installs "
-        "DeepResearch and MCP, and this release's setup does not offer RAG",
-    ]
+    found += [f"memory and persona: vectors in {store[selection.vector_store]}", TOOLS]
     return tuple(found)
 
 
@@ -542,9 +586,6 @@ def _changes(selection: Selection) -> dict[str, list[Change]]:
                 value={"base_url": chosen.server, "api_key_env": chosen.key},
             )
 
-    if not selection.voice:
-        for part, plugin in (("vad", "silero"), ("stt", "openai_segment"), ("tts", "openai")):
-            put("voice", part, "plugin", value=None, note=f"Voice off; {plugin} turns it on.")
     if not selection.vision:
         put("vision", "enabled", value=False)
     if not (selection.voice and selection.local_models):
@@ -574,15 +615,20 @@ def _changes(selection: Selection) -> dict[str, list[Change]]:
     ):
         model(section, path, selection.embedding, REFERENCE["embedding"])
 
+    # Voice decides whether each part runs: off, none does, what was chosen kept beside it.
     stt, tts = selection.transcription, selection.synthesis
-    for key, reference, chosen in (
-        ("plugin", REFERENCE["transcription"].plugin, stt.plugin),
-        ("model", REFERENCE["transcription"].model, stt.model),
+    for part, plugin, reference in (
+        ("vad", "silero", "silero"),
+        ("stt", stt.plugin, REFERENCE["transcription"].plugin),
+        ("tts", tts.plugin, REFERENCE["synthesis"].plugin),
     ):
-        if chosen != reference:
-            put("voice", "stt", key, value=chosen)
+        if selection.speech() is None:
+            put("voice", part, "plugin", value=None, note=f"Voice off; {plugin} turns it on.")
+        elif plugin != reference:
+            put("voice", part, "plugin", value=plugin)
+    if stt.model != REFERENCE["transcription"].model:
+        put("voice", "stt", "model", value=stt.model)
     for key, reference, chosen in (
-        ("plugin", REFERENCE["synthesis"].plugin, tts.plugin),
         ("model", REFERENCE["synthesis"].model, tts.model),
         ("speaker", REFERENCE["synthesis"].speaker, tts.speaker),
     ):

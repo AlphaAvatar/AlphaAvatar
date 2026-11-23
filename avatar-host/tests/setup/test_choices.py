@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
+from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
 from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.configs import ConfigSource, resolve_capabilities, validate_application
 from alphaavatar.host.configs.template import SECTIONS, render_bundle
@@ -44,6 +45,7 @@ from alphaavatar.host.tools.setup.choices import (
     Synthesis,
     Transcription,
     bundle_requirements,
+    capabilities,
     credentials,
     requirements,
     sections,
@@ -917,7 +919,7 @@ CHANGED = {
         env_memory=False,
         vector_store="qdrant",
         **own_models("http://gpu.invalid:8000/v1"),
-        transcription=Transcription("openai_realtime", "gpt-realtime-whisper", SPEECH),
+        transcription=Transcription("openai_segment", "whisper-large-v3", SPEECH),
         synthesis=Synthesis("openai", "tts-1", "alloy", 1.2, SPEECH),
     ),
     "all off": Selection(voice=False, vision=False, local_models=False, env_memory=False),
@@ -971,3 +973,94 @@ def test_a_changed_profile_keeps_every_other_setting_comment_and_blank_line(name
             if line[:2] in ("- ", "+ "):
                 setting = line[2:].strip()
                 assert setting.split(":")[0] in names or setting in instructions, (section, line)
+
+
+@pytest.mark.parametrize("chosen", ["speech in", "speech out", "both"])
+def test_voice_off_runs_no_speech_whatever_was_chosen_for_it_and_keeps_the_choice(
+    chosen: str, tmp_path: Path
+) -> None:
+    speech: dict[str, object] = {}
+    if chosen != "speech out":
+        speech["transcription"] = Transcription("openai_realtime", "gpt-realtime-whisper")
+    if chosen != "speech in":
+        speech["synthesis"] = Synthesis("voiceai", "voiceai-tts-v1", None)
+    off, on = Selection(voice=False, **speech), Selection(**speech)
+    config = compose(off, tmp_path / "off")
+    voice, text = config.avatar.voice, sections(off)["voice"]
+    assert (voice.vad.plugin, voice.stt.plugin, voice.tts.plugin) == (None, None, None)
+    # What was chosen stays, and says what turns it on.
+    stt = speech.get("transcription", Transcription("openai_segment", "gpt-4o-transcribe"))
+    tts = speech.get("synthesis", Synthesis("openai", "gpt-4o-mini-tts", "ash"))
+    assert (voice.stt.model, voice.tts.model, voice.tts.speaker) == (
+        stt.model,
+        tts.model,
+        tts.speaker,
+    )
+    for plugin in ("silero", stt.plugin, tts.plugin):
+        assert f"  plugin: null  # Voice off; {plugin} turns it on.\n" in text
+    # Nothing of speech is planned, asked for or summarized: as voice off with the reference's.
+    found = sorted({need.requirement for need in resolve_capabilities(config).needs})
+    assert found == list(requirements(off)) == list(requirements(Selection(voice=False)))
+    asked = {credential.name: credential.purpose for credential in credentials(off)}
+    assert "VOICEAI_API_KEY" not in asked and not [p for p in asked.values() if "speech" in p]
+    summary = capabilities(off)
+    assert summary[0].startswith("voice off") and not [line for line in summary if "speech" in line]
+    # The same choices with voice on run as chosen.
+    runs = compose(on, tmp_path / "on")
+    assert (runs.avatar.voice.stt.plugin, runs.avatar.voice.tts.plugin) == (stt.plugin, tts.plugin)
+    found = sorted({need.requirement for need in resolve_capabilities(runs).needs})
+    assert found == list(requirements(on)) == list(requirements(Selection()))
+    assert ("VOICEAI_API_KEY" in {c.name for c in credentials(on)}) == (tts.plugin == "voiceai")
+    assert [line for line in capabilities(on) if line.startswith("speech out")] == [
+        f"speech out: {tts.plugin} {tts.model}"
+        + (f", voice {tts.speaker}" if tts.speaker else "")
+        + f", speed {on.speed:g}"
+        + ("" if TTSConfig.takes_instructions(tts.plugin, tts.model) else ", no instructions")
+    ]
+
+
+def test_a_part_offers_the_reference_s_model_from_its_own_provider_alone() -> None:
+    from alphaavatar.host.tools.setup.choices import REFERENCE, default_model
+
+    server = "http://gpu.invalid:8000/v1"
+    for part in ("loop", "conversation", "tool", "environment", "profiler", "embedding"):
+        reference = REFERENCE[part]
+        assert default_model(part, reference.provider) == reference.model
+        # Another provider, or a server of one's own, has no model carried over to it.
+        assert default_model(part, reference.provider, server) is None
+        for other in {"openai", "anthropic", "google", "openrouter"} - {reference.provider}:
+            assert default_model(part, other) is None, (part, other)
+    assert default_model("transcription", "openai_segment") == "gpt-4o-transcribe"
+    assert default_model("transcription", "openai_realtime") is None
+    assert default_model("synthesis", "openai") == "gpt-4o-mini-tts"
+    assert default_model("synthesis", "voiceai") is None
+
+
+def test_a_chat_model_can_serve_the_later_chat_parts_that_take_its_provider() -> None:
+    from alphaavatar.host.tools.setup.choices import PROVIDERS, REUSE, reusable
+
+    order = ("loop", "conversation", "tool", "profiler")
+    # Only earlier chat parts: ENV memory reads audio and video, embeddings are their own kind.
+    assert set(REUSE) | {"loop"} == set(order)
+    for part, earlier in REUSE.items():
+        assert set(earlier) == set(order[: order.index(part)]), part
+    server = Model("openai", "qwen3", "http://gpu.invalid:8000/v1")
+    for part in REUSE:
+        assert reusable(part, server) and reusable(part, Model("anthropic", "claude-sonnet-4-5"))
+    assert not reusable("loop", Model("anthropic", "claude-sonnet-4-5"))
+    assert not reusable("environment", Model("openai", "gpt-4o"))
+    assert PROVIDERS["environment"] == ("google",)
+
+
+def test_a_speech_server_of_one_s_own_runs_as_openai_s_audio_api() -> None:
+    from alphaavatar.host.tools.setup.choices import SPEECH_SERVED
+
+    server = "https://speech.invalid/v1"
+    stt = Transcription(SPEECH_SERVED["transcription"], "whisper-large-v3", server)
+    tts = Synthesis(SPEECH_SERVED["synthesis"], "kokoro", "af_heart", server=server)
+    assert (stt.server, tts.server) == (server, server)
+    # Realtime transcription is a WebSocket API of OpenAI's own; Voice.ai is Voice.ai's.
+    with pytest.raises(ValueError, match="openai_segment"):
+        Transcription("openai_realtime", "gpt-realtime-whisper", server)
+    with pytest.raises(ValueError, match="openai"):
+        Synthesis("voiceai", "voiceai-tts-v1", None, server=server)

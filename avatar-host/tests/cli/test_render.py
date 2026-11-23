@@ -19,13 +19,14 @@ from __future__ import annotations
 import io
 import os
 import re
+import sys
 from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 
 from alphaavatar.host.cli.commands import doctor as doctor_command
-from alphaavatar.host.cli.render import Report
+from alphaavatar.host.cli.render import Option, Report
 from alphaavatar.host.log.format import BRAND_BLUE, GREEN, RESET, SIGNAL_CYAN
 from alphaavatar.host.tools.doctor import (
     CHECKS,
@@ -413,3 +414,143 @@ def test_a_missing_package_too_long_for_the_line_shows_its_parts_apart(
         "        alpha-avatar-plugins-loop",
         "        `alphaavatar setup alpha` installs it",
     ]
+
+
+PROVIDERS = [Option(name, name.lower()) for name in ("OpenAI", "Anthropic", "Google", "OpenRouter")]
+
+
+def test_options_without_a_terminal_are_numbered_and_answered_by_number_or_text(
+    color_capable: object,
+) -> None:
+    out = io.StringIO()
+    # Out of range, then text two labels hold, then text only one holds.
+    queue = ["9", "open", "rout", "", "3"]
+    with mock.patch("builtins.input", lambda prompt="": queue.pop(0)):
+        assert Report(out, width=100).choose("Provider for memory", PROVIDERS, 1) == "openrouter"
+        assert Report(out, width=100).choose("Provider for memory", PROVIDERS, 1) == "anthropic"
+        assert Report(out, width=100).choose("Provider for memory", PROVIDERS, 1) == "google"
+    assert queue == []
+    shown = out.getvalue().splitlines()
+    assert shown[:4] == [
+        "      1  OpenAI",
+        "      2  Anthropic  (default)",
+        "      3  Google",
+        "      4  OpenRouter",
+    ]
+    # (Answered here without a terminal's echo, so a prompt and the next line share one.)
+    assert out.getvalue().count("      A number from 1 to 4, or text one option holds\n") == 2
+    assert "\033" not in out.getvalue()  # Plain: no list is drawn where nothing redraws.
+
+
+CHOOSER = """
+import fcntl, os, sys, termios
+from alphaavatar.host.cli.render import Option, Report
+os.setsid()  # The terminal this reads becomes its own: Ctrl+C reaches it as a person's would.
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+options = [Option(name, name.lower()) for name in ("OpenAI", "Anthropic", "Google", "OpenRouter")]
+try:
+    chosen = Report(sys.stdout).choose("Provider for memory", options, 1)
+except KeyboardInterrupt:
+    chosen = "interrupted"
+except EOFError:
+    chosen = "ended"
+print("chosen:", chosen, flush=True)
+"""
+
+
+def listed(*keys: bytes, columns: int = 100) -> tuple[str, str, bool, bool]:
+    """``choose`` on a real terminal, each key typed once the list is drawn again: what it
+    gave, the screen's last state as text, whether the terminal read keys unechoed and one by
+    one while the list was up, and whether its settings were as before once it ended."""
+    import fcntl
+    import pty
+    import select
+    import struct
+    import subprocess
+    import termios
+    import time
+
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, columns, 0, 0))
+    before = termios.tcgetattr(slave)
+    env = {k: v for k, v in os.environ.items() if k not in ("NO_COLOR", "COLUMNS")}
+    child = subprocess.Popen(
+        [sys.executable, "-c", CHOOSER],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        env=env | {"TERM": "xterm-256color"},
+        start_new_session=False,
+        pass_fds=(),
+    )
+    received, cbreak = b"", True
+
+    def read_until(marker: bytes, seen: int) -> int:
+        nonlocal received
+        end = time.monotonic() + 30
+        while (at := received.find(marker, seen)) < 0:
+            assert time.monotonic() < end, received.decode(errors="replace")
+            if select.select([master], [], [], 0.1)[0]:
+                received += os.read(master, 65536)
+        return at + len(marker)
+
+    try:
+        seen = read_until(b"\033[?25l", 0)  # The list is up.
+        for key in keys:
+            seen = read_until(b"Provider for mem", seen)  # Cut short on a narrow terminal.
+            mode = termios.tcgetattr(slave)[3]
+            cbreak &= not mode & (termios.ICANON | termios.ECHO) and bool(mode & termios.ISIG)
+            os.write(master, key)
+        read_until(b"chosen: ", seen)
+        assert child.wait(30) == 0
+        while select.select([master], [], [], 0.2)[0]:
+            received += os.read(master, 65536)
+        restored = termios.tcgetattr(slave) == before
+    finally:
+        child.kill()
+        child.wait()
+        os.close(master)
+        os.close(slave)
+    text = received.decode()
+    chosen = text.rsplit("chosen: ", 1)[1].split()[0]
+    # The cursor shown again once the list is gone, whatever ended it.
+    assert text.rfind("\033[?25h") > text.rfind("\033[?25l")
+    return chosen, text, cbreak, restored
+
+
+@pytest.mark.parametrize(
+    ("keys", "chosen", "answered"),
+    [
+        ((b"\r",), "anthropic", "Anthropic"),  # The default, as marked first.
+        ((b"\033[B", b"\033[B", b"\033[B", b"\r"), "openai", "OpenAI"),  # Down past the last.
+        ((b"\033[A", b"\n"), "openai", "OpenAI"),
+        ((b"g", b"l", b"\r"), "google", "Google"),  # Narrowed to the one holding it.
+        # Widened again, the mark stays on what it marked.
+        ((b"o", b"p", b"e", b"n", b"r", b"\x7f", b"\x7f", b"\r"), "openrouter", "OpenRouter"),
+        ((b"x", b"y", b"\r", b"\033", b"\r"), "anthropic", None),  # Nothing holds xy; cleared.
+        ((b"\x03",), "interrupted", None),  # Ctrl+C still interrupts.
+        ((b"\x04",), "ended", None),  # Ctrl+D ends the input.
+    ],
+    ids=["enter", "down-wraps", "up", "typed", "backspace", "nothing-held", "ctrl-c", "ctrl-d"],
+)
+def test_options_on_a_terminal_are_a_list_the_arrows_and_typing_choose_from(
+    keys: tuple[bytes, ...], chosen: str, answered: str | None
+) -> None:
+    found, text, cbreak, restored = listed(*keys)
+    assert (found, cbreak, restored) == (chosen, True, True)
+    last = text.rsplit("\033[J", 1)[1]  # What stays once the list is erased.
+    plain = re.sub(r"\033\[[0-9;?]*[A-Za-z]", "", last)
+    question = "    Provider for memory:"
+    assert plain.startswith(f"{question} {answered}\r\n" if answered else question)
+    if keys == (b"x", b"y", b"\r", b"\033", b"\r"):
+        assert "No option holds that" in text  # And Enter took nothing then.
+
+
+def test_a_list_on_a_narrow_terminal_keeps_each_line_it_redraws_within_it() -> None:
+    found, text, cbreak, restored = listed(b"\033[B", b"o", b"\r", columns=24)
+    assert (found, cbreak, restored) == ("google", True, True)
+    # Each line drawn before the answer fits: one that wrapped would be redrawn a line off.
+    drawn = re.sub(r"\033\[[0-9;?]*[A-Za-z]", "", text.rsplit("\033[J", 1)[0])
+    widths = [len(line.rsplit("\r", 1)[-1]) for line in drawn.split("\n")]
+    assert max(widths) <= 23
+    assert "    Provider for mem…" in drawn and "    › Anthr…  (default)" in drawn

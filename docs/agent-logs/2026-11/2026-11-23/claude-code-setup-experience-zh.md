@@ -18,8 +18,8 @@
 |---|---|---|
 | 0 | 核对并补全 demo.yaml | 已提交（`1cb5c828`） |
 | 1 | 随包分发的完整默认模板，`config init` 写出 | 已提交（`1cb5c828`），通过审查 |
-| 2 | 统一的配置决策：能力开关、按组件选 Provider 和模型、TTS 兼容性、依赖、凭据、摘要；保留注释的写入 | 完成，待审查 |
-| 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 待开始 |
+| 2 | 统一的配置决策：能力开关、按组件选 Provider 和模型、TTS 兼容性、依赖、凭据、摘要；保留注释的写入 | 已提交（`b14b5894`）；审查发现的两处已修复（§4.1、§4.2） |
+| 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 完成，待审查（§4） |
 | 4 | 安装器输出的颜色和分组 | 待开始 |
 | 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 待开始 |
 
@@ -221,3 +221,157 @@
 
 - 按组件选择 Provider 和模型的问答、方向键菜单、完整的交互流程和 PTY 验证，在批次 3。现在的 CLI 只问开关、ENV、向量库，以及 OpenAI 或自建服务器。
 - 安装器配色在批次 4；已有 Bundle 的保护、Embedding 变更检查、新候选包的真实安装和 Setup 验证在批次 5。
+
+## 4. 第二批的审查修复与批次 3（基线 `b14b5894`）
+
+依据：用户对 `b14b5894` 的审查。先修两处问题，回归通过后继续第三批的交互流程，并用真实 PTY 验证。
+
+### 4.1 Voice 关闭后，自选的 STT/TTS 被重新启用
+
+- 原因：`_changes()` 先按 `voice=False` 写 `plugin: null`，随后又无条件写入非默认实现，覆盖了关闭结果。于是 YAML 启用了 STT/TTS，摘要却显示 Voice off，依赖和凭据里也都没有语音。
+- 修复：`Selection.speech()` 在 Voice 关闭时返回 None。凭据、摘要、YAML 都从它取值，三个 plugin 的启停只由 Voice 决定。选过的模型、声音、服务器写在原处，注释注明重新开启时用哪个实现，例如 `plugin: null  # Voice off; openai_realtime turns it on.`。
+- 回归 `test_voice_off_runs_no_speech_whatever_was_chosen_for_it_and_keeps_the_choice` 覆盖三种情况：非默认 STT、非默认 TTS、两者都选。检查的内容：
+  - 最终 YAML 和实际解析出的能力；
+  - 依赖、凭据、摘要；
+  - 同样的选择打开 Voice 后照选运行。
+
+  这个测试在推送版本上 3 个参数全部失败。
+
+### 4.2 Google Embedding 的 Vertex/ADC 认证
+
+- 原因：批次 2 让 `_create_google_embedding` 在进入 SDK 之前无条件要求 `GOOGLE_API_KEY`，原本有效的 Vertex/ADC 配置（`vertexai: true`、`project`）因此被提前拒绝。
+- 依据锁定的 `langchain-google-genai==4.2.5`，它判断是否走 Vertex AI 的顺序是：
+  1. `vertexai` 设置；
+  2. 否则看 `GOOGLE_GENAI_USE_VERTEXAI`；
+  3. 否则有 `project` 或 `credentials` 就走 Vertex。
+
+  Vertex 由 SDK 自己认证，不需要 API key；Gemini Developer API 必须有 key。SDK 同时读 `GEMINI_API_KEY`。
+- 修复：
+  - 新增 `_vertex(kwargs)`，按上述顺序判断；
+  - API key 照旧按项目规则读：明确给出的 `api_key`、`google_api_key`，否则 `credential(api_key_env)`，空白视为缺失；没有另起变量名时也读 `GEMINI_API_KEY`；
+  - 有 key 就交给 SDK；没有 key 且不走 Vertex 时才报缺失；
+  - 没有新增 Setup 的 Vertex 菜单。
+- 回归 `avatar-plugins-provider/tests/test_google_embedding.py`，6 个用例，覆盖：
+  - 普通 key、自定义 `api_key_env`、设置里给出的 key、`GEMINI_API_KEY`；
+  - 空串和空白，在构造任何客户端之前就拒绝；
+  - Vertex 的三种进入方式：`vertexai: true`、只给 `project`、环境开关。
+
+  SDK 的 `Client` 换成了记录参数的替身，不连接 Google。这组测试在推送版本上 4 个失败。
+
+### 4.3 交互流程（`cli/commands/setup.py`）
+
+- 步骤：
+  1. Capabilities：先问开关和向量库，再说明工具：Tools 默认关闭；启用 DeepResearch 或 MCP 要在 tools profile 里打开后运行 `alphaavatar setup <bundle>`；本版 setup 不安装 RAG。最后问 Bundle 名称和 Avatar ID。
+  2. Models：每个运行中的部分先选 Provider，再接受默认模型或填写模型。
+  3. Credentials。
+  4. Install：先显示摘要和计划，确认后安装。
+  5. Validate。
+
+  已有 Bundle 用同样的编号，第 2 步显示"As the bundle's settings choose them"。
+- 列表：
+  - 新增 `Report.choose(question, options, default)`，放在 `cli/render.py`，与 `ask` 并列，没有新建模块；
+  - 在终端里是列表：方向键移动；输入文字筛选出包含它的选项，Escape 清空，Backspace 删字；Enter 选中；默认项先被标记，并注明 `(default)`；
+  - `TERM=dumb`、`NO_COLOR`、没有终端控制时改为编号：输入数字，或只有一个选项包含的文字，Enter 取默认；无效输入会提示并重问；
+  - 列表用 cbreak 模式，Ctrl+C 仍然中断。Ctrl+D 或输入结束报"The input ended; nothing was enabled"，退出码 1。不论怎样结束，都恢复终端设置并重新显示光标；
+  - 每行按终端宽度截断，避免折行后重绘错位。
+- 规则仍在 `tools/setup/choices.py`，CLI 只负责问答和展示：
+  - `default_model(part, provider, server)`：只在参考配置自己的 Provider 下给出参考模型；换了 Provider 或自建服务器，没有默认模型，必须填写；
+  - `REUSE` 和 `reusable()`：Memory、Tool memory、Persona 可以沿用前面已选的对话类模型（`As for memory: …`），前提是该部分接受那个 Provider；ENV（音视频）和 Embedding 不参与沿用；
+  - `TOOLS`：工具说明，step 1 和摘要用同一句；
+  - `SPEECH_SERVED`：自建语音服务器对应的实现，识别为 `openai_segment`，合成为 `openai`；`Transcription` 和 `Synthesis` 对其他组合直接拒绝。
+- 跳过无关问答：
+  - ENV 关闭时不问它的模型，也不要 Google key；
+  - Voice 关闭时不问语音的 Provider、模型、声音、语速；
+  - Voice.ai 不问语速，声音 ID 可以留空；
+  - 不读 instructions 的模型给出说明。
+- 服务器：后面的部分默认填入前面输入过的地址。语音只沿用满足语音要求的地址（非本机须 `https://`）。
+- 名称：交互输入的名称已被占用时提示并重问；用 `--name` 给出的仍然直接拒绝。
+- 摘要的位置不变：问答和凭据之后、安装依赖之前。摘要多了一项：TTS 不读 instructions 时注明"no instructions"。
+
+### 4.4 验证中发现的已有缺陷（基线之前就存在）
+
+- **交互选择 Qdrant 必然失败**，除非 `QDRANT_URL` 事先已经设置：
+  - 原因：凭据步骤之前，Setup 为了取 `host.rtc` 解析了整个新 Bundle，`${oc.env:QDRANT_URL}` 在被询问之前就报缺失。`5bc91176`、`1cb5c828`、`b14b5894` 都有这个问题，是 PTY 走完整流程时发现的；它阻塞了一个可选项，所以本批一并修复；
+  - 修复：`_host(texts, name)` 只读新 Bundle 的 host profile（Setup 从不修改它），不再解析 Avatar 的各部分；
+  - 原来的整体解析还顺带从 `.env` 和保存的凭据里补全 Bundle 引用的变量。这一步现在由 `fill_configured` 对要询问的变量显式完成，所以 `.env` 或保存的值仍然显示"Enter keeps it"；
+  - 回归 `test_voice_off_asks_nothing_of_speech_and_vectors_in_qdrant_read_its_url`：问到 URL 后启用成功，YAML 里只有 `${oc.env:QDRANT_URL}`，不出现输入的地址；`.env` 里有值时 Enter 保留。
+- `_server` 用 `str.capitalize()`，把"API root"显示成"api root"，改为只把首字母大写。
+- 批次 2 的一个测试用例组合了 `openai_realtime` 和自建 http(s) 服务器。实际上 realtime 通过 WebSocket 连接 `wss://…/realtime`，这个组合不能运行。用例改为 `openai_segment`，限制写入 `Transcription`。
+
+### 4.5 测试
+
+- `tests/cli/test_render.py`：
+  - 编号回退：越界、多个选项都包含的文字、唯一匹配、Enter、数字；
+  - 真实 PTY（`pty.openpty` 加子进程，子进程把它设为控制终端）共 8 种：Enter 取默认；向下越过末尾回到开头；向上；输入筛选；Backspace 放宽后标记不变；无匹配时 Enter 无效，Escape 清空；Ctrl+C；Ctrl+D。每种都检查：
+    - 列表显示期间终端处于不回显、逐键读取的模式，且 ISIG 打开；
+    - 结束后终端设置恢复，光标重新显示；
+  - 24 列的窄终端：每行都不超过宽度。
+- `tests/cli/test_setup.py`：
+  - 新增 `Person`：按问题文字回答，其余回车，并记录所有提示；原有的顺序队列全部迁移过来；
+  - 新增 `test_each_part_is_asked_its_provider_then_its_model_and_each_key_once`，选择组合为：Memory 用 Anthropic，Tool memory 沿用 Memory，Persona 用 OpenRouter，Embedding 用 Google，STT 用 realtime，TTS 用 Voice.ai。检查：
+    - 默认模型只出现在参考 Provider 下；
+    - Voice.ai 不问语速；
+    - 每个 key 只问一次，并列出读它的部分；
+    - 摘要在凭据之后、安装之前；
+    - 写出的 Bundle 按回答运行；
+  - Ctrl+C 停在名称或 Provider 列表、输入在模型问题处结束：都不写任何文件，退出码分别为 130 和 1；
+  - 已被占用的名称会重问，`--name` 直接拒绝；
+  - `setup <bundle>` 安装成功后，被编辑过的 Bundle 的配置文件逐字节不变；
+  - 测试包的 catalog 改为包含 Setup 提供的全部依赖，Qdrant 因此能规划。
+- `tests/setup/test_choices.py`：`default_model`、`REUSE`/`reusable`、`SPEECH_SERVED` 的规则各有一个测试；Voice 关闭的交叉回归见 §4.1。
+- 变异测试（仓库外加载修改过的模块，PTY 子进程通过 `sitecustomize` 加载同一个变异）。以下 15 个全部被发现：
+  - 换 Provider 后沿用默认模型；不提供沿用；
+  - ENV 关闭仍问模型；Voice 关闭仍问语音；
+  - 占用的名称不重问；不处理输入结束；
+  - 询问凭据前解析整个 Bundle（即 §4.4 的缺陷）；不从 `.env` 和保存值补全；
+  - 不恢复终端；光标保持隐藏；输入不筛选；编号模式不认文字；忽略 Ctrl+D；
+  - realtime 接受自建服务器；行不截断。
+
+  另外，推送版本的 `_changes` 和 Google embedding 分别在 §4.1、§4.2 的回归上失败。
+
+### 4.6 真实终端验证
+
+- 交互流程：
+  - 方法：把 Setup 放进真实 PTY（`pty.fork`，TERM=xterm-256color），对着替身包运行，和 CLI 测试一样：不下载，`enable()` 照常写入；
+  - 屏幕用 VT 模拟器 pyte 还原，pyte 装在仓库外的临时 uv 环境里；
+  - 每个用例都检查：退出码、终端设置是否恢复、光标是否显示、是否有残留进程、HOME 下是否写了文件。
+
+| 用例 | 结果 |
+|---|---|
+| 完整流程：方向键、筛选、沿用、Qdrant、Voice.ai，问完凭据后安装 | 退出码 0，按回答写出 Bundle |
+| `TERM=dumb`：编号模式，越界和歧义文字重问，用文字选中 Qdrant 和 Google；换 Provider 后模型必须填写 | 拒绝安装，退出码 1，屏幕上没有控制字符，未写文件 |
+| `NO_COLOR` 下编号模式里按 Ctrl+C | 130 |
+| 列表中 Ctrl+D | 1，提示"The input ended" |
+| 文本问题中 Ctrl+D | 1 |
+| 列表中 Ctrl+C | 130 |
+| 列表显示时收到 SIGTERM | 143 |
+| 12 行的终端：列表在底部滚动、反复重绘 | 屏幕上始终只有一份列表，标记正确 |
+| 无效的服务器地址和语速（`fast`、`9`）被重问；占用的名称重问；后续部分沿用服务器；`tts-1` 写成 `instructions: null` | 0 |
+
+  以上用例的终端设置都恢复了，光标都重新显示，没有残留进程，除第一行和最后一行外 HOME 下都没有写文件。
+
+- 安装器接续 Setup：
+  - 包：`b14b5894` 的 CI 包，Linux package 运行 45153808355，artifact 14808086639；`SHA256SUMS` 全部 OK；
+  - 包里的这三个 Host 文件先确认与 `b14b5894` 一致，再替换为本批版本，删除对应的 `.pyc` 后重新打包；
+  - `install.sh` 与仓库里的文件逐字节一致。在隔离的 HOME 中通过管道交给 bash（`cat install.sh | bash -s -- --file …`），在 PTY 里运行；
+  - 回答安装器的询问后，Setup 经 `/dev/tty` 接收真实输入：方向键、输入筛选（`qd` 选中 Qdrant，`goo` 选中 Google）、沿用、凭据都正常。在"Install and enable?"回答 n，Setup 退出码 1，安装器报"Setup: did not finish (exit 1); AlphaAvatar stays installed"，自身退出码 0；
+  - 另一次在列表中按 Ctrl+C：Setup 退出码 130，安装器继续给出报告，退出码 0；
+  - 两次都检查了：终端设置恢复，光标显示，没有残留进程，没有写入配置或凭据，输入的密钥没有出现在任何文件里；
+  - 中途另有一次因为脚本出错，在问答中途断开了 PTY：挂断后安装器和 Setup 都已退出，没有残留进程。
+- 屏幕记录和脚本都放在仓库外（`$CLAUDE_JOB_DIR/tmp/pty`）。
+
+### 4.7 验证
+
+- 相关测试：全部 Host 测试、provider 插件、voice 插件、Agents 配置，共 662 passed。
+- 离线全量：最终代码上 1079 passed，47 warnings，371 s；运行前后，未跟踪和被忽略的文件一致。
+- 最终代码上，§4.6 的 PTY 用例和两次安装器接续又全部重跑了一遍，结果相同。
+- 仓库规范：`uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`、`git diff --check` 都通过。
+- 推送 SHA `b14b5894` 的 CI：Quality（45153808150）和 Linux package（45153808355）都是 success。`1cb5c828` 的 Quality 失败，原因是离线测试超过 10 分钟被中止，不是用例失败。
+
+### 4.8 未验证与剩余
+
+- `docs/cli/cli.html` 里的 Setup 画面仍是旧流程，没有重新录制。安装器配色在批次 4 完成后，再一并重录。
+- 方向键列表在 PTY 加 pyte 中验证过，没有在具体的终端程序（GNOME Terminal、iTerm2、tmux 等）里由人操作过。
+- 安装器验证用的是替换了三个文件的 CI 包，不是新构建的候选包。在"Install and enable?"处回答了 n，没有下载、安装 wheel，也没有运行真实的 `config check`。新候选包的完整验收在批次 5。
+- 没有调用任何模型或远程服务。
+- 已有 Bundle 的保护和 Embedding 变更的检查在批次 5。
