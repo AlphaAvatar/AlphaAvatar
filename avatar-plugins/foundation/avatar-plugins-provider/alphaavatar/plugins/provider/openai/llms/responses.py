@@ -179,6 +179,7 @@ class OpenAIResponsesLLM(StreamingLLMBase):
                     if normalized is not None:
                         raise normalized from None
                     raise
+
             decoder = ResponsesDecoder(
                 request_id=request.request_id,
                 scope=continuation_scope(self._client.scope, self._config.model),
