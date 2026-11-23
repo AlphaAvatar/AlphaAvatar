@@ -19,8 +19,8 @@
 | 0 | 核对并补全 demo.yaml | 已提交（`1cb5c828`） |
 | 1 | 随包分发的完整默认模板，`config init` 写出 | 已提交（`1cb5c828`），通过审查 |
 | 2 | 统一的配置决策：能力开关、按组件选 Provider 和模型、TTS 兼容性、依赖、凭据、摘要；保留注释的写入 | 已提交（`b14b5894`）；审查发现的两处已修复（§4.1、§4.2） |
-| 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 完成，待审查（§4） |
-| 4 | 安装器输出的颜色和分组 | 待开始 |
+| 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
+| 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 完成，待审查（§5） |
 | 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 待开始 |
 
 ## 1. 批次 0：demo.yaml
@@ -375,3 +375,112 @@
 - 安装器验证用的是替换了三个文件的 CI 包，不是新构建的候选包。在"Install and enable?"处回答了 n，没有下载、安装 wheel，也没有运行真实的 `config check`。新候选包的完整验收在批次 5。
 - 没有调用任何模型或远程服务。
 - 已有 Bundle 的保护和 Embedding 变更的检查在批次 5。
+
+## 5. 第三批的审查修复与批次 4（基线 `3e5b8e2d`）
+
+依据：用户对 `3e5b8e2d` 的审查。先修两处边界问题，再做安装器输出的优化，并更新 `docs/cli/cli.html` 里过时的 Setup 画面。
+
+### 5.1 列表结束时的终端恢复窗口（`cli/render.py`）
+
+- 原因：`_listed()` 的 `finally` 先显示光标，再调用 `termios.tcsetattr()` 恢复终端。TERM、HUP、INT 的处理函数在两步之间抛出异常时，恢复被跳过，退出后 `ICANON`、`ECHO` 仍是关闭的。
+- 修复：`finally` 第一件事就恢复终端属性。恢复期间信号的处理函数抛出的异常先暂存，属性再恢复一次，光标显示之后才重新抛出。光标的写出改由 `_show_cursor()` 负责，写不出去（`OSError`、`ValueError`）时忽略，报告的仍是列表结束的原因。退出码保持原样：TERM 143，HUP 129，INT 130。
+- 回归 `test_a_signal_as_a_list_ends_never_leaves_the_terminal_unrestored`：
+  - 4 个注入点（恢复前、恢复后、显示光标前、显示光标后）× 3 种信号，共 12 种；
+  - 子进程在真实 PTY 里打开列表，按 Enter 后在注入点给自己发信号；父进程一直持有 PTY，子进程退出后先读终端设置，检查退出码，以及设置与开始前一致、`ICANON` 和 `ECHO` 打开。
+- 另有 `test_a_cursor_the_terminal_takes_no_more_of_leaves_its_settings_restored`：光标写出失败，属性照样恢复，选择照常返回。
+- 用 `3e5b8e2d` 的 `render.py` 跑这 13 个用例：10 个失败（恢复前、显示光标前、显示光标后各 3 种信号，以及光标写出失败）。恢复后注入的 3 个在旧代码上也通过，因为旧代码的恢复本来就是最后一步。
+
+### 5.2 Vertex 判断与 SDK 的布尔解析不一致（`langchain/embeddings/models.py`）
+
+- 原因：`_vertex()` 用 `bool(vertexai)`，把 `"false"`、`"0"`、`"no"` 都当成 True。例如 `vertexai: ${oc.env:USE_VERTEXAI}` 在 `USE_VERTEXAI=false` 时，项目以为走 Vertex，跳过了 key 检查；SDK 实际走 Developer API，又从环境里读到空白的 key 并构造客户端。
+- 依据：锁定的 SDK 中 `vertexai` 是 pydantic 的 `bool | None` 字段。离线对照确认：
+  - `"false"`、`"0"`、`"no"`、`"off"`、`"False"`、`False`、`0` 都解析为 False，并且即使给了 `project` 也走 Developer API；
+  - `"true"`、`"1"`、`"yes"`、`"on"`、`True`、`1` 都解析为 True；
+  - `"maybe"` 由 SDK 以 `vertexai` 字段名报 ValidationError。
+- 修复：用 `TypeAdapter(bool | None)` 按同样的规则解析。不是布尔值时交给 SDK 自己按字段名报错，在读 key 之前。环境开关和 `project`/`credentials` 的判断不变。
+- 回归，在原有 6 个之外新增 28 个：
+  - 7 种"关闭"写法 × 缺失、空串、空白 3 种 key 状态：在项目层按变量名拒绝，不构造客户端；给出有效 key 后照常使用 Developer API；
+  - 6 种"开启"写法：环境里只有空白 key 时，仍用 Vertex 自己的认证；
+  - 无效值：由 SDK 按字段名拒绝。
+- 用 `3e5b8e2d` 的版本跑：15 个失败，即 5 种字符串写法 × 3 种 key 状态。布尔 False 和 0 在旧代码里本来就正确。
+
+### 5.3 编码规范
+
+- 按用户要求，`docs/coding-conventions.md` 新增"Function bodies"一节：
+  - 函数内作用明显不同、或各占数行的代码块之间空一行；
+  - 注释不是必须的，只在一块明显独立、用途又不能从代码看出时才加一句短注释，不重复代码或 docstring；
+  - 示例用 `_vertex`，shell 脚本同样适用。
+- `AGENTS.md` 与 `AGENTS-zh.md` 的第 18 节各加一条，文档索引的描述同步更新。
+- 本批改到的代码按这条整理：`_vertex`、`_listed` 的循环和清理、`install.sh` 新增的函数。
+
+### 5.4 批次 4：安装器输出（`packaging/linux/install.sh`）
+
+- 结构，与 Python CLI 的报告一致：
+  - 标题 `AlphaAvatar / Install`；
+  - 编号步骤：`01 Package`（版本、build ID、SHA-256 校验）、`02 Check`（glibc，能否在本机运行；已安装的版本会注明）、`03 Install`（安装位置和 current）、`04 PATH`（每个启动文件一行）；
+  - `OK    AlphaAvatar <版本> installed`，下面列出 Build、Command、Current；
+  - 有警告时用 `WARN` 行：旧版本 Setup 环境装的能力，以及 PATH 有启动文件没配置上；
+  - Setup 的结果单独一行：`OK    Setup done`、`WARN  Setup did not finish (exit N); AlphaAvatar stays installed`、`WARN  Setup cancelled; not run`、`SKIP  Setup not run`；
+  - `Next` 下列出命令（青色），说明在后面（暗色）：本终端用的 `source ~/.bashrc`，配置失败时是 `export PATH=…`，还没运行 Setup 时是 `alphaavatar setup`。
+- 进行中：终端上，当前步骤的行先以 signal cyan 显示，完成后原地换成结果行；下面有内容时（最新 release、下载地址、curl 的进度条），这一行保留。
+- 失败：`FAIL  Not installed` 和原因写到 stderr，与上面的步骤空一行隔开；stdout 上停在出错的那一步。
+- 被信号中断，或 `set -e` 处的意外失败，以前什么都不输出。现在在 stderr 写一行，说明哪个版本是 current：
+  - `WARN  Interrupted` 或 `WARN  Stopped`，后接 `<旧版本> stays current`、`AlphaAvatar X is current, its PATH and setup not reached` 或 `nothing is installed`；
+  - 意外失败写 `FAIL  Not installed (exit N); …`；
+  - 终端已经挂断时，写不出去也不影响退出。
+- 颜色：
+  - 规则与 `log/format.py` 的 `use_color` 相同：设置了 `NO_COLOR`（空值也算）或 `TERM=dumb` 时不着色，否则只在终端上着色；
+  - stdout、stderr 各自判断，所以 `curl … | bash` 的 stdin 是管道，输出到终端时照样着色；
+  - 配色同 Python CLI：标题品牌蓝，进行中和命令 signal cyan，OK 绿，WARN 黄，FAIL 红，SKIP 和说明暗色；
+  - 版本、build ID、路径和结果保持普通颜色。
+- 路径以 `~` 显示，复制用的命令用 `printf %q` 加引号。`·` 只在 locale 为 UTF-8 时使用，否则用 `-`。
+- 没有改动的行为：下载与校验、整段读取保护、来源规则、安装锁、暂存归属、信号处理、PATH 块，以及 Setup 的接续和读取进程。在问题处按 Ctrl+D 时，现在先换行，结果另起一行。没有新增任何依赖（不用 tput、Python、Node）。
+- `docs/DEPLOY.md` 加了一段介绍报告的格式，`source` 的提示改为指向 `Next` 下的那一行。
+- 列表的提示：问题旁放不下完整提示时，先改用短提示 `↑↓, type, Enter`，仍放不下才不显示；以前在 72 列下直接不显示。
+
+### 5.5 `docs/cli/cli.html`
+
+- `scripts/docs/cli_preview.py` 的 `screen()` 新增支持列表重绘用到的光标上移、清除以下内容和隐藏/显示光标。以前列表的每次重绘都会叠在画面里。
+- 录制：
+  - 用 `3e5b8e2d` 的 CI 包（`0.6.8-3e5b8e2d9b2a`，artifact 14816175831，`SHA256SUMS` 全部 OK），在空 HOME 里，于真实 PTY 中录制；
+  - 机器为 Alibaba Cloud Linux 3，glibc 2.32；凭据都是虚构的；
+  - 安装器用本批的 `install.sh`；Setup 用 `--artifacts` 给出 CI 的 wheel，真实下载、安装并校验。
+- 新增两个面板：首次安装（拒绝 Setup）、`NO_COLOR` 下再次安装。
+- 重录六个 Setup 面板：
+  - 新 Bundle：85 个包，212 MB，Validate `PASS · 3 runners`；
+  - `setup reference`：105 个包，515 MB，`PASS · 8 runners`；
+  - 本版不安装的选择；
+  - 拒绝计划；
+  - 在 Provider 列表处按 Ctrl+C；
+  - `NO_COLOR`。
+- 由一个拼接脚本只替换这些 section 和目录项，其余 config、Doctor 面板原样保留。页面开头的说明同时写明了两批面板各自的录制条件；`cli_preview.py` 模板里的同一段同步修改。
+- 页面里没有本机路径（用 `/home/tester` 和 `DIR` 遮盖），没有转义字符，除了虚构的 LiveKit 地址没有任何凭据值。
+
+### 5.6 测试
+
+- `tests/setup/test_install_script.py`：
+  - 输出断言迁移到新的结构：新增读取步骤结果的 `told()`、读取 `Next` 的 `next_steps()`，以及 `shown()`；
+  - 新增 `test_piped_to_bash_a_terminal_gets_the_report_in_color_and_the_same_without`：README 里的 `curl | bash` 在真实 PTY 里运行，分 `xterm-256color`、`NO_COLOR=""`、`TERM=dumb` 三种。三种的画面逐行等于同一份报告；只有第一种带颜色，并检查标题、步骤原地替换、OK、SKIP、命令、说明和问题的颜色，Build 行保持普通颜色；
+  - 新增 `test_a_failure_is_said_on_stderr_apart_and_names_the_step_it_ended`、`test_a_terminal_s_stderr_gets_its_failure_in_red`；
+  - 信号用例（13 个）断言 stderr 最后一行说明哪个版本是 current；删除失败的用例断言 `FAIL` 行。
+- `tests/cli/test_render.py`：信号和光标的 13 个用例（§5.1），短提示用例。
+- `provider/tests/test_google_embedding.py`：§5.2 的 28 个。
+- 变异测试，都从仓库外加载，安装器的变异通过 pytest 插件替换 `SCRIPT`：
+  - 安装器 9 个，全部被发现：按 stdin 判断颜色、忽略 `NO_COLOR`、空的 `NO_COLOR` 仍着色、`TERM=dumb` 仍着色、提前结束不报告、失败不空行、问题行不换行、OK 不着色、步骤不原地替换；
+  - 另有 §5.1、§5.2 中用推送版本跑的对照。
+
+### 5.7 验证
+
+- 相关测试：全部 Host 测试和 provider 插件测试，661 passed。
+- 离线全量：1126 passed，47 warnings，376 s；运行前后，未跟踪和被忽略的文件一致。
+- 仓库规范：`uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`（795 个文件）、`bash -n`（build.sh、install.sh）、`git diff --check` 都通过；pre-commit 没有改动任何文件。
+- shellcheck（仓库外的临时环境）：新版只剩推送版本原有的一个 SC2046；两处有意打印的 `~` 标注了 SC2088。
+- 安装器接续 Setup，用本批 `install.sh` 加 `3e5b8e2d` 包，在 PTY 中重跑：通过终端回答到 "Install and enable?" 再拒绝，以及在列表中按 Ctrl+C；两次的终端设置都恢复，光标显示，没有残留进程，没有写入文件。
+- 推送 SHA `3e5b8e2d` 的 CI：Quality（45168132516）和 Linux package（45168132617）都是 success。
+
+### 5.8 未验证与剩余
+
+- 安装器的颜色在 pyte 和 PTY 中验证过，没有在具体的终端程序里由人看过。没有测试 macOS 自带的 bash 3.2（安装器只面向 Linux）。
+- `cli.html` 的面板录自 `3e5b8e2d` 包，其中不含本批的 `render.py` 修改。这些修改不改变最终画面：列表结束时会被擦掉，提示不留在画面上。
+- config 和 Doctor 的面板没有重录。
+- 第五批：Embedding 变更保护、已有 Bundle 的保护、新候选包的完整安装验收。

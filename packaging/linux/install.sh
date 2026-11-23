@@ -42,7 +42,90 @@ LATEST="https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download"
 MANIFEST="alphaavatar-linux-x86_64.manifest.json"  # Beside a release's package (build.sh).
 VERSION='^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
 
-die() { echo "Error: $*" >&2; exit 1; }
+# Reported as the Python CLI reports (host/cli/render.py): a title, numbered steps, a status
+# with the facts below it, then what to do next. Colors decorate a terminal only, as there:
+# none with NO_COLOR set or TERM=dumb, and each stream decides for itself, so piped to bash,
+# its input the download, the script still colors a terminal it writes to.
+colored() { [[ -z "${NO_COLOR+set}" && "${TERM-}" != dumb && -t "$1" ]]; }
+if colored 1; then
+  BLUE=$'\e[38;2;96;165;250m' CYAN=$'\e[38;2;34;211;238m' GREEN=$'\e[32m' YELLOW=$'\e[33m'
+  DIM=$'\e[90m' BOLD=$'\e[1m' RESET=$'\e[0m' live=1  # A step's line is updated in place.
+else
+  BLUE="" CYAN="" GREEN="" YELLOW="" DIM="" BOLD="" RESET="" live=""
+fi
+if colored 2; then
+  RED=$'\e[31m' WARNED=$'\e[33m' ERESET=$'\e[0m'
+else
+  RED="" WARNED="" ERESET=""
+fi
+
+started=""  # The title is out: a result stands a blank line apart from what went before.
+open=""  # The step under way: shown on a terminal at once, elsewhere once something goes below.
+reported=""  # A failure die has said why: the end does not report it again.
+
+title() { printf '\n%s%s%s\n\n' "$BLUE" "AlphaAvatar / $1" "$RESET"; }
+settle() {
+  # The step under way stays, its line ended, before what goes below it.
+  if [[ -n "$open" ]]; then
+    if [[ -n "$live" ]]; then printf '\n'; else printf '%s\n' "$open"; fi
+    open=""
+  fi
+}
+begin() {
+  settle
+  open="$(printf '%02d  %s' "$1" "$2")"
+  [[ -z "$live" ]] || printf '%s%s%s' "$CYAN" "$open" "$RESET"
+}
+progress() { settle; printf '    %s\n' "$*"; }
+step() {
+  # Done, in its line's place: its summary, then each further line at the summary's column.
+  if [[ -n "$open" ]]; then [[ -z "$live" ]] || printf '\r\e[K'; open=""; fi
+  printf '%02d  %-15s%s\n' "$1" "$2" "$3"
+  shift 3
+  local more
+  for more in "$@"; do printf '%19s%s\n' "" "$more"; done
+}
+status() {
+  local color=""
+  case "$1" in OK) color="$GREEN" ;; WARN) color="$YELLOW" ;; SKIP) color="$DIM" ;; esac
+  settle
+  printf '%s%s%s%*s%s\n' "$color" "$1" "$RESET" $((6 - ${#1})) "" "$2"
+}
+row() { printf '      %-13s%s\n' "$1" "$2"; }
+commands() {
+  # Commands to copy, each with why: the commands in signal cyan, their reasons dimmed, in
+  # one column.
+  local width=0 index command
+  for ((index = 1; index <= $#; index += 2)); do
+    command="${!index}"
+    (( ${#command} <= width )) || width=${#command}
+  done
+
+  while [[ $# -ge 2 ]]; do
+    printf '  %s%s%s%*s  %s# %s%s\n' "$CYAN" "$1" "$RESET" $((width - ${#1})) "" "$DIM" "$2" \
+      "$RESET"
+    shift 2
+  done
+}
+# shellcheck disable=SC2088  # The ~ is shown, never expanded.
+shown_path() {
+  # A path for people to read: under the home directory, from ~.
+  if [[ "$1" == "$HOME"/* ]]; then printf '~/%s' "${1#"$HOME"/}"; else printf '%s' "$1"; fi
+}
+# shellcheck disable=SC2088  # The ~ is for the shell the command is pasted into.
+shell_path() {
+  # The same for a shell to read: from ~, the rest quoted as it needs.
+  if [[ "$1" == "$HOME"/* ]]; then printf '~/%q' "${1#"$HOME"/}"; else printf '%q' "$1"; fi
+}
+die() {
+  # On stderr, apart from the steps: the status, then why, whole. The step's own line ends
+  # where it is, on stdout.
+  reported=1
+  settle
+  { [[ -z "$started" ]] || echo
+    printf '%sFAIL%s  Not installed\n      %s\n' "$RED" "$ERESET" "$*"; } >&2
+  exit 1
+}
 
 # A step that makes something holds signals until it is recorded, then they end the run as they
 # would have: without a trap bash runs the cleanup at once, beside a command still under way.
@@ -96,6 +179,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 (( (${#version} > 0) + (${#file} > 0) + (${#url} > 0) <= 1 )) || { usage >&2; exit 2; }
+title Install
+started=1
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in  # A terminal that shows UTF-8 gets its dot.
+  *[Uu][Tt][Ff]-8* | *[Uu][Tt][Ff]8*) dot="·" ;;
+  *) dot="-" ;;
+esac
 if [[ -n "$version" ]]; then
   [[ "$version" =~ $VERSION ]] || die "Invalid version"
   url="$RELEASES/v$version/alphaavatar-$version-linux-x86_64.tar.gz"
@@ -162,7 +251,30 @@ cleanup() {
   # next would lock a new one beside it.
   [[ -z "$made_versions" ]] || rmdir -- "$prefix/versions" 2>/dev/null || true
 }
-trap cleanup EXIT  # Also on SIGINT, SIGTERM and SIGHUP: bash exits through the EXIT trap.
+ended() {
+  # Ended early, by a signal or by a failure die did not report: cleaned up, then what stands
+  # is said, on stderr. A terminal hung up takes no more: the run ends all the same.
+  local code=$? label color stands now
+  cleanup
+  [[ "$code" -ne 0 && -z "$reported" ]] || return 0
+  case "$code" in
+    130) label=WARN color="$WARNED" stands="Interrupted" ;;
+    129 | 143) label=WARN color="$WARNED" stands="Stopped" ;;
+    *) label=FAIL color="$RED" stands="Not installed (exit $code)" ;;
+  esac
+  now="$(readlink "$prefix/current" || true)"
+  if [[ -n "$now" && "$now" != "${previous-}" ]]; then
+    stands+="; AlphaAvatar ${package_version-} is current, its PATH and setup not reached"
+  elif [[ -n "$now" ]]; then
+    stands+="; $now stays current"
+  else
+    stands+="; nothing is installed"
+  fi
+  # Said on stderr through its copy: errors writing to a terminal gone are not said at all.
+  { settle; printf '\n%s%s%s%*s%s\n' "$color" "$label" "$ERESET" $((6 - ${#label})) "" \
+    "$stands" >&3; } 3>&2 2>/dev/null || :
+}
+trap ended EXIT  # Also on SIGINT, SIGTERM and SIGHUP: bash exits through the EXIT trap.
 previous="$(readlink "$prefix/current" || true)"
 # What this script or setup made: versions/<name> or a marked envs/<name> of this prefix,
 # reached through no other link.
@@ -190,8 +302,8 @@ release
 # No source given: the latest release, as its manifest names it, read once. Its package and
 # SHA-256 are that release's, whatever is published meanwhile.
 published=""
+begin 1 Package
 if [[ -z "$version$file$url" ]]; then
-  echo "Finding the latest release"
   published="$stage/$MANIFEST"
   curl -fsSL --retry 3 -o "$published" "$LATEST/$MANIFEST" \
     || die "Cannot download $LATEST/$MANIFEST:" \
@@ -203,7 +315,7 @@ if [[ -z "$version$file$url" ]]; then
   [[ "$text" =~ $pattern ]] && tag="${BASH_REMATCH[1]}"
   [[ "$version" =~ $VERSION && "$tag" == "v$version" ]] \
     || die "The latest release's manifest names no release of AlphaAvatar"
-  echo "The latest release is $tag"
+  progress "The latest release is $tag"
   url="$RELEASES/$tag/alphaavatar-$version-linux-x86_64.tar.gz"
 fi
 
@@ -215,7 +327,7 @@ if [[ -n "$url" ]]; then
     sha256="$(curl -fsSL --retry 3 "$url.sha256" | cut -d' ' -f1)" || true
     [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "No SHA-256 at $url.sha256"
   fi
-  echo "Downloading $url"
+  progress "Downloading $url"
   curl -fL --retry 3 $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$package" "$url" \
     || die "Cannot download $url"
 else
@@ -253,6 +365,8 @@ print(*m["imports"])' "$manifest")" || die "Not an AlphaAvatar package: no reada
 { read -r id package_version glibc cpu; read -r imports; } <<< "$fields"
 [[ "$id" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || die "Invalid package id"
 [[ -z "$version" || "$package_version" == "$version" ]] || die "The package holds $package_version"
+step 1 Package "AlphaAvatar $package_version $dot build $id $dot SHA-256 verified"
+begin 2 Check
 
 found="$(getconf GNU_LIBC_VERSION 2>/dev/null | cut -d' ' -f2)" || true
 [[ -n "$found" ]] || die "Cannot read the glibc version; this package needs glibc"
@@ -278,13 +392,15 @@ for name in sys.argv[1:]:
 target="$prefix/versions/$id"
 if [[ -n "$installed" ]]; then
   [[ "$installed" == "$target" ]] || die "$installed holds AlphaAvatar $id under another name"
-  echo "AlphaAvatar $id is already installed; checking it"
   check "$target" || die "$target does not run; remove it and install again"
+  step 2 Check "AlphaAvatar $id is already installed $dot glibc $found $dot runs on this machine"
+  begin 3 Install
 elif [[ -e "$target" || -L "$target" ]]; then
   die "$target exists and holds something else; it is left as it is"
 else
-  echo "Checking AlphaAvatar $id"
   check "$candidate" || die "The package does not run on this machine"
+  step 2 Check "glibc $found $dot runs on this machine"
+  begin 3 Install
   hold
   calm mv -T -- "$candidate" "$target"
   fresh="$target"  # This run's: removed at exit unless current points to it.
@@ -326,10 +442,10 @@ if ! (cd / && [[ "$("$entry" --version)" == "AlphaAvatar $package_version" ]]); 
   die "$entry does not run AlphaAvatar $package_version; the previous version stays current"
 fi
 
-echo "Installed AlphaAvatar $package_version, build $id: $entry -> $prefix/current -> $switch"
-if [[ "$previous" == envs/* && "$switch" != "$previous" ]]; then
-  echo "The capabilities \`alphaavatar setup\` installed belong to the previous version:" \
-    "run \`alphaavatar setup <bundle>\` for the bundle you use."
+if [[ "$switch" == "$previous" && "$switch" == envs/* ]]; then
+  step 3 Install "$(shown_path "$target") $dot current: $switch, set up over this build"
+else
+  step 3 Install "$(shown_path "$target") $dot current"
 fi
 
 # The installation is whole: this run's stage goes, and the lock with its descriptor, before
@@ -352,13 +468,13 @@ configure_file() {
   # Puts the block in one startup file and sets path_result; fails, having changed nothing,
   # where it cannot say the block is in place. Every marker is checked before anything is
   # written: begun and ended in turn, none inside another, the last one ended.
-  local profile="$1" target text="" line bare number=0 inside="" found="" staged
-  target="$profile"
+  local profile="$1" target text="" line bare number=0 inside="" found="" staged name
+  target="$profile" name="$(shown_path "$1")"
   if [[ -e "$profile" || -L "$profile" ]]; then
     # A link is followed: the file it names is the one that changes.
     target="$(realpath -e -- "$profile" 2>/dev/null)" && [[ -f "$target" ]] \
-      || { path_result="not configured: $profile is not a file this installer edits"; return 1; }
-    [[ -r "$target" ]] || { path_result="not configured: cannot read $profile"; return 1; }
+      || { path_result="not configured: $name is not a file this installer edits"; return 1; }
+    [[ -r "$target" ]] || { path_result="not configured: cannot read $name"; return 1; }
     # A marker line is one, spaces around it aside. The first block takes the place of every
     # one; every other line stays as it is.
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -366,14 +482,14 @@ configure_file() {
       bare="${line#"${line%%[![:space:]]*}"}" bare="${bare%"${bare##*[![:space:]]}"}"
       if [[ "$bare" == "$begin" ]]; then
         if [[ -n "$inside" ]]; then
-          path_result="not configured: line $number of $profile begins AlphaAvatar's block"
+          path_result="not configured: line $number of $name begins AlphaAvatar's block"
           path_result+=" inside another"; return 1
         fi
         inside=$number
         [[ -n "$found" ]] || text+="$block"$'\n' found=1
       elif [[ "$bare" == "$end" ]]; then
         if [[ -z "$inside" ]]; then
-          path_result="not configured: line $number of $profile ends AlphaAvatar's block,"
+          path_result="not configured: line $number of $name ends AlphaAvatar's block,"
           path_result+=" never begun"; return 1
         fi
         inside=""
@@ -382,29 +498,29 @@ configure_file() {
       fi
     done < "$target"
     if [[ -n "$inside" ]]; then
-      path_result="not configured: AlphaAvatar's block begun on line $inside of $profile"
+      path_result="not configured: AlphaAvatar's block begun on line $inside of $name"
       path_result+=" never ends"; return 1
     fi
   fi
   if [[ -n "$found" ]]; then
-    [[ -w "$target" ]] || { path_result="not configured: cannot write $profile"; return 1; }
+    [[ -w "$target" ]] || { path_result="not configured: cannot write $name"; return 1; }
     staged="$(mktemp "$(dirname -- "$target")/.alphaavatar-path-XXXXXX" 2>/dev/null)" \
-      || { path_result="not configured: cannot write beside $profile"; return 1; }
+      || { path_result="not configured: cannot write beside $name"; return 1; }
     if ! { printf '%s' "$text" > "$staged" && chmod --reference="$target" -- "$staged"; } \
         2>/dev/null; then
-      rm -f -- "$staged"; path_result="not configured: cannot write beside $profile"; return 1
+      rm -f -- "$staged"; path_result="not configured: cannot write beside $name"; return 1
     fi
     if cmp -s -- "$staged" "$target"; then
-      rm -f -- "$staged"; path_result="$profile already adds $bin_dir, for new terminals"
+      rm -f -- "$staged"; path_result="$name already adds $shown_bin, for new terminals"
       return 0
     fi
     mv -f -- "$staged" "$target" 2>/dev/null \
-      || { rm -f -- "$staged"; path_result="not configured: cannot write $profile"; return 1; }
-    path_result="updated $profile with $bin_dir, for new terminals"
+      || { rm -f -- "$staged"; path_result="not configured: cannot write $name"; return 1; }
+    path_result="updated $name with $shown_bin, for new terminals"
   else
     { printf '\n%s\n' "$block" >> "$target"; } 2>/dev/null \
-      || { path_result="not configured: cannot write $profile"; return 1; }
-    path_result="added $bin_dir to $profile, for new terminals"
+      || { path_result="not configured: cannot write $name"; return 1; }
+    path_result="added $shown_bin to $name, for new terminals"
   fi
 }
 # The startup files the login shell reads in a new terminal. Bash reads ~/.bashrc in an
@@ -420,15 +536,15 @@ case "${SHELL##*/}" in
   zsh) path_files=("${ZDOTDIR:-$HOME}/.zshrc") ;;
   sh|dash) path_files=("$HOME/.profile") ;;
 esac
-on_path="" path_failed="" path_source=""
+on_path="" path_failed="" path_source="" shown_bin="$(shown_path "$bin_dir")" told=()
 case ":$PATH:" in *":$bin_dir:"*) on_path=1 ;; esac
+begin 4 PATH
 if [[ -n "$on_path" ]]; then
-  echo "PATH: $bin_dir is on PATH already"
+  told=("$shown_bin is on PATH already")
 elif [[ "$bin_dir" == *$'\n'* ]]; then
-  echo "PATH: not configured: the directory's name holds a line break"; path_failed=1
+  told=("not configured: the directory's name holds a line break"); path_failed=1
 elif [[ "${#path_files[@]}" -eq 0 ]]; then
-  echo "PATH: not configured: the login shell (${SHELL:-none}) is not bash, zsh or sh"
-  path_failed=1
+  told=("not configured: the login shell (${SHELL:-none}) is not bash, zsh or sh"); path_failed=1
 else
   for file in "${path_files[@]}"; do
     if configure_file "$file"; then
@@ -436,19 +552,27 @@ else
     else
       path_failed=1
     fi
-    echo "PATH: $path_result"
+    told+=("$path_result")
   done
 fi
-if [[ -n "$path_failed" ]]; then
-  echo "PATH: to add it yourself:"
-  echo "  export PATH=\"$quoted:\$PATH\""
+step 4 PATH "${told[@]}"
+
+echo
+status OK "AlphaAvatar $package_version installed"
+row Build "$id"
+row Command "$(shown_path "$entry")"
+row Current "$(shown_path "$prefix/current") -> $switch"
+if [[ "$previous" == envs/* && "$switch" != "$previous" ]]; then
+  status WARN "The capabilities \`alphaavatar setup\` installed belong to the previous version:"
+  printf '      %s\n' "run \`alphaavatar setup <bundle>\` for the bundle you use."
 fi
+[[ -z "$path_failed" ]] || status WARN "PATH: a startup file is not configured; add it yourself"
 
 # A first setup, offered in a terminal and run on that terminal, its input included: piped to
 # bash, this script's own input is the download. Whatever setup does, the installation stays.
-next="alphaavatar setup    # choose capabilities; it installs them"
+setup_next=1  # Whether setup is still to run.
 if [[ "$switch" == envs/* || "$previous" == envs/* ]]; then
-  :  # Set up already: the bundles there stay as they are.
+  setup_next=""  # Set up already: the bundles there stay as they are.
 elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
   # Read in the background, by a reader that ignores Ctrl-C, whatever the bash version: this
   # script takes it, wherever it finds it, records the question cancelled, and its next look, a
@@ -470,41 +594,51 @@ elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
     reader=$!
     trap - TERM HUP
     [[ -z "$held" ]] || kill -s "$held" "$$"
+    echo
     # A Ctrl-C can cut the question's own writing short: that cancels, never fails the install.
-    printf 'Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] ' > /dev/tty \
-      2>/dev/null || :
+    question='Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] '
+    printf '%s%s%s' "$CYAN" "$question" "$RESET" > /dev/tty 2>/dev/null || :
     while [[ -z "$cancelled" ]] && kill -0 "$reader" 2>/dev/null; do sleep 0.1 || :; done
     trap - INT
     kill -s KILL "$reader" 2>/dev/null || :
     wait "$reader" 2>/dev/null || :
     reader=""  # Gone: its process ID may soon be another's.
     [[ -n "$cancelled" ]] || answer="$(< "$reply")"
+    # The input ended at the question: what follows starts on a line of its own.
+    [[ -n "$cancelled" || -n "$answer" ]] || echo > /dev/tty 2>/dev/null || :
     rm -f -- "$reply"
     trap - EXIT
   fi
   if [[ -n "$cancelled" ]]; then
-    echo "Setup: cancelled, not run. Next: $next"
+    status WARN "Setup cancelled; not run"
   elif [[ "$answer" =~ ^answered:([Yy]([Ee][Ss])?)?$ ]]; then
-    status=0
+    code=0
     trap ':' INT  # Ctrl-C ends setup, never this script: its report still follows.
-    PATH="$bin_dir:$PATH" "$entry" setup < /dev/tty > /dev/tty 2>&1 || status=$?
+    PATH="$bin_dir:$PATH" "$entry" setup < /dev/tty > /dev/tty 2>&1 || code=$?
     trap - INT
-    if [[ "$status" -eq 0 ]]; then
-      echo "Setup: done"
+    if [[ "$code" -eq 0 ]]; then
+      status OK "Setup done"
+      setup_next=""
     else
-      echo "Setup: did not finish (exit $status); AlphaAvatar stays installed. Next: $next"
+      status WARN "Setup did not finish (exit $code); AlphaAvatar stays installed"
     fi
   else
-    echo "Setup: not run. Next: $next"
+    status SKIP "Setup not run"
   fi
-else
-  echo "Next: $next"
 fi
-if [[ -n "$path_source" && -z "$path_failed" ]]; then
-  printf 'This terminal finds alphaavatar in a new terminal, or after: source %q\n' "$path_source"
+
+# What is left to do: the command found in this terminal, then setup if it is still to run.
+todo=()
+if [[ -n "$path_failed" ]]; then
+  todo+=("export PATH=\"$quoted:\$PATH\"")
+  todo+=("this terminal; add it to the startup file above for new ones")
 elif [[ -n "$path_source" ]]; then
-  printf 'This terminal finds alphaavatar after: source %q\n' "$path_source"
-elif [[ -z "$on_path" ]]; then
-  echo "This terminal finds alphaavatar once $bin_dir is on PATH."
+  todo+=("source $(shell_path "$path_source")" "this terminal; new ones find alphaavatar")
 fi
+[[ -z "$setup_next" ]] || todo+=("alphaavatar setup" "choose capabilities; it installs them")
+if [[ "${#todo[@]}" -gt 0 ]]; then
+  printf '\n%sNext%s\n' "$BOLD" "$RESET"
+  commands "${todo[@]}"
+fi
+echo
 }

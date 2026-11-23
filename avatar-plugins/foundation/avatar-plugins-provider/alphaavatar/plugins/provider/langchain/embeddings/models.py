@@ -41,11 +41,21 @@ def _vertex(kwargs: dict) -> bool:
     """Whether the Google SDK authenticates through Vertex AI, as it decides itself: its
     ``vertexai`` setting, else GOOGLE_GENAI_USE_VERTEXAI, else a project or credentials given.
     Vertex AI takes its own credentials (ADC) and needs no API key."""
-    if (vertexai := kwargs.get("vertexai")) is not None:
-        return bool(vertexai)
+    from pydantic import TypeAdapter, ValidationError
+
+    # Its own setting first, parsed as the SDK's ``bool | None`` field parses it: "false",
+    # "0", "no" or "off", as an interpolated setting gives them, are False.
+    try:
+        vertexai = TypeAdapter(bool | None).validate_python(kwargs.get("vertexai"))
+    except ValidationError:
+        return True  # Not a flag: the SDK refuses it, by its own name, before any key is read.
+    if vertexai is not None:
+        return vertexai
+
     chosen = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower()
     if chosen in ("true", "1", "yes", "false", "0", "no"):
         return chosen in ("true", "1", "yes")
+
     return kwargs.get("project") is not None or kwargs.get("credentials") is not None
 
 

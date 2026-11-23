@@ -78,6 +78,11 @@ version and SHA-256, checks it, then enables it. Neither needs Python, Node or a
 curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash
 ```
 
+It reports as `alphaavatar setup` does: four steps (package, check, install, PATH), `OK` with
+the build and the command, then what is left to run under `Next`; a failure is
+`FAIL  Not installed` on stderr, with why. Colors show on a terminal only; `NO_COLOR`,
+`TERM=dumb` and a redirected output get the same report in plain text.
+
 In a terminal, a first install then offers to run `alphaavatar setup`; if setup fails or is
 cancelled, the installation stays. `--non-interactive` (`… | bash -s -- --non-interactive`)
 never asks, nor does a run without a terminal.
@@ -86,8 +91,8 @@ For new terminals, the installer adds the command's directory to PATH in a block
 `# >>> AlphaAvatar >>>`: for bash in `~/.bashrc` and the file it reads logging in
 (`~/.bash_profile`, `~/.bash_login` or `~/.profile`), for zsh in `${ZDOTDIR:-~}/.zshrc`, for sh
 in `~/.profile`. A file whose markers are out of order stays as it is. For another shell, or a
-file it cannot change, it prints the line to add. In the terminal it ran in, `source` the file
-it names, or open a new one:
+file it cannot change, it prints the line to add. In the terminal it ran in, run the `source`
+line under `Next`, or open a new one:
 
 ```bash
 alphaavatar setup                       # a new bundle, asked part by part

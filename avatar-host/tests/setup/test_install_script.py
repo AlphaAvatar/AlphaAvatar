@@ -218,6 +218,40 @@ def signalling(tools: Path, command: str) -> None:
     (tools / command).chmod(0o755)
 
 
+def told(stdout: str, step: str = "PATH") -> list[str]:
+    """What a step reported once done: its summary, then each line under it."""
+    lines = stdout.splitlines()
+    at = next(
+        i for i, line in enumerate(lines) if line[:2].isdigit() and line[4:19] == f"{step:<15}"
+    )
+    found = [lines[at][19:]]
+    for line in lines[at + 1 :]:
+        if not line.startswith(" " * 19):
+            break
+        found.append(line[19:])
+    return found
+
+
+def next_steps(stdout: str) -> list[tuple[str, str]]:
+    """The commands under Next, each with why."""
+    lines = stdout.splitlines()
+    found: list[tuple[str, str]] = []
+    for line in lines[lines.index("Next") + 1 :] if "Next" in lines else []:
+        if not line.startswith("  "):
+            break
+        command, why = line.strip().split("  # ", 1)
+        found.append((command.strip(), why))
+    return found
+
+
+SETUP_NEXT = ("alphaavatar setup", "choose capabilities; it installs them")
+
+
+def shown(path: Path, home: Path) -> str:
+    """A path as the installer shows it: under the home directory, from ~."""
+    return f"~/{path.relative_to(home)}" if path.is_relative_to(home) else str(path)
+
+
 def runs(entry: Path) -> str:
     return subprocess.run([entry, "--version"], capture_output=True, text=True, cwd="/").stdout
 
@@ -267,6 +301,14 @@ def test_a_signal_as_a_step_makes_something_acts_once_it_is_recorded(
     assert sorted(os.listdir(prefix / "versions")) == sorted([ID, *([OTHER] if switched else [])])
     assert (data / "avatars/alpha/memory.db").read_bytes() == b"memories"
     assert stopped.returncode == 128 + {"HUP": 1, "INT": 2, "TERM": 15}[signal], stopped.stderr
+    # Said on stderr, with what stands: the new version only if the switch completed.
+    stands = (
+        "AlphaAvatar 9.9.9 is current, its PATH and setup not reached"
+        if switched
+        else f"versions/{ID} stays current"
+    )
+    label = "Interrupted" if signal == "INT" else "Stopped"
+    assert stopped.stderr.endswith(f"\nWARN  {label}; {stands}\n"), stopped.stderr
     retried = run(*installs, extra=environ)
     assert retried.returncode == 0, retried.stderr
     assert os.readlink(prefix / "current") == f"versions/{OTHER}"
@@ -284,7 +326,9 @@ def test_a_signal_as_the_command_appears_leaves_neither_it_nor_its_directories(l
     stopped = run("--bin-dir", str(entry.parent), extra=injected | {"INJECT_TO": "script"})
     assert not (tmp_path / "made").exists() and not entry.is_symlink()
     assert os.listdir(tmp_path / "prefix") == [".install.lock"]
-    assert stopped.returncode == 143, stopped.stderr
+    assert stopped.returncode == 143 and stopped.stderr.endswith(
+        "\nWARN  Stopped; nothing is installed\n"
+    ), stopped.stderr
     retried = run("--bin-dir", str(entry.parent))
     assert retried.returncode == 0, retried.stderr
     assert runs(entry) == "AlphaAvatar 9.9.9\n"
@@ -372,6 +416,9 @@ def test_a_stage_whose_removal_fails_keeps_its_mark_for_the_next_run(layout, rem
     assert runs(entry) == "AlphaAvatar 9.9.9\n"
     assert (data / "avatars/alpha/memory.db").read_bytes() == b"memories"
     assert failed.returncode == 1 and "Permission denied" in failed.stderr, failed.stderr
+    # A failure no check names is still said, with what stands.
+    said = "Not installed\n      " if removed == "its-own" else "Not installed (exit 1); "
+    assert f"FAIL  {said}" in failed.stderr
     (tools / "rm").unlink()
     retried = run(*installs, extra=environ)
     assert retried.returncode == 0, retried.stderr
@@ -484,7 +531,8 @@ def test_with_no_source_the_latest_release_is_installed_from_that_release_alone(
     installed = run(source=())
     assert installed.returncode == 0, installed.stderr
     assert "The latest release is v9.9.9" in installed.stdout
-    assert f"Installed AlphaAvatar 9.9.9, build {ID}:" in installed.stdout
+    assert "\nOK    AlphaAvatar 9.9.9 installed\n" in installed.stdout
+    assert f"\n      Build        {ID}\n" in installed.stdout
     # The manifest through the redirect to v9.9.9's, then the package's files from there.
     manifest = [f"/latest/download/{MANIFEST}", f"/download/v9.9.9/{MANIFEST}"]
     assert asked == [*manifest, f"{path}.sha256", path]
@@ -509,7 +557,9 @@ def test_a_given_source_installs_its_package_and_asks_no_latest_release(
     }[given]
     installed = run(source=source)
     assert installed.returncode == 0, installed.stderr
-    assert "Installed AlphaAvatar 9.9.8, build 9.9.8-test:" in installed.stdout
+    assert (
+        "\nOK    AlphaAvatar 9.9.8 installed\n      Build        9.9.8-test\n" in installed.stdout
+    )
     assert asked == ([] if given == "file" else [f"{path}.sha256", path])
     assert os.readlink(tmp_path / "prefix/current") == "versions/9.9.8-test"
 
@@ -616,8 +666,8 @@ def test_the_latest_release_being_the_build_current_runs_keeps_its_setup_environ
     publish(good)
     again = run(source=())
     assert again.returncode == 0, again.stderr
-    assert f"AlphaAvatar {ID} is already installed" in again.stdout
-    assert "Next: alphaavatar setup" not in again.stdout
+    assert told(again.stdout, "Check")[0].startswith(f"AlphaAvatar {ID} is already installed")
+    assert SETUP_NEXT not in next_steps(again.stdout)
     assert os.readlink(prefix / "current") == "envs/plan-1"
     assert "# the environment's" in (prefix / "current/bin/alphaavatar").read_text()
     assert runs(entry) == "AlphaAvatar 9.9.9\n"
@@ -737,7 +787,7 @@ def test_bash_finds_the_command_in_new_terminals_logged_in_or_not(layout, files:
 
     assert done.returncode == 0, done.stderr
     for name in (".bashrc", login):
-        assert f"PATH: added {bin_dir} to {home / name}, for new terminals" in done.stdout
+        assert f"added {bin_dir} to ~/{name}, for new terminals" in told(done.stdout)
         text = (home / name).read_text()
         assert text.startswith(mine.get(name, "")) and text.count(BEGIN) == 1
     assert sorted(os.listdir(home)) == sorted({*mine, ".bashrc", login})
@@ -749,7 +799,7 @@ def test_bash_finds_the_command_in_new_terminals_logged_in_or_not(layout, files:
     again = run(extra={"SHELL": "/bin/bash"})
     assert again.returncode == 0, again.stderr
     for name in (".bashrc", login):
-        assert f"PATH: {home / name} already adds {bin_dir}" in again.stdout
+        assert f"~/{name} already adds {bin_dir}, for new terminals" in told(again.stdout)
     assert {name: (home / name).read_bytes() for name in os.listdir(home)} == written
     assert new_terminal(home, *LOGIN)[1].count(str(bin_dir)) == 1
 
@@ -763,11 +813,18 @@ def test_bash_with_a_startup_file_it_cannot_write_says_so_and_configures_the_oth
     (home / ".bashrc").chmod(0o444)
     done = run(extra={"SHELL": "/bin/bash"})
     assert done.returncode == 0, done.stderr
-    told = done.stdout.splitlines()
-    assert f"PATH: not configured: cannot write {home / '.bashrc'}" in told
-    assert f"PATH: added {bin_dir} to {home / '.profile'}, for new terminals" in told
-    assert told[told.index("PATH: to add it yourself:") + 1] == f'  export PATH="{bin_dir}:$PATH"'
-    assert f"This terminal finds alphaavatar after: source {home / '.profile'}" in told
+    assert told(done.stdout) == [
+        "not configured: cannot write ~/.bashrc",
+        f"added {bin_dir} to ~/.profile, for new terminals",
+    ]
+    assert "WARN  PATH: a startup file is not configured; add it yourself" in done.stdout
+    assert next_steps(done.stdout) == [
+        (
+            f'export PATH="{bin_dir}:$PATH"',
+            "this terminal; add it to the startup file above for new ones",
+        ),
+        SETUP_NEXT,
+    ]
     assert (home / ".bashrc").read_text() == "# mine\n"
     assert new_terminal(home, *LOGIN)[0] == str(bin_dir / "alphaavatar")
 
@@ -794,17 +851,18 @@ def test_the_command_goes_on_path_for_new_terminals_in_the_login_shells_startup_
     profile.write_text(mine)
     done = run(extra={"SHELL": login})
     assert done.returncode == 0, done.stderr
-    assert f"PATH: added {tmp_path / 'bin'} to {profile}, for new terminals" in done.stdout
+    assert told(done.stdout) == [f"added {tmp_path / 'bin'} to ~/{file}, for new terminals"]
     text = profile.read_text()
     assert text.startswith(mine) and text.count(BEGIN) == text.count(END) == 1
     assert found() == str(tmp_path / "bin/alphaavatar")
-    assert f"This terminal finds alphaavatar in a new terminal, or after: source {profile}" in (
-        done.stdout
-    )
+    assert next_steps(done.stdout) == [
+        (f"source ~/{file}", "this terminal; new ones find alphaavatar"),
+        SETUP_NEXT,
+    ]
 
     again = run(extra={"SHELL": login})
     assert again.returncode == 0, again.stderr
-    assert f"PATH: {profile} already adds {tmp_path / 'bin'}" in again.stdout
+    assert told(again.stdout) == [f"~/{file} already adds {tmp_path / 'bin'}, for new terminals"]
     assert profile.read_text() == text
 
     # Another installation's directory: the block now names it alone.
@@ -816,7 +874,9 @@ def test_the_command_goes_on_path_for_new_terminals_in_the_login_shells_startup_
         extra={"SHELL": login},
     )
     assert other.returncode == 0, other.stderr
-    assert f"PATH: updated {profile} with {tmp_path / 'elsewhere'}" in other.stdout
+    assert told(other.stdout) == [
+        f"updated ~/{file} with {tmp_path / 'elsewhere'}, for new terminals"
+    ]
     text = profile.read_text()
     assert text.startswith(mine) and text.count(BEGIN) == 1 and str(tmp_path / "bin:") not in text
     assert found() == str(tmp_path / "elsewhere/alphaavatar")
@@ -833,7 +893,9 @@ def test_zsh_keeps_its_startup_files_where_zdotdir_says_and_a_linked_file_stays_
     (zdot / ".zshrc").symlink_to(dotfiles / "zshrc")
     done = run(extra={"SHELL": "/usr/bin/zsh", "ZDOTDIR": str(zdot)})
     assert done.returncode == 0, done.stderr
-    assert f"PATH: added {tmp_path / 'bin'} to {zdot / '.zshrc'}" in done.stdout
+    assert told(done.stdout) == [
+        f"added {tmp_path / 'bin'} to {zdot / '.zshrc'}, for new terminals"
+    ]
     assert (zdot / ".zshrc").is_symlink() and BEGIN in (dotfiles / "zshrc").read_text()
     # The block replaced in place keeps the link too.
     other = run(
@@ -853,8 +915,8 @@ def test_a_directory_on_path_already_is_written_into_no_startup_file(layout) -> 
     tmp_path, _, _, run = layout
     done = run(extra={"SHELL": "/bin/bash", "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin"})
     assert done.returncode == 0, done.stderr
-    assert f"PATH: {tmp_path / 'bin'} is on PATH already" in done.stdout
-    assert os.listdir(tmp_path / "home") == [] and "This terminal" not in done.stdout
+    assert told(done.stdout) == [f"{tmp_path / 'bin'} is on PATH already"]
+    assert os.listdir(tmp_path / "home") == [] and next_steps(done.stdout) == [SETUP_NEXT]
 
 
 def test_a_directory_named_with_spaces_quotes_and_dollars_reads_back_exactly(layout) -> None:
@@ -894,14 +956,15 @@ def test_a_startup_file_left_unconfigured_is_said_so_and_the_installation_stands
     assert os.readlink(tmp_path / "prefix/current") == f"versions/{ID}"
     reason = {
         "unknown shell": "the login shell (/usr/bin/fish) is not bash, zsh or sh",
-        "unwritable": f"cannot write {profile}",
-        "unwritable, its block there": f"cannot write {profile}",
-        "a directory": f"{profile} is not a file this installer edits",
+        "unwritable": "cannot write ~/.profile",
+        "unwritable, its block there": "cannot write ~/.profile",
+        "a directory": "~/.profile is not a file this installer edits",
     }[case]
-    told = done.stdout.splitlines()
-    assert f"PATH: not configured: {reason}" in told
-    assert told[told.index("PATH: to add it yourself:") + 1] == f'  export PATH="{bin_dir}:$PATH"'
-    assert f"This terminal finds alphaavatar once {bin_dir} is on PATH." in told
+    assert told(done.stdout) == [f"not configured: {reason}"]
+    assert next_steps(done.stdout)[0] == (
+        f'export PATH="{bin_dir}:$PATH"',
+        "this terminal; add it to the startup file above for new ones",
+    )
     assert "added" not in done.stdout and "updated" not in done.stdout
     after = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
     assert after == before
@@ -962,9 +1025,8 @@ def test_markers_out_of_order_leave_the_startup_file_as_it_was_to_the_byte(
 
     assert done.returncode == 0, done.stderr
     assert os.readlink(tmp_path / "prefix/current") == f"versions/{ID}"
-    told = done.stdout.splitlines()
-    assert f"PATH: not configured: {reason}" in told
-    assert told[told.index("PATH: to add it yourself:") + 1] == f'  export PATH="{bin_dir}:$PATH"'
+    assert told(done.stdout) == [f"not configured: {reason}".replace(str(profile), "~/.profile")]
+    assert next_steps(done.stdout)[0][0] == f'export PATH="{bin_dir}:$PATH"'
     after = (kept.read_bytes(), kept.stat(), sorted(os.listdir(dotfiles)))
     assert after[0] == before[0] and after[2] == before[2]
     assert (after[1].st_mode, after[1].st_ino, after[1].st_mtime_ns) == (
@@ -1081,8 +1143,12 @@ def test_piped_in_a_terminal_it_offers_setup_and_runs_it_on_that_terminal(
         "stage=gone",
         "said=hello",
     ]
-    assert "Setup: done" in shown
-    assert shown.index("PATH: added") < shown.index(OFFER)
+    assert "\nOK    Setup done\r\n" in shown and SETUP_NEXT not in next_steps(shown)
+    assert (
+        shown.index("04  PATH")
+        < shown.index("OK    AlphaAvatar 9.9.9 installed")
+        < shown.index(OFFER)
+    )
     for shell in (LOGIN, INTERACTIVE):
         assert new_terminal(home, *shell)[0] == str(home / ".local/bin/alphaavatar"), shell
     assert "doctor" not in shown.split(OFFER)[1] and "Starting the Host" not in shown
@@ -1106,8 +1172,8 @@ def test_setup_declined_runs_nothing_and_the_installation_stands(
 
     assert status == 0, shown
     assert not (home / "setup-ran").exists()
-    result = "cancelled, not run" if reply == b"\x03" else "not run"
-    assert f"Setup: {result}. Next: alphaavatar setup" in shown
+    result = "WARN  Setup cancelled; not run" if reply == b"\x03" else "SKIP  Setup not run"
+    assert f"\n{result}\r\n" in shown and next_steps(shown)[-1] == SETUP_NEXT
     assert os.readlink(home / ".local/lib/alphaavatar/current") == f"versions/{ID}"
     assert settings.read_text() == '{"default_bundle": "mine"}\n'
 
@@ -1237,7 +1303,7 @@ def test_a_ctrl_c_before_the_installer_waits_for_its_answer_cancels_with_nothing
             if select.select([controller], [], [], 0.1)[0]:
                 shown.extend(os.read(controller, 65536))
         out = told.read_text()
-        assert "Setup: cancelled, not run. Next: alphaavatar setup" in out and "status 0" in out
+        assert "WARN  Setup cancelled; not run" in out and "status 0" in out
         assert not Path(f"/proc/{reader}").exists() and os.listdir(spare) == []
         assert not (tmp_path / "home/setup-ran").exists()
         assert os.readlink(tmp_path / "home/.local/lib/alphaavatar/current") == f"versions/{ID}"
@@ -1357,7 +1423,7 @@ def test_a_signal_as_the_reader_starts_before_it_is_recorded_still_ends_it(
             time.sleep(0.05)
         code = 143 if signal_name == "SIGTERM" else 129
         assert ended.read_text().strip() == str(code) and os.listdir(spare) == []
-        assert "Installed AlphaAvatar" in told.read_text() and OFFER not in told.read_text()
+        assert "AlphaAvatar 9.9.9 installed" in told.read_text() and OFFER not in told.read_text()
         assert os.readlink(tmp_path / "home/.local/lib/alphaavatar/current") == f"versions/{ID}"
     finally:
         os.close(controller)
@@ -1384,7 +1450,8 @@ def test_a_setup_that_fails_or_is_stopped_leaves_the_installation_and_says_which
 
     assert status == 0, shown  # The installer's status is the installation's.
     code = 3 if ending == "fails" else 130
-    assert f"Setup: did not finish (exit {code}); AlphaAvatar stays installed." in shown
+    assert f"WARN  Setup did not finish (exit {code}); AlphaAvatar stays installed" in shown
+    assert next_steps(shown)[-1] == SETUP_NEXT
     assert os.readlink(home / ".local/lib/alphaavatar/current") == f"versions/{ID}"
     for shell in (LOGIN, INTERACTIVE):
         assert new_terminal(home, *shell)[0] == str(home / ".local/bin/alphaavatar"), shell
@@ -1401,7 +1468,7 @@ def test_non_interactive_in_a_terminal_installs_and_configures_but_never_asks(
     status, shown = terminal(tmp_path, tools, script, [])
 
     assert status == 0, shown
-    assert OFFER not in shown and "Next: alphaavatar setup" in shown
+    assert OFFER not in shown and SETUP_NEXT in next_steps(shown)
     assert not (home / "setup-ran").exists()
     for shell in (LOGIN, INTERACTIVE):
         assert new_terminal(home, *shell)[0] == str(home / ".local/bin/alphaavatar"), shell
@@ -1413,7 +1480,7 @@ def test_without_a_terminal_it_never_asks(layout) -> None:
     digest = hashlib.sha256(guided.read_bytes()).hexdigest()
     done = run(source=("--file", str(guided), "--sha256", digest), extra={"SHELL": "/bin/bash"})
     assert done.returncode == 0, done.stderr
-    assert OFFER not in done.stdout and "Next: alphaavatar setup" in done.stdout
+    assert OFFER not in done.stdout and SETUP_NEXT in next_steps(done.stdout)
     assert not (tmp_path / "home/setup-ran").exists()
 
 
@@ -1437,7 +1504,7 @@ def test_a_terminal_already_set_up_is_offered_no_setup(layout, releases) -> None
     status, shown = terminal(tmp_path, tools, script, [])
 
     assert status == 0, shown
-    assert OFFER not in shown and "Next: alphaavatar setup" not in shown
+    assert OFFER not in shown and SETUP_NEXT not in next_steps(shown)
     assert not (tmp_path / "home/setup-ran").exists()
 
 
@@ -1467,7 +1534,7 @@ def test_the_unattended_example_installs_asks_nothing_and_goes_on_by_itself(
     publish(package(tmp_path / "guided", effect=SETUP))
     done = shell(tmp_path, tools, documented("docs/DEPLOY.md", "set -euo pipefail"))
     assert done.returncode == 0, done.stderr
-    assert OFFER not in done.stdout and "Next: alphaavatar setup" in done.stdout
+    assert OFFER not in done.stdout and SETUP_NEXT in next_steps(done.stdout)
     # The example's own setup, the bundle given, ran with what the script gave it.
     assert (tmp_path / "home/setup-ran").read_text().splitlines()[0] == "stdin=other"
     assert os.readlink(tmp_path / "home/.local/lib/alphaavatar/current") == f"versions/{ID}"
@@ -1484,3 +1551,99 @@ def test_piped_a_download_that_fails_succeeds_unless_the_outer_shell_has_pipefai
     assert shell(tmp_path, tools, piped).returncode == 0
     assert shell(tmp_path, tools, piped, options=("-o", "pipefail")).returncode == 22
     assert not (tmp_path / "home/.local").exists()
+
+
+def screen(shown: str) -> list[str]:
+    """What a terminal shows of ``shown``: what is written after a carriage return, and an
+    erase, takes the line's place; colors dropped."""
+    lines = []
+    for line in shown.replace("\r\n", "\n").split("\n"):
+        lines.append(re.sub(r"\x1b\[[0-9;]*[mK]", "", line.split("\r")[-1]))
+    return lines
+
+
+RELEASE = "https://github.com/AlphaAvatar/AlphaAvatar/releases/download"
+INSTALL_REPORT = [
+    "AlphaAvatar / Install",
+    "01  Package",
+    "    The latest release is v9.9.9",
+    f"    Downloading {RELEASE}/v9.9.9/alphaavatar-9.9.9-linux-x86_64.tar.gz",
+    "01  Package        AlphaAvatar 9.9.9 · build 9.9.9-test · SHA-256 verified",
+    "02  Check          glibc {glibc} · runs on this machine",
+    "03  Install        ~/.local/lib/alphaavatar/versions/9.9.9-test · current",
+    "04  PATH           added ~/.local/bin to ~/.bashrc, for new terminals",
+    "                   added ~/.local/bin to ~/.profile, for new terminals",
+    "OK    AlphaAvatar 9.9.9 installed",
+    "      Build        9.9.9-test",
+    "      Command      ~/.local/bin/alphaavatar",
+    "      Current      ~/.local/lib/alphaavatar/current -> versions/9.9.9-test",
+    OFFER + "n",
+    "SKIP  Setup not run",
+    "Next",
+    "  source ~/.bashrc   # this terminal; new ones find alphaavatar",
+    "  alphaavatar setup  # choose capabilities; it installs them",
+]
+
+
+@pytest.mark.parametrize(
+    ("environ", "colored"),
+    [
+        ({"TERM": "xterm-256color"}, True),
+        ({"TERM": "xterm-256color", "NO_COLOR": ""}, False),
+        ({"TERM": "dumb"}, False),
+    ],
+    ids=["terminal", "no-color", "dumb"],
+)
+def test_piped_to_bash_a_terminal_gets_the_report_in_color_and_the_same_without(
+    layout, releases, environ: dict[str, str], colored: bool
+) -> None:
+    """The README's line on a real terminal: bash reads the download, so its input is no
+    terminal, but its output is, and is colored as the Python CLI colors it. NO_COLOR, even
+    empty, and TERM=dumb get the same report, its labels and lines, in plain text."""
+    tmp_path, _, tools, _ = layout
+    publish, _, _ = releases
+    publish(package(tmp_path / "guided", effect=SETUP))
+    status, shown = terminal(
+        tmp_path, tools, entry("README.md"), [(OFFER, b"n\r")], extra=environ | {"LANG": "C.UTF-8"}
+    )
+    assert status == 0, shown
+    glibc = subprocess.run(["getconf", "GNU_LIBC_VERSION"], capture_output=True, text=True)
+    report = [line.format(glibc=glibc.stdout.split()[1]) for line in INSTALL_REPORT]
+    lines = [line for line in screen(shown) if line.strip() and not line.startswith("#")]
+    assert lines[: len(report)] == report
+    assert ("\x1b[" in shown) == colored
+    if colored:
+        for painted in (
+            "\x1b[38;2;96;165;250mAlphaAvatar / Install\x1b[0m",  # The title, brand blue.
+            "\x1b[38;2;34;211;238m02  Check\x1b[0m\r\x1b[K02  Check ",  # Under way, then done.
+            "\x1b[32mOK\x1b[0m    AlphaAvatar 9.9.9 installed",
+            "\x1b[90mSKIP\x1b[0m  Setup not run",
+            "\x1b[38;2;34;211;238malphaavatar setup\x1b[0m",  # A command to copy.
+            "\x1b[90m# choose capabilities; it installs them\x1b[0m",
+            f"\x1b[38;2;34;211;238m{OFFER}\x1b[0m",
+        ):
+            assert painted in shown, painted
+        # The facts stay plain: the build and the paths are read, not decorated.
+        assert "      Build        9.9.9-test\r\n" in shown
+
+
+def test_a_failure_is_said_on_stderr_apart_and_names_the_step_it_ended(layout) -> None:
+    tmp_path, good, _, run = layout
+    failed = run(source=("--file", str(good), "--sha256", "0" * 64))
+    assert failed.returncode == 1
+    assert failed.stdout.endswith("\nAlphaAvatar / Install\n\n01  Package\n")
+    assert failed.stderr == (
+        f"\nFAIL  Not installed\n      {good} does not match its SHA-256: an incomplete "
+        "download or another file\n"
+    )
+    # Before anything is reported, no step and no line apart.
+    refused = run(source=("--version", "x"))
+    assert (refused.returncode, refused.stdout) == (1, "\nAlphaAvatar / Install\n\n")
+    assert refused.stderr == "\nFAIL  Not installed\n      Invalid version\n"
+
+
+def test_a_terminal_s_stderr_gets_its_failure_in_red(layout) -> None:
+    tmp_path, good, tools, _ = layout
+    script = f"bash {SCRIPT} --file {good} --sha256 {'0' * 64} --prefix {tmp_path / 'prefix'}"
+    status, shown = terminal(tmp_path, tools, script, [], extra={"TERM": "xterm-256color"})
+    assert status == 1 and "\x1b[31mFAIL\x1b[0m  Not installed\r\n" in shown

@@ -18,8 +18,14 @@ from __future__ import annotations
 
 import io
 import os
+import pty
 import re
+import select
+import signal
+import subprocess
 import sys
+import termios
+import time
 from types import SimpleNamespace
 from unittest import mock
 
@@ -546,6 +552,12 @@ def test_options_on_a_terminal_are_a_list_the_arrows_and_typing_choose_from(
         assert "No option holds that" in text  # And Enter took nothing then.
 
 
+def test_a_list_too_narrow_for_its_hint_shows_a_shorter_one() -> None:
+    found, text, _, restored = listed(b"\r", columns=50)
+    assert (found, restored) == ("anthropic", True)
+    assert "↑↓, type, Enter" in text and "type to narrow" not in text
+
+
 def test_a_list_on_a_narrow_terminal_keeps_each_line_it_redraws_within_it() -> None:
     found, text, cbreak, restored = listed(b"\033[B", b"o", b"\r", columns=24)
     assert (found, cbreak, restored) == ("google", True, True)
@@ -554,3 +566,113 @@ def test_a_list_on_a_narrow_terminal_keeps_each_line_it_redraws_within_it() -> N
     widths = [len(line.rsplit("\r", 1)[-1]) for line in drawn.split("\n")]
     assert max(widths) <= 23
     assert "    Provider for mem…" in drawn and "    › Anthr…  (default)" in drawn
+
+
+ENDING = """
+import errno, fcntl, os, signal, sys, termios
+from alphaavatar.host.cli.commands.setup import _interrupt
+from alphaavatar.host.cli.render import Option, Report
+os.setsid()
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+signal.signal(signal.SIGTERM, _interrupt)  # As setup has them: each unwinds as SystemExit.
+signal.signal(signal.SIGHUP, _interrupt)
+point, signum = sys.argv[1], int(sys.argv[2])
+fired = []
+
+def fire():
+    if not fired:  # Once: the first signal of the list's ending.
+        fired.append(signum)
+        os.kill(os.getpid(), signum)
+
+import tty  # noqa: E402,F401  Bound to termios as it is: its cbreak call is not the list's ending.
+
+restore = termios.tcsetattr  # The list's own calls from here on.
+
+def tcsetattr(fd, when, attributes):
+    if point == "before-restore":
+        fire()
+    restore(fd, when, attributes)
+    if point == "after-restore":
+        fire()
+
+emit = Report._emit
+
+def _emit(self, text, *, flush=False):
+    if text != "\\033[?25h":
+        return emit(self, text, flush=flush)
+    if point == "before-cursor":
+        fire()
+    if point == "cursor-fails":
+        raise OSError(errno.EIO, "the terminal took no more")
+    emit(self, text, flush=flush)
+    if point == "after-cursor":
+        fire()
+
+termios.tcsetattr, Report._emit = tcsetattr, _emit
+options = [Option(name, name.lower()) for name in ("OpenAI", "Anthropic")]
+try:
+    Report(sys.stdout).choose("Provider for memory", options, 1)
+except KeyboardInterrupt:
+    os._exit(130)
+except SystemExit as stop:
+    os._exit(stop.code)
+os._exit(0)
+"""
+
+
+@pytest.mark.parametrize(
+    "signum", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT], ids=["TERM", "HUP", "INT"]
+)
+@pytest.mark.parametrize(
+    "point", ["before-restore", "after-restore", "before-cursor", "after-cursor"]
+)
+def test_a_signal_as_a_list_ends_never_leaves_the_terminal_unrestored(
+    point: str, signum: int
+) -> None:
+    code, restored, mode = ended(point, signum)
+    # Ended by the signal, as it would end anywhere; the terminal as before, read first.
+    assert code == (130 if signum == signal.SIGINT else 128 + signum)
+    assert restored and mode & termios.ICANON and mode & termios.ECHO
+
+
+def test_a_cursor_the_terminal_takes_no_more_of_leaves_its_settings_restored() -> None:
+    code, restored, mode = ended("cursor-fails", 0)
+    assert (code, restored) == (0, True)  # Chosen, as Enter chose it.
+
+
+def ended(point: str, signum: int) -> tuple[int, bool, int]:
+    """A list ended with Enter on a real terminal, ``signum`` arriving at ``point`` of its
+    ending: the exit status, and the terminal as the list left it, read once it exited while
+    this end keeps the terminal open, so neither a hangup nor a shell restores it first."""
+    master, slave = pty.openpty()
+    before = termios.tcgetattr(slave)
+    env = {k: v for k, v in os.environ.items() if k not in ("NO_COLOR", "COLUMNS")}
+    child = subprocess.Popen(
+        [sys.executable, "-c", ENDING, point, str(signum)],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        env=env | {"TERM": "xterm-256color"},
+    )
+    received = b""
+    try:
+        end = time.monotonic() + 30
+        while b"\033[?25l" not in received:  # The list is up.
+            assert time.monotonic() < end, received.decode(errors="replace")
+            if select.select([master], [], [], 0.1)[0]:
+                received += os.read(master, 65536)
+        while b"Provider for memory:" not in received.rsplit(b"\033[?25l", 1)[1]:
+            assert time.monotonic() < end, received.decode(errors="replace")
+            if select.select([master], [], [], 0.1)[0]:
+                received += os.read(master, 65536)
+        os.write(master, b"\r")
+        code = child.wait(30)
+        after = termios.tcgetattr(slave)
+        while select.select([master], [], [], 0.1)[0]:
+            received += os.read(master, 65536)
+    finally:
+        child.kill()
+        child.wait()
+        os.close(master)
+        os.close(slave)
+    return code, after == before, after[3]

@@ -468,6 +468,7 @@ Use `core/perception/runtime.py` and the named Memory modules there as style exa
 - Keep a reasonable expression on one line; the formatter targets 100 columns.
 - Split when width, nesting or readability justifies it.
 - Keep useful comments focused on ownership, invariants and non-obvious ordering.
+- Separate clearly distinct blocks inside a function with a blank line; comment one only where its purpose is not plain.
 - Put processor-specific business logic with its owner.
 - Extract a helper/class when it has a coherent responsibility, not just to shorten a file.
 - Use current contracts directly during rapid iteration unless the task requires compatibility.
@@ -608,7 +609,7 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | --- | --- |
 | [ROADMAP.md](docs/ROADMAP.md) | Development direction and milestone status across runtime, capabilities and clients. |
 | [DEPLOY.md](docs/DEPLOY.md) | Linux/source deployment, service configuration, credentials and operating procedures. |
-| [coding-conventions.md](docs/coding-conventions.md) | Module/class ordering, functional section strings and method naming. |
+| [coding-conventions.md](docs/coding-conventions.md) | Module/class ordering, functional section strings, method naming, constructor field groups and function-body blocks. |
 | [identifiers-zh.md](docs/identifiers-zh.md) | Identifier meanings, owners, uniqueness/lifetimes, initialization and correlation rules. |
 | [avatar-workspace-layout.md](docs/avatar-workspace-layout.md) | Application/Avatar data layout, personal data, logs and backup boundaries. |
 | [models-cache-layout.md](docs/models-cache-layout.md) | Model cache ownership, resolution, downloads, offline behavior and cleanup. |

@@ -116,3 +116,40 @@ def test_vertex_ai_authenticates_with_its_own_credentials_and_no_api_key(
     if "vertexai" not in extra:
         with pytest.raises(RuntimeError, match="'GOOGLE_API_KEY' is required"):
             embedding(**extra)
+
+
+@pytest.mark.parametrize("vertexai", ["false", "0", "no", "off", "False", False, 0])
+@pytest.mark.parametrize("key", [None, "", " \t"], ids=["missing", "empty", "blank"])
+def test_vertex_switched_off_as_the_sdk_reads_it_needs_a_key_even_with_a_project(
+    vertexai: object, key: str | None, client: list[dict[str, Any]]
+) -> None:
+    # As `vertexai: ${oc.env:USE_VERTEXAI}` gives it: the SDK takes the Developer API then.
+    if key is not None:
+        os.environ["GOOGLE_API_KEY"] = key
+    with pytest.raises(RuntimeError, match="'GOOGLE_API_KEY' is required"):
+        embedding(vertexai=vertexai, project="your-project")
+    assert client == []  # Refused by the variable's name, before any client exists.
+    os.environ["GOOGLE_API_KEY"] = KEY
+    embedding(vertexai=vertexai, project="your-project")
+    assert [made.get("api_key") for made in client] == [KEY]
+    assert not client[0].get("vertexai")
+
+
+@pytest.mark.parametrize("vertexai", ["true", "1", "yes", "on", True, 1])
+def test_vertex_switched_on_as_the_sdk_reads_it_takes_its_own_credentials(
+    vertexai: object, client: list[dict[str, Any]]
+) -> None:
+    os.environ["GOOGLE_API_KEY"] = " \t"  # Blank: none, and none needed.
+    embedding(vertexai=vertexai, project="your-project")
+    (made,) = client
+    assert made["vertexai"] is True and "api_key" not in made
+
+
+def test_a_vertex_setting_that_is_no_flag_is_refused_by_the_sdk_by_its_name(
+    client: list[dict[str, Any]],
+) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="vertexai"):
+        embedding(vertexai="maybe", project="your-project")
+    assert client == []

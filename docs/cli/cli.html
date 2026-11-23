@@ -39,23 +39,28 @@ h2 { font-size: 16px; line-height: 1.35; margin: 0 0 4px; }
 <main>
 <h1>AlphaAvatar CLI output</h1>
 <p class="lead">What a terminal of each width shows once the command ends, rendered from its
-recording with the escape codes kept as colors (scripts/docs/cli_preview.py). Setup, config,
-and Doctor declined or with --no-metrics ran on a clean Ubuntu 24.04 root with the Linux
-package of this build. Doctor's measured runs used the offline test doubles of its tests,
+recording with the escape codes kept as colors (scripts/docs/cli_preview.py). The installer
+and Setup ran on 2026-11-23 in an empty home on Alibaba Cloud Linux 3 (glibc 2.32), with the
+Linux package CI built for 3e5b8e2d (0.6.8-3e5b8e2d9b2a), its own wheels given with --artifacts,
+and fictional credentials; install.sh is the one this change brings, and Setup installed and
+validated for real. Config, and Doctor declined or with --no-metrics, ran earlier on a clean
+Ubuntu 24.04 root with the Linux package of their build. Doctor's measured runs used the offline test doubles of its tests,
 marked 离线测试替身: their services and model files are stand-ins and their timings are the
 doubles', in rounds of their own. No panel here holds a real service's figures: those are
 recorded apart, in the acceptance log. Every figure ends at the Host's output; LiveKit's
 transport, a client's playback and the devices are measured separately. Lines wider than a
 panel are diagnostics and commands, which print whole.</p>
 <nav><ol>
-<li><a href="#setup-first">alphaavatar setup — a new bundle, asked part by part, no model on this machine</a></li>
+<li><a href="#install-first">bash install.sh --file alphaavatar-0.6.8-3e5b8e2d9b2a-linux-x86_64.tar.gz — a first installation, setup declined</a></li>
+<li><a href="#install-again">NO_COLOR=1 bash install.sh --file alphaavatar-0.6.8-3e5b8e2d9b2a-linux-x86_64.tar.gz — installed already, plain</a></li>
+<li><a href="#setup-first">alphaavatar setup --artifacts DIR — a new bundle, asked part by part, no model on this machine</a></li>
 <li><a href="#init-bare">alphaavatar config init reference --avatar-id reference — in the base package</a></li>
 <li><a href="#check-bare">alphaavatar config check reference — before setup</a></li>
-<li><a href="#setup-bundle">alphaavatar setup reference — the bundle config init made</a></li>
+<li><a href="#setup-bundle">alphaavatar setup reference --artifacts DIR — the bundle config init made</a></li>
 <li><a href="#check">alphaavatar config check reference — after setup</a></li>
 <li><a href="#setup-unserved">alphaavatar setup ragged — a selection this release does not install</a></li>
 <li><a href="#setup-cancel">alphaavatar setup reference — the plan declined</a></li>
-<li><a href="#setup-interrupt">alphaavatar setup — Ctrl+C at a question</a></li>
+<li><a href="#setup-interrupt">alphaavatar setup — Ctrl+C at a provider list</a></li>
 <li><a href="#setup-nocolor">NO_COLOR=1 alphaavatar setup reference — plain, a line each</a></li>
 <li><a href="#doctor-declined">alphaavatar doctor first — the diagnosis declined</a></li>
 <li><a href="#doctor-nometrics">alphaavatar doctor first --no-metrics</a></li>
@@ -67,53 +72,116 @@ panel are diagnostics and commands, which print whole.</p>
 <li><a href="#doctor-noimages">alphaavatar doctor --rounds 3 — a model that refuses images, reported as it is</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-interrupt">alphaavatar doctor — Ctrl+C at the question</a><span class="tag">离线测试替身</span></li>
 </ol></nav>
-<section id="setup-first"><h2>alphaavatar setup — a new bundle, asked part by part, no model on this machine</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+<section id="install-first"><h2>bash install.sh --file alphaavatar-0.6.8-3e5b8e2d9b2a-linux-x86_64.tar.gz — a first installation, setup declined</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Install</span>
+
+01  Package        AlphaAvatar 0.6.8 · build 0.6.8-3e5b8e2d9b2a · SHA-256 verified
+02  Check          glibc 2.32 · runs on this machine
+03  Install        ~/.local/lib/alphaavatar/versions/0.6.8-3e5b8e2d9b2a · current
+04  PATH           added ~/.local/bin to ~/.bashrc, for new terminals
+                   added ~/.local/bin to ~/.profile, for new terminals
+
+<span style="color:#4ade80">OK</span>    AlphaAvatar 0.6.8 installed
+      Build        0.6.8-3e5b8e2d9b2a
+      Command      ~/.local/bin/alphaavatar
+      Current      ~/.local/lib/alphaavatar/current -&gt; versions/0.6.8-3e5b8e2d9b2a
+
+<span style="color:rgb(34,211,238)">Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] </span>n
+<span style="color:#9ca3af">SKIP</span>  Setup not run
+
+<span style="font-weight:700">Next</span>
+  <span style="color:rgb(34,211,238)">source ~/.bashrc</span>   <span style="color:#9ca3af"># this terminal; new ones find alphaavatar</span>
+  <span style="color:rgb(34,211,238)">alphaavatar setup</span>  <span style="color:#9ca3af"># choose capabilities; it installs them</span></pre></div></section>
+<section id="install-again"><h2>NO_COLOR=1 bash install.sh --file alphaavatar-0.6.8-3e5b8e2d9b2a-linux-x86_64.tar.gz — installed already, plain</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch">AlphaAvatar / Install
+
+01  Package        AlphaAvatar 0.6.8 · build 0.6.8-3e5b8e2d9b2a · SHA-256 verified
+02  Check          AlphaAvatar 0.6.8-3e5b8e2d9b2a is already installed · glibc 2.32 · runs on this machine
+03  Install        ~/.local/lib/alphaavatar/versions/0.6.8-3e5b8e2d9b2a · current
+04  PATH           ~/.bashrc already adds ~/.local/bin, for new terminals
+                   ~/.profile already adds ~/.local/bin, for new terminals
+
+OK    AlphaAvatar 0.6.8 installed
+      Build        0.6.8-3e5b8e2d9b2a
+      Command      ~/.local/bin/alphaavatar
+      Current      ~/.local/lib/alphaavatar/current -&gt; versions/0.6.8-3e5b8e2d9b2a
+
+Run alphaavatar setup now, to choose what the Avatar runs with? [Y/n] n
+SKIP  Setup not run
+
+Next
+  source ~/.bashrc   # this terminal; new ones find alphaavatar
+  alphaavatar setup  # choose capabilities; it installs them</pre></div></section>
+<section id="setup-first"><h2>alphaavatar setup --artifacts DIR — a new bundle, asked part by part, no model on this machine</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
 
 <span style="color:rgb(34,211,238)">01  Capabilities</span>
-    From the reference configuration: voice and vision on, memory and persona, each model from the
-    backend chosen below.
+    Each question starts from the reference configuration: Enter keeps its answer.
     <span style="color:rgb(34,211,238)">Voice: speech in and out, voice activity detected on this machine? [Y/n]: </span>
     <span style="color:rgb(34,211,238)">Vision: camera frames reach the model? [Y/n]: </span>
     <span style="color:rgb(34,211,238)">Models on this machine: turn taking, addressing, face and speaker recognition? [Y/n]: </span>n
-    Vectors for memory and persona:
-      1  LanceDB in the Avatar workspace
-      2  your Qdrant
-    <span style="color:rgb(34,211,238)">Vector store [1]: </span>
-    <span style="color:rgb(34,211,238)">Models from OpenAI? No: a server of your own with OpenAI&#x27;s API, Responses included [Y/n]: </span>
-    <span style="color:rgb(34,211,238)">Speech from OpenAI? No: a server of your own with OpenAI&#x27;s audio API [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">ENV memory: memories drawn from the session&#x27;s audio and video by Google&#x27;s Gemini, an external</span>
+    <span style="color:rgb(34,211,238)">model? [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Vectors for memory and persona:</span> LanceDB in the Avatar workspace
+    Tools: none on; to use DeepResearch or MCP, switch it on in the bundle&#x27;s tools profile, then run
+    `alphaavatar setup &lt;bundle&gt;`; this release&#x27;s setup does not install RAG.
     <span style="color:rgb(34,211,238)">Bundle name [avatar]: </span>first
     <span style="color:rgb(34,211,238)">Avatar ID [first]: </span>
-01  Capabilities   Voice on · Vision on · Local models off
-<span style="color:rgb(34,211,238)">02  Credentials</span>
-    <span style="color:rgb(34,211,238)">OPENAI_API_KEY, for the model, embeddings, memory/persona tasks and speech, from OpenAI (set;</span>
-    <span style="color:rgb(34,211,238)">Enter keeps it): </span>
-    <span style="color:rgb(34,211,238)">LIVEKIT_URL, for the LiveKit server sessions use (set; Enter keeps it): </span>
-    <span style="color:rgb(34,211,238)">LIVEKIT_API_KEY, for LiveKit (set; Enter keeps it): </span>
-    <span style="color:rgb(34,211,238)">LIVEKIT_API_SECRET, for LiveKit (set; Enter keeps it): </span>
-    <span style="color:rgb(34,211,238)">Store OPENAI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET in</span>
-    <span style="color:rgb(34,211,238)">/home/tester/.local/share/alphaavatar/settings, readable only by you? [y/N]: </span>n
+01  Capabilities   Bundle first · Voice on · Vision on · Local models off · ENV memory on
+<span style="color:rgb(34,211,238)">02  Models</span>
+    <span style="color:rgb(34,211,238)">Provider for the conversation:</span> OpenAI
+    <span style="color:rgb(34,211,238)">  Model for the conversation [gpt-5.6-luna]: </span>
+    <span style="color:rgb(34,211,238)">Provider for memory:</span> OpenAI
+    <span style="color:rgb(34,211,238)">  Model for memory [gpt-4o]: </span>
+    <span style="color:rgb(34,211,238)">Provider for tool memory:</span> OpenAI
+    <span style="color:rgb(34,211,238)">  Model for tool memory [gpt-4o]: </span>
+    <span style="color:rgb(34,211,238)">Provider for persona profiles:</span> OpenAI
+    <span style="color:rgb(34,211,238)">  Model for persona profiles [gpt-4o]: </span>
+    ENV memory: from Google, the only one
+    <span style="color:rgb(34,211,238)">  Model for ENV memory [gemini-2.5-flash]: </span>
+    <span style="color:rgb(34,211,238)">Provider for embeddings:</span> OpenAI
+    <span style="color:rgb(34,211,238)">  Model for embeddings [text-embedding-3-small]: </span>
+    <span style="color:rgb(34,211,238)">Provider for speech recognition:</span> OpenAI, segment by segment (openai_segment)
+    <span style="color:rgb(34,211,238)">  Model for speech recognition [gpt-4o-transcribe]: </span>
+    <span style="color:rgb(34,211,238)">Provider for speech synthesis:</span> OpenAI (openai)
+    <span style="color:rgb(34,211,238)">  Model for speech synthesis [gpt-4o-mini-tts]: </span>
+    <span style="color:rgb(34,211,238)">  Voice [ash]: </span>
+    <span style="color:rgb(34,211,238)">  Speed, 0.25 to 4.0 [1.15]: </span>
+02  Models         OpenAI · Google
+<span style="color:rgb(34,211,238)">03  Credentials</span>
+    <span style="color:rgb(34,211,238)">OPENAI_API_KEY, for the conversation model, memory, tool memory, persona profiles, embeddings,</span>
+    <span style="color:rgb(34,211,238)">speech recognition, speech synthesis, from OpenAI: </span>
+    <span style="color:rgb(34,211,238)">GOOGLE_API_KEY, for ENV memory, from Google: </span>
+    <span style="color:rgb(34,211,238)">LIVEKIT_URL, for the LiveKit server sessions use: </span>wss://livekit.example.com
+    <span style="color:rgb(34,211,238)">LIVEKIT_API_KEY, for LiveKit: </span>
+    <span style="color:rgb(34,211,238)">LIVEKIT_API_SECRET, for LiveKit: </span>
+    <span style="color:rgb(34,211,238)">Store OPENAI_API_KEY, GOOGLE_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET in</span>
+    <span style="color:rgb(34,211,238)">/home/tester/.local/share/alphaavatar/settings, readable</span>
+    <span style="color:rgb(34,211,238)">only by you? [y/N]: </span>n
     Not stored: start reads them from the environment or .env
-02  Credentials    Ready
-<span style="color:rgb(34,211,238)">03  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan bca648278143bd12
+03  Credentials    Ready
+<span style="color:rgb(34,211,238)">04  Install</span>
+    AlphaAvatar 0.6.8 (linux-x86_64), plan 25a33dcc177809c5
+    voice on · vision on · models on this machine off · ENV memory on
     sessions through LiveKit
-    model and embeddings from OpenAI
-    speech from OpenAI
-    voice: speech in and out, voice activity detected on this machine
-    vision: camera frames reach the model
-    no other models on this machine
+    conversation: OpenAI gpt-5.6-luna
+    memory: OpenAI gpt-4o; tool memory OpenAI gpt-4o
+    ENV memory: Google gemini-2.5-flash, from audio and video
+    persona profiles: OpenAI gpt-4o
+    embeddings: OpenAI text-embedding-3-small
+    speech in: openai_segment gpt-4o-transcribe
+    speech out: openai gpt-4o-mini-tts, voice ash, speed 1.15
     memory and persona: vectors in LanceDB in the Avatar workspace
+    tools: none on; to use DeepResearch or MCP, switch it on in the bundle&#x27;s tools profile, then run
+    `alphaavatar setup &lt;bundle&gt;`; this release&#x27;s setup does not install RAG
     85 packages · 212 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/bca648278143bd12; bundle first, made the default
+    Environment ~/.local/lib/alphaavatar/envs/25a33dcc177809c5; bundle first, made the default
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
-03  Install        85 packages · 212 MB
-04  Validate       PASS · 3 runners
+04  Install        85 packages · 212 MB
+05  Validate       PASS · 3 runners
 
 <span style="color:#4ade80">OK</span>    Bundle enabled
       Default       first
-      Environment   ~/.local/lib/alphaavatar/envs/bca648278143bd12
-      <span style="color:#9ca3af">Start reads OPENAI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET from the</span>
-      <span style="color:#9ca3af">environment or .env.</span>
+      Environment   ~/.local/lib/alphaavatar/envs/25a33dcc177809c5
+      <span style="color:#9ca3af">Start reads OPENAI_API_KEY, GOOGLE_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET</span>
+      <span style="color:#9ca3af">from the environment or .env.</span>
 
 <span style="font-weight:700">Next</span>
   <span style="color:rgb(34,211,238)">alphaavatar doctor first</span></pre></div></section>
@@ -173,21 +241,22 @@ panel are diagnostics and commands, which print whole.</p>
         no installed package provides persona &#x27;default&#x27;
         alpha-avatar-plugins-persona
         `alphaavatar setup` installs it</pre></div></section>
-<section id="setup-bundle"><h2>alphaavatar setup reference — the bundle config init made</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+<section id="setup-bundle"><h2>alphaavatar setup reference --artifacts DIR — the bundle config init made</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
 
-01  Capabilities   Bundle reference · Voice on · Vision on · Local models on
-02  Credentials    From the environment, .env or those stored
-<span style="color:rgb(34,211,238)">03  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan a3eb35a11ba6ab36
-    105 packages · 514 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36; bundle reference, made the default
+01  Capabilities   Bundle reference · Voice on · Vision on · Local models on · ENV memory on
+02  Models         As the bundle&#x27;s settings choose them
+03  Credentials    From the environment, .env or those stored
+<span style="color:rgb(34,211,238)">04  Install</span>
+    AlphaAvatar 0.6.8 (linux-x86_64), plan e029a153eb3a73a7
+    105 packages · 515 MB to download
+    Environment ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7; bundle reference, made the default
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
-03  Install        105 packages · 514 MB
-04  Validate       PASS · 8 runners
+04  Install        105 packages · 515 MB
+05  Validate       PASS · 8 runners
 
 <span style="color:#4ade80">OK</span>    Bundle enabled
       Default       reference
-      Environment   ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36
+      Environment   ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7
 
 <span style="font-weight:700">Next</span>
   <span style="color:rgb(34,211,238)">alphaavatar doctor reference</span></pre></div></section>
@@ -236,55 +305,63 @@ panel are diagnostics and commands, which print whole.</p>
 <section id="setup-cancel"><h2>alphaavatar setup reference — the plan declined</h2><p class="meta"><span>72 columns</span><span>exit 1</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
 
 01  Capabilities   Bundle reference · Voice on · Vision on
-                   Local models on
-02  Credentials    From the environment, .env or those stored
-<span style="color:rgb(34,211,238)">03  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan a3eb35a11ba6ab36
-    105 packages · installed already
-    Environment ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36; bundle
+                   Local models on · ENV memory on
+02  Models         As the bundle&#x27;s settings choose them
+03  Credentials    From the environment, .env or those stored
+<span style="color:rgb(34,211,238)">04  Install</span>
+    AlphaAvatar 0.6.8 (linux-x86_64), plan e029a153eb3a73a7
+    105 packages · 515 MB to download
+    Environment ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7; bundle
     reference, made the default
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>n
 
 <span style="color:#facc15">WARN</span>  Cancelled; nothing was enabled</pre></div></section>
-<section id="setup-interrupt"><h2>alphaavatar setup — Ctrl+C at a question</h2><p class="meta"><span>72 columns</span><span>exit 130 (254 in the sandbox, its PID 1 interrupted too)</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+<section id="setup-interrupt"><h2>alphaavatar setup — Ctrl+C at a provider list</h2><p class="meta"><span>72 columns</span><span>exit 130</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
 
 <span style="color:rgb(34,211,238)">01  Capabilities</span>
-    From the reference configuration: voice and vision on, memory and
-    persona, each model from the backend chosen below.
+    Each question starts from the reference configuration: Enter keeps
+    its answer.
     <span style="color:rgb(34,211,238)">Voice: speech in and out, voice activity detected on this machine?</span>
     <span style="color:rgb(34,211,238)">[Y/n]: </span>
     <span style="color:rgb(34,211,238)">Vision: camera frames reach the model? [Y/n]: </span>
     <span style="color:rgb(34,211,238)">Models on this machine: turn taking, addressing, face and speaker</span>
     <span style="color:rgb(34,211,238)">recognition? [Y/n]: </span>
-    Vectors for memory and persona:
-      1  LanceDB in the Avatar workspace
-      2  your Qdrant
-    <span style="color:rgb(34,211,238)">Vector store [1]: </span>
-    <span style="color:rgb(34,211,238)">Models from OpenAI? No: a server of your own with OpenAI&#x27;s API,</span>
-    <span style="color:rgb(34,211,238)">Responses included [Y/n]: </span>
-    <span style="color:rgb(34,211,238)">Speech from OpenAI? No: a server of your own with OpenAI&#x27;s audio API</span>
-    <span style="color:rgb(34,211,238)">[Y/n]: </span>
-    <span style="color:rgb(34,211,238)">Bundle name [avatar]: </span>^C
+    <span style="color:rgb(34,211,238)">ENV memory: memories drawn from the session&#x27;s audio and video by</span>
+    <span style="color:rgb(34,211,238)">Google&#x27;s Gemini, an external model? [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Vectors for memory and persona:</span> LanceDB in the Avatar workspace
+    Tools: none on; to use DeepResearch or MCP, switch it on in the
+    bundle&#x27;s tools profile, then run `alphaavatar setup &lt;bundle&gt;`; this
+    release&#x27;s setup does not install RAG.
+    <span style="color:rgb(34,211,238)">Bundle name [avatar]: </span>second
+    <span style="color:rgb(34,211,238)">Avatar ID [second]: </span>
+01  Capabilities   Bundle second · Voice on · Vision on
+                   Local models on · ENV memory on
+<span style="color:rgb(34,211,238)">02  Models</span>
+    <span style="color:rgb(34,211,238)">Provider for the conversation:</span> OpenAI
+    <span style="color:rgb(34,211,238)">  Model for the conversation [gpt-5.6-luna]: </span>
+    <span style="color:rgb(34,211,238)">Provider for memory:</span>
 
 <span style="color:#facc15">WARN</span>  Interrupted; nothing was enabled</pre></div></section>
 <section id="setup-nocolor"><h2>NO_COLOR=1 alphaavatar setup reference — plain, a line each</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch">AlphaAvatar / Setup
 
-01  Capabilities   Bundle reference · Voice on · Vision on · Local models on
-02  Credentials    From the environment, .env or those stored
-03  Install
-    AlphaAvatar 0.6.8 (linux-x86_64), plan a3eb35a11ba6ab36
+01  Capabilities   Bundle reference · Voice on · Vision on · Local models on · ENV memory on
+02  Models         As the bundle&#x27;s settings choose them
+03  Credentials    From the environment, .env or those stored
+04  Install
+    AlphaAvatar 0.6.8 (linux-x86_64), plan e029a153eb3a73a7
     105 packages · installed already
-    Environment ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36; bundle reference, made the default
+    Environment ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7; bundle reference, made the default
     Install and enable? [Y/n]: y
-03  Install
-    Environment /home/tester/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36 is already installed;
-    checking it
-03  Install        105 packages · installed already
-04  Validate       PASS · 8 runners
+04  Install
+    Environment
+    /home/tester/.local/lib/alphaavatar/envs/e029a153eb3a73a7
+    is already installed; checking it
+04  Install        105 packages · installed already
+05  Validate       PASS · 8 runners
 
 OK    Bundle enabled
       Default       reference
-      Environment   ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36
+      Environment   ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7
 
 Next
   alphaavatar doctor reference</pre></div></section>

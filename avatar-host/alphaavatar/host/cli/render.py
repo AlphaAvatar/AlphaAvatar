@@ -24,6 +24,7 @@ cleaned before it is styled.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import textwrap
@@ -51,6 +52,7 @@ GAP = 3  # Between a label and its value.
 LABEL = 10  # The narrowest label column, before its gap.
 STEP = 15  # A setup step's name and its gap.
 VISIBLE = 8  # The options a list shows at once; it scrolls past them.
+HINTS = ("↑↓ to move, type to narrow, Enter to choose", "↑↓, type, Enter")  # Beside its question.
 # Where a stream cannot encode them, as an ASCII terminal.
 _ASCII = str.maketrans({"·": "-", "→": "->", "—": "-", "…": "...", "›": ">", "↑": "^", "↓": "v"})
 _ARROWS = {b"\x1b[A": -1, b"\x1bOA": -1, b"\x1b[B": 1, b"\x1bOB": 1}
@@ -378,6 +380,11 @@ class Report:
         room = max(self.width - used - 1, 8)
         return text if len(text) <= room else text[: room - 3] + "…"
 
+    def _show_cursor(self) -> None:
+        # Unwritable, it stays as it is: what ended the list is what is reported.
+        with contextlib.suppress(OSError, ValueError):
+            self._emit("\033[?25h", flush=True)
+
     def _listed(self, question: str, options: Sequence[Option], default: int) -> Any:
         """The options under the question, one marked: the arrows move the mark, typing
         narrows the list to the labels holding what is typed, Escape clears it, Enter takes
@@ -388,6 +395,7 @@ class Report:
         fd = sys.stdin.fileno()
         saved = termios.tcgetattr(fd)
         typed, marked, shown = "", default, 0
+
         head = self._fit(f"{question}:", 4)
         asked = self.paint(head, SIGNAL_CYAN)
         room = self.width - 1 - 4 - len(head) - 1  # What the hint, or what is typed, may take.
@@ -401,6 +409,7 @@ class Report:
             self._settle()
             self._emit("\033[?25l")  # No cursor blinking through the list as it redraws.
             while True:
+                # The options holding what is typed, the mark on one, the window around it.
                 held = [
                     index
                     for index, option in enumerate(options)
@@ -410,11 +419,12 @@ class Report:
                     marked = held[0]
                 at = held.index(marked) if held else 0
                 start = max(0, min(at - VISIBLE + 1, len(held) - VISIBLE))
-                hint = "↑↓ to move, type to narrow, Enter to choose"
+
                 if typed:  # Its end, where it is typed.
                     hint = self.paint(typed[-max(room, 0) :] if room > 0 else "", SIGNAL_CYAN)
-                else:
-                    hint = self.paint(hint if len(hint) <= room else "", DIM)
+                else:  # How to choose, shorter where the line is narrow, else not at all.
+                    fits = [hint for hint in HINTS if len(hint) <= room]
+                    hint = self.paint(fits[0] if fits else "", DIM)
                 lines = [f"    {asked} {hint}".rstrip()]
                 for index in held[start : start + VISIBLE]:
                     mark = "  (default)" if index == default else ""
@@ -430,6 +440,7 @@ class Report:
                 erase()
                 self._emit("\n".join(lines) + "\n", flush=True)
                 shown = len(lines)
+
                 key = _key(fd)
                 if key in (b"", b"\x04"):  # The input's end, or Ctrl+D.
                     raise EOFError
@@ -443,6 +454,7 @@ class Report:
                     typed = ""
                 elif len(key) == 1 and 32 <= key[0] < 127:
                     typed += key.decode()
+
             erase()
             self._emit(f"    {asked} {clean(options[marked].label)}\n", flush=True)
             return options[marked].value
@@ -452,8 +464,24 @@ class Report:
             self._emit(f"    {asked}\n", flush=True)
             raise
         finally:
-            self._emit("\033[?25h", flush=True)
-            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+            # The terminal's settings as they were, before anything else. A signal's handler
+            # raises between any two steps here: its exception waits while they are restored
+            # again, and while the cursor is shown, then goes on.
+            stop: BaseException | None = None
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+            except (KeyboardInterrupt, SystemExit) as error:
+                stop = error
+                termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+            try:
+                self._show_cursor()
+            except (KeyboardInterrupt, SystemExit) as error:
+                stop = stop or error
+                self._show_cursor()
+
+            if stop is not None:
+                raise stop
 
     def choose(self, question: str, options: Sequence[Option], default: int = 0) -> Any:
         """The value of the option chosen: from a list on a terminal that redraws, the

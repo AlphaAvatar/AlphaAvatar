@@ -467,6 +467,7 @@ InferenceExecutor 拥有客户端连接，Host 负责监督服务。
 - 合理长度的表达式保持在一行；格式化器的目标行宽为 100 列。
 - 当行宽、嵌套或可读性需要时再拆行。
 - 有用的注释应围绕所有权、不变量和不明显的顺序约束。
+- 函数内作用明显不同的代码块之间空一行；只在用途不明显时才加一句注释。
 - 将处理器专属的业务逻辑放在其所属组件中。
 - 在职责完整一致时提取辅助函数或类，不要仅为缩短文件而拆分。
 - 快速迭代期间直接使用当前契约，除非任务要求兼容。
@@ -607,7 +608,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | --- | --- |
 | [ROADMAP.md](docs/ROADMAP.md) | 运行时、能力与客户端的开发方向和里程碑状态。 |
 | [DEPLOY.md](docs/DEPLOY.md) | Linux 与源码部署、服务配置、凭据和操作流程。 |
-| [coding-conventions.md](docs/coding-conventions.md) | 模块与类的顺序、功能分区字符串和方法命名。 |
+| [coding-conventions.md](docs/coding-conventions.md) | 模块与类的顺序、功能分区字符串、方法命名、构造函数字段分组和函数体内的代码块。 |
 | [identifiers-zh.md](docs/identifiers-zh.md) | 标识含义、所有者、唯一性与生命周期、初始化和关联规则。 |
 | [avatar-workspace-layout.md](docs/avatar-workspace-layout.md) | 应用与 Avatar 数据布局、个人数据、日志和备份边界。 |
 | [models-cache-layout.md](docs/models-cache-layout.md) | 模型缓存的所有权、解析、下载、离线行为和清理。 |

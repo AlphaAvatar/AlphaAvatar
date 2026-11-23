@@ -58,4 +58,36 @@ An `__init__` that sets more than a handful of fields groups them by purpose: bo
         self._close_task: asyncio.Task[None] | None = None
 ```
 
+## Function bodies
+
+Inside a function, blocks that do clearly different things, or each span several lines, are
+separated by a blank line. A comment is not required: a block gets one short comment only where
+it stands clearly apart and its purpose is not plain from the code; one that repeats the code or
+the docstring is left out. For example, `_vertex` in the Provider plugin:
+
+```python
+def _vertex(kwargs: dict) -> bool:
+    """Whether the Google SDK authenticates through Vertex AI, as it decides itself: its
+    ``vertexai`` setting, else GOOGLE_GENAI_USE_VERTEXAI, else a project or credentials given.
+    Vertex AI takes its own credentials (ADC) and needs no API key."""
+    from pydantic import TypeAdapter, ValidationError
+
+    # Its own setting first, parsed as the SDK's ``bool | None`` field parses it: "false",
+    # "0", "no" or "off", as an interpolated setting gives them, are False.
+    try:
+        vertexai = TypeAdapter(bool | None).validate_python(kwargs.get("vertexai"))
+    except ValidationError:
+        return True  # Not a flag: the SDK refuses it, by its own name, before any key is read.
+    if vertexai is not None:
+        return vertexai
+
+    chosen = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower()
+    if chosen in ("true", "1", "yes", "false", "0", "no"):
+        return chosen in ("true", "1", "yes")
+
+    return kwargs.get("project") is not None or kwargs.get("credentials") is not None
+```
+
+The shell scripts under `packaging/` and `scripts/` follow the same rule.
+
 Code being changed follows these rules; code nobody touches is not reordered for them alone.

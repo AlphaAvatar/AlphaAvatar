@@ -89,17 +89,25 @@ def record(
 
 
 def screen(data: str) -> str:
-    """What the terminal shows at the end: carriage returns and line erases applied."""
-    lines, line = [], ""
-    for token in re.split(r"(\r\n|\n|\r|\x1b\[K)", data):
+    """What the terminal shows at the end: carriage returns and line erases applied, and a
+    list's redrawing, the cursor moved up and everything below it erased; the cursor's hiding
+    and showing dropped."""
+    lines, row = [""], 0
+    for token in re.split(r"(\r\n|\n|\r|\x1b\[K|\x1b\[\d*A|\x1b\[J|\x1b\[\?25[hl])", data):
         if token in ("\n", "\r\n"):
-            lines.append(line)
-            line = ""
+            row += 1
+            if row == len(lines):
+                lines.append("")
+            else:
+                lines[row] = ""  # Written over from its start.
         elif token == "\r":
-            line = ""  # Back to the line's start: what follows replaces it.
-        elif token != "\x1b[K":
-            line += token
-    lines.append(line)
+            lines[row] = ""  # Back to the line's start: what follows replaces it.
+        elif up := re.fullmatch(r"\x1b\[(\d*)A", token):
+            row = max(row - int(up.group(1) or 1), 0)
+        elif token == "\x1b[J":
+            del lines[row + 1 :]
+        elif token not in ("\x1b[K", "\x1b[?25h", "\x1b[?25l"):
+            lines[row] += token
     return "\n".join(lines).strip("\n")
 
 
@@ -194,9 +202,12 @@ h2 { font-size: 16px; line-height: 1.35; margin: 0 0 4px; }
 <main>
 <h1>AlphaAvatar CLI output</h1>
 <p class="lead">What a terminal of each width shows once the command ends, rendered from its
-recording with the escape codes kept as colors (scripts/docs/cli_preview.py). Setup, config,
-and Doctor declined or with --no-metrics ran on a clean Ubuntu 24.04 root with the Linux
-package of this build. Doctor's measured runs used the offline test doubles of its tests,
+recording with the escape codes kept as colors (scripts/docs/cli_preview.py). The installer
+and Setup ran on 2026-11-23 in an empty home on Alibaba Cloud Linux 3 (glibc 2.32), with the
+Linux package CI built for 3e5b8e2d (0.6.8-3e5b8e2d9b2a), its own wheels given with --artifacts,
+and fictional credentials; install.sh is the one this change brings, and Setup installed and
+validated for real. Config, and Doctor declined or with --no-metrics, ran earlier on a clean
+Ubuntu 24.04 root with the Linux package of their build. Doctor's measured runs used the offline test doubles of its tests,
 marked 离线测试替身: their services and model files are stand-ins and their timings are the
 doubles', in rounds of their own. No panel here holds a real service's figures: those are
 recorded apart, in the acceptance log. Every figure ends at the Host's output; LiveKit's
