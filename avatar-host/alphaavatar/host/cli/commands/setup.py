@@ -241,18 +241,25 @@ def _models(out: Report, switches: dict[str, Any]) -> dict[str, Any]:
 
 
 def _name(out: Report, paths, given: str | None) -> str:
-    """A new bundle's name: given, or asked until it is one no bundle has."""
+    """A new bundle's name: given, or asked until it is one whose files, bundle and profiles,
+    do not exist yet; nothing there is ever written over."""
     from alphaavatar.host.configs import ConfigReferenceError
     from alphaavatar.host.configs.bundles import bundle_path
+    from alphaavatar.host.configs.template import taken
 
     while True:
         name = given or _ask(out, "Bundle name", "avatar")
         try:
-            path = bundle_path(paths, name)
-            if path.exists():
+            path = taken(paths, name)
+            if path == bundle_path(paths, name):
                 raise ConfigReferenceError(
                     f"Bundle {name!r} exists: {path}; choose another name, or set it up as it "
                     f"is: `alphaavatar setup {name}`"
+                )
+            if path is not None:
+                raise ConfigReferenceError(
+                    f"Profiles named {name!r} exist: {path}, and other bundles may use them; "
+                    "choose another name"
                 )
         except ConfigReferenceError as error:
             if given is not None:
@@ -385,6 +392,26 @@ def _host(texts: dict[str, str], name: str):
     return HostConfig.model_validate(yaml.safe_load(texts[f"profiles/{profile}.yaml"]))
 
 
+def _vectors(paths, avatar_id: str, root: str | None, settings: dict[str, Any]) -> None:
+    """The vector stores the Avatar's workspace keeps: one the bundle names another embedding
+    for than made it is refused before anything is installed, as start would refuse it."""
+    from alphaavatar.agents.utils.vdb.space import recorded_conflicts
+    from alphaavatar.agents.workspace import WorkspacePaths
+    from alphaavatar.host.tools.setup.environment import SetupError
+
+    workspace = WorkspacePaths.from_root(root) if root else paths.workspace(avatar_id)
+    if found := recorded_conflicts(settings, [workspace.data.indexes.root]):
+        raise SetupError("\n".join(found))
+
+
+def _unpublished(build: str) -> str:
+    return (
+        f"AlphaAvatar {build} is not a release, so its own wheels are published nowhere: give "
+        "their directory, such as the one its package came from, or URL, with "
+        "`alphaavatar setup --artifacts DIR`"
+    )
+
+
 def _single_file(texts: dict[str, str], name: str, home: Path, target: Path) -> None:
     """The bundle with its profiles inlined, as config check reads it before files exist."""
     import yaml
@@ -425,6 +452,8 @@ def setup(args: argparse.Namespace) -> int:
 
 
 def _setup(args: argparse.Namespace) -> int:
+    import yaml
+
     from alphaavatar.host.configs import (
         application_paths,
         format_failure,
@@ -470,6 +499,10 @@ def _setup(args: argparse.Namespace) -> int:
         manifest, catalog = installation.manifest, installation.catalog
         paths = application_paths()
         read_settings(paths)  # Unreadable settings refuse before anything happens.
+        sources = Sources(args.artifacts, manifest.get("release"))
+        if existing is None and not args.plan and not sources.own:
+            # Said before any question: every new bundle installs this build's own wheels.
+            raise SetupError(_unpublished(manifest["id"]))
         if existing is None:
             out.begin(1, "Capabilities")
             switches = _switches(out)
@@ -489,6 +522,12 @@ def _setup(args: argparse.Namespace) -> int:
             sections = choices.sections(selection)
             environment = [(c.name, c.purpose) for c in choices.credentials(selection)]
             texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
+            profiles = yaml.safe_load(texts[f"bundles/{name}.yaml"])["profiles"]
+            chosen = {
+                section: yaml.safe_load(texts[f"profiles/{profiles[section]}.yaml"])
+                for section in ("memory", "persona", "tools")
+            }
+            _vectors(paths, avatar_id, None, chosen)
             needed = choices.requirements(selection)
         else:
             name = check_bundle_name(existing)
@@ -501,6 +540,7 @@ def _setup(args: argparse.Namespace) -> int:
                 )
             out.step(1, "Capabilities", f"Bundle {name} · {_bundle_line(avatar, found)}")
             out.step(2, "Models", "As the bundle's settings choose them")
+            _vectors(paths, avatar.avatar.id, avatar.avatar.workspace_root, avatar.model_dump())
             needed = tuple(sorted(found))
         # Installing for this bundle never takes from another: what the current environment
         # holds stays planned, and the same plan reuses it.
@@ -513,6 +553,8 @@ def _setup(args: argparse.Namespace) -> int:
         check_machine(installation, plan)
         target = installation.environment(plan)
         reused = installation.reusable(plan)
+        if not reused and not sources.own:
+            raise SetupError(_unpublished(manifest["id"]))
         if existing is None:
             out.begin(3, "Credentials")
             # What the new bundle reads, filled where the environment holds none from .env or
@@ -592,7 +634,7 @@ def _setup(args: argparse.Namespace) -> int:
             target = install(
                 installation,
                 plan,
-                Sources(args.artifacts, manifest.get("release")),
+                sources,
                 check=check,
                 enable=enable,
                 replan=replan,

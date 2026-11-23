@@ -171,6 +171,12 @@ class Sources:
     location: str | None = None  # --artifacts: a directory, or a URL beside the base package
     release: str | None = None  # The base package's release tag, whose assets hold them
 
+    @property
+    def own(self) -> bool:
+        """Whether this build's own artifacts can be found: a release's, or where --artifacts
+        says; a build that is not a release publishes them nowhere."""
+        return self.location is not None or self.release is not None
+
     def candidates(self, artifact: Artifact) -> list[str | Path]:
         found: list[str | Path] = []
         remote = self.location is not None and "://" in self.location

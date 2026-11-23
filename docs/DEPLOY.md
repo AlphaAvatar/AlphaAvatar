@@ -155,8 +155,10 @@ the stored credentials too, so even a killed setup leaves both as they were or b
 `start`, `config check` and `doctor` read stored values where the environment does not set
 them, and the default bundle from the same read of the settings. Model weights are not part of the
 plan: runners fetch them into the model cache, and `doctor` names what it lacks and downloads
-it once you agree. `--plan` prints the plan and changes nothing; a
-CI build's own wheels sit beside its package, so pass `--artifacts <directory>` for one.
+it once you agree. `--plan` prints the plan and changes nothing. A CI or local build is no
+release: its own wheels sit beside its package, so pass `--artifacts <directory>` for one. The
+installer passes it to the setup it offers when they are there; without it, setup refuses before
+its first question.
 
 A configuration names each plugin by capability type and implementation, and the installed
 packages' entry points provide them; `config check` and `doctor` name a missing one at the

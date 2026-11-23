@@ -29,6 +29,7 @@ from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.cleanup import wait_for_cleanup
 
@@ -574,7 +575,13 @@ class LanceDBRunner(InferenceRunner):
             )
         )
         dimension = probe_dimension(self._embeddings)
-        self._ensure_collection(self._collection_name, dimension)
+        # Never vectors of two models in one table: checked against its record first.
+        self._client.claim_space(
+            self._collection_name,
+            EmbeddingSpace.configured(embedding, dimension),
+            setting="tools.mcp.vdb_config.collection_name",
+            ensure=lambda: self._ensure_collection(self._collection_name, dimension),
+        )
         self._loop_thread = AsyncLoopThread(name="mcp-loop")
         try:
             self._submit(self._initialize_mcp(), timeout=DEFAULT_TIMEOUT)

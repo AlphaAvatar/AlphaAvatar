@@ -24,6 +24,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
 from alphaavatar.agents.workspace import WorkspacePaths
 
 from ...namespace import NAMESPACE
@@ -553,7 +554,13 @@ class LanceDBRunner(InferenceRunner):
         self._client = lancedb.get_client(**vdb_config)
         self._embeddings = self._get_memory_embeddings(config)
         embedding_dim = probe_dimension(self._embeddings)
-        self._ensure_collection(self._collection_name, embedding_dim)
+        # Never vectors of two models in one table: checked against its record first.
+        self._client.claim_space(
+            self._collection_name,
+            EmbeddingSpace.configured(config.get("embedding") or {}, embedding_dim),
+            setting="memory.vdb_config.collection_name",
+            ensure=lambda: self._ensure_collection(self._collection_name, embedding_dim),
+        )
         self._memory_table = self._client.open_table(self._collection_name)
         self._validate_collection_schema()
 

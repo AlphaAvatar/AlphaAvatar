@@ -35,6 +35,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
 
 from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
@@ -349,8 +350,14 @@ class QdrantRunner(InferenceRunner):
 
         # init profiler
         self._profiler_embeddings = self._get_profiler_embeddings(config)
-        self._ensure_collection(
-            self._profiler_collection_name, probe_dimension(self._profiler_embeddings)
+        profiler_dim = probe_dimension(self._profiler_embeddings)
+        # Never vectors of two models in one collection: checked against its record first.
+        qdrant.claim_space(
+            self._client,
+            self._profiler_collection_name,
+            EmbeddingSpace.configured(config.get("embedding") or {}, profiler_dim),
+            setting="persona.vdb_config.profiler_collection_name",
+            ensure=lambda: self._ensure_collection(self._profiler_collection_name, profiler_dim),
         )
         self._profiler_vector_store = QdrantVectorStore(
             client=self._client,

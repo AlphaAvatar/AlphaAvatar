@@ -24,6 +24,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
 from alphaavatar.agents.workspace import WorkspacePaths
 
 from ...namespace import NAMESPACE
@@ -403,7 +404,13 @@ class LanceDBRunner(InferenceRunner):
                 "raw_metadata": "{}",
             }
         ]
-        self._ensure_table(self._profiler_collection_name, profiler_seed)
+        # Never vectors of two models in one table: checked against its record first.
+        self._client.claim_space(
+            self._profiler_collection_name,
+            EmbeddingSpace.configured(config.get("embedding") or {}, profiler_dim),
+            setting="persona.vdb_config.profiler_collection_name",
+            ensure=lambda: self._ensure_table(self._profiler_collection_name, profiler_seed),
+        )
         self._profiler_table = self._client.open_table(self._profiler_collection_name)
 
         # init speaker table

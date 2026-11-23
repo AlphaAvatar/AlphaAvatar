@@ -37,6 +37,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
 
 from ...namespace import NAMESPACE
 
@@ -546,7 +547,14 @@ class QdrantRunner(InferenceRunner):
         self._client = qdrant.get_client(**self._get_vdb_config(config))
         self._embeddings = self._get_memory_embeddings(config)
         embedding_dim = probe_dimension(self._embeddings)
-        self._ensure_collection(self._collection_name, embedding_dim)
+        # Never vectors of two models in one collection: checked against its record first.
+        qdrant.claim_space(
+            self._client,
+            self._collection_name,
+            EmbeddingSpace.configured(config.get("embedding") or {}, embedding_dim),
+            setting="memory.vdb_config.collection_name",
+            ensure=lambda: self._ensure_collection(self._collection_name, embedding_dim),
+        )
 
     def close(self) -> None:
         client = getattr(self, "_client", None)

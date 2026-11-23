@@ -20,8 +20,8 @@
 | 1 | 随包分发的完整默认模板，`config init` 写出 | 已提交（`1cb5c828`），通过审查 |
 | 2 | 统一的配置决策：能力开关、按组件选 Provider 和模型、TTS 兼容性、依赖、凭据、摘要；保留注释的写入 | 已提交（`b14b5894`）；审查发现的两处已修复（§4.1、§4.2） |
 | 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
-| 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 完成，待审查（§5） |
-| 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 待开始 |
+| 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 已提交（`01200003`），通过审查 |
+| 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 完成，待审查（§6） |
 
 ## 1. 批次 0：demo.yaml
 
@@ -484,3 +484,217 @@
 - `cli.html` 的面板录自 `3e5b8e2d` 包，其中不含本批的 `render.py` 修改。这些修改不改变最终画面：列表结束时会被擦掉，提示不留在画面上。
 - config 和 Doctor 的面板没有重录。
 - 第五批：Embedding 变更保护、已有 Bundle 的保护、新候选包的完整安装验收。
+
+## 6. 批次 5：已有配置与数据的保护、最终候选包验收（基线 `01200003`）
+
+依据：用户对第四批的审查。本批要求：
+- 核对基线 CI；
+- 核对已有 Bundle、共享 profiles 和凭据的保护；
+- 完成 Embedding 变更保护；
+- 构建最终候选包，在干净环境中做安装、真实 Setup、升级和 cleanup 的验收。
+
+### 6.1 基线
+
+- `01200003` 的 Quality（45180883862）和 Linux package（45180883949）都是 success。
+- 本批改了生产代码，没有提交，对应的 CI 要等用户提交推送后再核对。
+
+### 6.2 已有 Bundle、共享 profiles 与凭据
+
+- 先核对了现有实现，以下保护都已经存在，直接复用：
+  - `setup <bundle>` 不写任何 profile，只在成功后修改默认 Bundle；
+  - `create_bundle` 遇到任何已存在的目标文件都拒绝，失败时只删除自己创建的文件；
+  - 同名 Bundle 会被拒绝；
+  - 已存凭据只在第二次回答 yes 时才替换；
+  - 安装失败或取消时，current、Bundle、设置、凭据都保持原样。
+- 补上的缺口：Setup 检查名称时只看 Bundle 文件。以前 `profiles/<名称>/` 已经存在时（例如被另一个 Bundle 引用），要等全部问完、下载并安装之后，才在 `enable` 时报 `FileExistsError`；安装会回滚，但人白白答完了全部问题。
+  - 修复：新增 `template.taken()`，返回新 Bundle 会覆盖的位置：Bundle 文件或同名的 profiles 目录。交互输入的名称撞上时提示后重问；用 `--name` 给出的直接拒绝，不问任何问题。`create_bundle` 自己的拒绝仍保留，作为最后一道检查。
+- 新增回归：
+  - `test_a_name_whose_profiles_exist_is_never_written_over_even_shared`：共享的 profile 逐字节不变；在推送版本上失败；
+  - `test_an_existing_bundle_set_up_again_keeps_every_file_as_a_person_left_it`。场景：手动改过模型、TTS 语速和注释，Memory 共用另一个 Bundle 的 profile 并关闭了 ENV，另一个 Bundle 是默认并存有凭据。检查：
+    - 只问"Install and enable?"，不重新问卷；
+    - 取消、失败、成功三种情况下，所有配置文件逐字节不变；
+    - 设置和凭据文件不变，只有成功时默认 Bundle 改变；
+    - 运行时读到的正是这些修改。
+
+    这个测试在推送版本上也通过，说明这部分保护原本就成立。
+
+### 6.3 Embedding 变更保护
+
+- 现状（先做了一次只读梳理）：
+  - 没有任何地方记录向量出自哪个 Embedding 模型。维度只隐含在 LanceDB 的 `vector` 列类型或 Qdrant 的 `VectorParams.size` 里。
+  - 启动时探测出的维度只用于新建表，打开已有表时不比较。
+  - 因此换成维度相同的另一个模型时，Memory、Persona profiler、MCP 在 LanceDB 和 Qdrant 上都会静默混用两个模型的向量。维度不同时要到写入或搜索时才失败；只有 Persona 的 Qdrant profiler 在启动时由库自己报错。
+  - Memory 的 SQLite 是权威数据，向量是投影，没有重建索引的路径。
+  - 说话人向量的集合名带模型后缀，人脸和说话人用的是固定模型，不在本批范围内。
+- 保护放在向量存储层 `agents/utils/vdb/`。新增 `space.py`：
+  - `EmbeddingSpace` 由 provider、model、要求的输出维度（`extra.dimensions` / `output_dimensionality`）和实测维度组成。key、key 的变量名、服务器地址都不算在内，所以轮换凭据不会被当成换了向量空间。
+  - 记录写在存储旁边：LanceDB 是表旁的 `<table>.embedding.json`；Qdrant 是伴随集合 `<collection>__embedding` 里的一个点，因为锁定的 qdrant-client 1.15.1 不支持集合元数据。
+  - `claim()` 是两个后端共用的判断，在写入任何东西之前完成：
+    - 存储不存在：创建，并记录配置的空间；
+    - 有记录、但空间不同：拒绝，什么都不改；报错写明两边的模型，并建议给 `<setting>` 换一个名字作为独立索引，或换回原来的 Embedding；
+    - 没有记录、但表是空的：记录为配置的空间；
+    - 没有记录、表里有向量（本版之前建的）：维度不同就拒绝；维度相同只能当作配置的模型接收，记录标为 `assumed`、记一条警告说明无法核实，之后的更换照样能查出来。
+  - 不提供自动删除、重建或迁移。
+- 接入的五处：
+  - Memory：LanceDB、Qdrant；
+  - Persona profiler：LanceDB、Qdrant；
+  - MCP：LanceDB。
+
+  每处都先检查，再走原有的 `ensure`，例如 Memory 的 Qdrant 仍会为已有集合补建索引。
+- Setup 复用这一结果：`recorded_conflicts()` 只读记录文件，不打开存储，也不需要 LanceDB，所以基础包也能运行。它扫描 Avatar 工作区的 `data/indexes/`，以及配置里显式给出的 `client_path`，按记录里的 setting 找到当前配置的存储名和 Embedding：
+  - 新 Bundle：在凭据之前检查；
+  - 已有 Bundle：在规划安装之前检查。
+
+  局限：尚未询问模型，所以不比较实测维度；Qdrant 这类远端存储只在启动时检查。
+- 文档：Memory README、`docs/avatar-workspace-layout.md`、`docs/cli/setup.md`。
+- 测试：
+  - `avatar-agents/tests/utils/test_vdb_space.py`，8 个，用真实 LanceDB 和内存 Qdrant：
+    - 同一模型重开，key、变量名、服务器变化都接受；
+    - 换模型（同维度）、改要求的维度、换维度，都拒绝，并且向量和记录逐行不变，之后用原模型照常打开；
+    - 另起一个名字作为独立索引；
+    - 本版之前建的表：空表被认领；维度不同拒绝；维度相同标为 assumed 并警告；
+    - Qdrant 的同一套行为；
+    - 只读记录的冲突判断：显式目录、改名、插件关闭的情况都覆盖。
+  - `test_launch.py`：Memory 和 Persona 的 LanceDB runner 遇到换了模型的同维度表都拒绝启动，索引目录逐字节不变；轮换 key 的变量名仍能启动。
+  - `test_a_bundle_naming_another_embedding_for_the_vectors_its_avatar_keeps_is_refused_first`：已有 Bundle 和新 Bundle 都在安装和凭据之前被拒绝，文件不变；改用独立索引后可以安装。
+  - 变异 8 个，全部被发现：
+    - 任何空间都相同；
+    - 凭据算进模型；
+    - 本版之前的表不查维度；
+    - 不标 assumed；
+    - 插件关闭仍检查；
+    - Setup 不查；
+    - 不查 profiles 名称；
+    - Memory runner 不检查。
+- 在干净环境中用候选包的代码复核了一遍（§6.6）。
+
+### 6.4 未发布构建的限制不留到问答之后（O-33）
+
+- 用户要求候选包的限制不能留到答完问题才发现。以前 CI 或本地构建的 Setup（包括安装器提供的那次）要等问完全部问题、开始下载时，才因为本构建的 wheel 没有发布地址而失败。
+- 修复：
+  - `Sources.own`：只有 release，或给了 `--artifacts`，才能找到本构建的 wheel；
+  - Setup 对新 Bundle 在第一个问题之前拒绝；对已有 Bundle 在确认问题之前拒绝，计划可以直接复用已有环境时除外。报错写明 `alphaavatar setup --artifacts DIR`；`--plan` 不受影响；
+  - 安装器读取 manifest 的 `release`。用 `--file` 安装、不是 release、且包旁有 wheel 时，提供的 setup 自动带上 `--artifacts <包所在目录>`，`Next` 里给出同样的命令；包旁没有 wheel 时，`Next` 给出 `alphaavatar setup --artifacts DIR`。
+- 实现中发现并修正了两处安装器问题：
+  - 没有 release 时，`$(…)` 会去掉末尾的空行，最后一个 `read` 读到输入结束，在 `set -e` 下退出；
+  - PATH 步骤的循环变量 `file` 覆盖了 `--file` 的值，改名为 `startup`。
+- 回归：
+  - `test_a_build_that_is_no_release_needs_its_wheels_named_before_anything_is_asked`；
+  - 安装器的 `test_a_build_that_is_no_release_offers_setup_its_own_wheels_from_beside_its_package`，两种情况：包旁有 wheel、包旁没有 wheel。
+
+  两者在推送版本上都失败。CLI 测试的替身包改为 release；`docs/bugs-zh.md` 的 O-33 标注已处理；DEPLOY 和 setup 文档同步更新。
+
+### 6.5 最终候选包
+
+| 项 | 内容 |
+|---|---|
+| 源码 | HEAD `012000034544c301a2c163ee2acd0e35cbe716e7` 加未提交的工作区改动：21 个文件，`git diff` 的 sha256 前缀 `9be89d5f15a11874`。构建开始前和结束后核对过，跟踪文件的 diff 和未跟踪文件都与构建时一致 |
+| 构建 | `packaging/linux/build.sh --allow-dirty --max-glibc 2.32`；uv 0.10.0（在仓库外的私有 venv 中）、Python 3.13.12；构建机为 Alibaba Cloud Linux 3（glibc 2.32），不是 CI 的 manylinux_2_28 |
+| Build ID | `0.6.8-012000034544-dirty.20261123134847`；manifest 中 `release` 为 null，`commit` 为上述 HEAD，uv.lock sha256 `6e2c34f7…`（与 CI 相同） |
+| glibc | 基础包 ≥ 2.17；本地编译的 llama-cpp wheel 需要 ≥ 2.32，所以构建时 `--max-glibc` 放宽到 2.32。CI 的构建以 2.28 为上限，这一差别只来自构建机 |
+| 位置 | `~/alphaavatar-candidates/0.6.8-012000034544-dirty.20261123134847/`：基础包、`.sha256`、12 个 wheel、manifest、`install.sh`（与工作区逐字节相同）、`SHA256SUMS`；`acceptance/` 下是验收屏幕、结果、源码 diff 和构建日志 |
+| SHA-256 | 包 `60ec733fa90f750164331fd6965e050fb872b1d88a13a7814e4aa155eab0795c`；manifest `27e853bd…0e0f62`；install.sh `02ff07ac…98`；SHA256SUMS `754a7ca2…0f`；`sha256sum -c SHA256SUMS` 全部 OK |
+
+### 6.6 干净环境验收
+
+- 环境：
+  - Ubuntu 官方 `ubuntu-base-24.04.5` rootfs，校验和与 Ubuntu 公布的一致；glibc 2.39；
+  - 由 bubblewrap 0.4.0 以普通用户 `tester` 运行，与本机只共享网络，以及只读挂入的两份构建目录；
+  - 其中没有 python、node、uv、gcc/cc、curl；有 tput，但安装器不用。
+  - 这是 Ubuntu 的用户态跑在本机内核 5.10 上，不是完整的虚拟机或镜像，没有 systemd。
+  - 让 bwrap 忽略 SIGINT，再由 Ubuntu 的 `env --default-signal` 交还给沙箱内的命令，使 Ctrl+C 和普通终端上一样只到达安装器和 Setup。
+  - 每个场景用独立的 rootfs 副本。
+- 场景 1：安装器接续真实 Setup。
+  - 用 `cat install.sh | bash -s -- --file …` 运行，与 `curl | bash` 一样 stdin 不是终端。
+  - 第一次：在 Provider 列表处按 Ctrl+C。Setup 退出码 130，安装器报 "Setup did not finish (exit 130); AlphaAvatar stays installed"，自身退出码 0。终端设置恢复，光标显示，没有残留进程。
+  - 第二次：用方向键在向量库列表上下移动，在 Memory 列表输入 `open` 筛选，其余全部接受默认，凭据都是虚构的。
+    - 凭据：每个只问一次，没有回显，选择存储；
+    - 摘要在问答之后、安装之前；
+    - 真实安装 105 个包（514 MB），Validate `PASS · 8 runners`，共 72 秒；
+    - 安装器报 `OK    Setup done`，`Next` 给出 `source ~/.bashrc`。
+  - 之后：
+    - `bash -l` 和 `bash -i` 都能找到命令；不读启动文件的 bash 找不到，说明 PATH 只来自启动文件。第一次检查时这一项曾显示找到了命令，之后 4 次都无法复现，原因未查明；
+    - `config check avatar` 通过；
+    - `doctor avatar --no-metrics` 退出码 0，只做静态检查，运行时诊断按 `--no-metrics` 标为未运行；
+    - `config init ref` 写出的 12 个 profile 正文与 Setup 全部接受默认时写出的完全相同，只有每个文件第一行注释里的 profile 名称不同。
+- 场景 2：代表性分支，都在同一个 root 里真实安装并校验。
+
+| Bundle | 选择 | 结果 |
+|---|---|---|
+| own | ENV 关闭；Qdrant；对话用自建服务器 `qwen3-32b`；Memory、tool memory、Persona 通过筛选选"As for the conversation"；Embedding 用自建服务器 `bge-m3`，默认地址沿用前面输入的 | 只问服务器 key（输入 `none`）、OPENAI（语音）、LiveKit、Qdrant，没有问 Google；105 个包 / 427 MB，`PASS · 8 runners` |
+| mixed | Voice 关闭；本机模型关闭；Memory 用 Anthropic；tool memory 沿用 Memory；Persona 用 OpenRouter；Embedding 用 Google（都通过筛选） | 没有语音问题；OPENAI、ANTHROPIC、GOOGLE、OPENROUTER 各问一次；保留当前环境已有的依赖；112 个包 / 521 MB，`PASS · 2 runners` |
+| speech | STT 用 realtime `gpt-realtime-whisper`；TTS 用 `tts-1`，声音 alloy，语速 1.3 | 提示"tts-1 takes no instructions"；复用环境；`PASS · 8 runners` |
+| voiceai | TTS 用 Voice.ai | 不问语速，提示"speaks at 1.0"；`PASS · 8 runners` |
+
+  - 四个 Bundle 的 `config check` 都通过。
+  - 每次运行的终端设置都恢复，光标显示，没有残留进程。
+- YAML 检查，在宿主机上与随包模板比较：
+  - 范围：场景 1 的 `avatar`、`ref`，场景 2 的四个，场景 4 的 `small`；
+  - 检查内容：每个 profile 的注释行和空行按原顺序全部保留；缩进每层两个空格；所有 YAML 里都没有出现任何凭据值；
+  - 变化只出现在所选的设置上：
+    - ENV 关闭时只改 `environment.enabled`，设置保留；
+    - Voice 关闭时三个 plugin 为 null，并注明重新开启用哪个实现；
+    - Qdrant 写成 `${oc.env:QDRANT_URL}` 和 `${oc.env:QDRANT_API_KEY,null}`；
+    - 自建服务器写入 `base_url` 和 `api_key_env: ALPHAAVATAR_SERVER_KEY_…`；
+    - `tts-1` 和 Voice.ai 写成 `instructions: null` 并注明原因；Voice.ai 的 `speed: 1.0` 也带注明。
+- 场景 3：基础包没有任何插件。
+  - `config init` 写出 12 个 profile，每个都与包内模板完全相同；
+  - `config check` 退出码 2，逐个列出缺失的插件，以及会安装它的 `alphaavatar setup all`；
+  - `--non-interactive` 安装时，`Next` 给出 `alphaavatar setup --artifacts /srv/cand`。
+- Embedding：用候选包环境中的代码（真实 LanceDB、独立的测试数据）复核：
+  - 同模型、换 key 变量名：照常打开；
+  - 换模型（同维度）、换维度：拒绝；
+  - 之后用原模型打开：3 行数据都在；
+  - 记录内容正确。
+
+### 6.7 升级、准备失败、错误 SHA 与 cleanup
+
+- 两份真实构建：
+  - 旧版：CI 为 `01200003` 构建的包（`0.6.8-012000034544`，Linux package 运行 45180883949，artifact 14820508119，`SHA256SUMS` 全部 OK）；
+  - 新版：§6.5 的候选包。
+- 用旧版自己的 `install.sh` 安装，再用旧版的 Setup 建一个 Voice 关闭、本机模型关闭的 Bundle `small`（`--artifacts` 指向旧版的目录）。另在 Avatar 工作区写入 `records.sqlite3` 和用户 profile，作为独立的应用数据，并记录所有应用数据文件的哈希。
+
+| 步骤 | 结果 |
+|---|---|
+| `upgrade --sha256 000…` | 退出码 1，"does not match its SHA-256"，报"0.6.8-012000034544 stays current"；current、versions、envs 与之前一致 |
+| 准备失败：候选包第一次成功安装之前进行；把包和 `.sha256` 复制到没有 wheel 的目录后 `upgrade --file` | 包通过校验并解包，计划 77 个包；下载到本构建的第一个自带 wheel 时失败（"No such file or directory"），报"0.6.8-012000034544 stays current"；current 不变，解包的候选基础包已删除；`config check small` 通过 |
+| `upgrade --file`（包旁有 wheel） | 77 个包 / 188 MB，`PASS · 2 runners`；current 切到新环境，旧版保留到 cleanup；`config check` 通过 |
+| `cleanup --dry-run` | 列出旧环境和旧基础包，共 795 MB；`~/.local` 下所有文件的大小和修改时间前后一致，没有写入 |
+| `cleanup` | 只删除旧环境和旧基础包；current 的环境和基础包保留；`config check` 通过；应用数据的哈希与升级前一致 |
+
+### 6.8 验证
+
+- 相关测试：Agents、Memory、Persona、Host 的 CLI、setup、configs，以及 provider、安装器，全部通过。
+- 离线全量（机器空闲时）：1141 passed，181 warnings，379 s；运行前后，未跟踪和被忽略的文件一致。
+  - 与构建同时运行的那一轮有 1 个失败：voice 插件的计时测试 `test_openai_segment.py::…[stall]`，耗时 2668 ms，上限约 800 ms，当时 16 核都在编译 llama-cpp。单独重跑 3 次全部通过；voice 插件本批没有改动。
+  - warnings 增多来自 LanceDB `table_names()` 的弃用提示；现有的 `LanceDBClient.table_exists` 一直在用它，新测试调用得更多。
+- 仓库规范：`uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`（797 个文件）、`bash -n`、`git diff --check` 都通过。shellcheck（仓库外的临时环境）只剩原有的一条 SC2046。
+- CI：基线 `01200003` 都是 success；本批的改动尚未提交，没有对应的 CI。
+
+### 6.9 给用户的候选包命令
+
+未发布的候选包（CI 或本地构建）要用 `--file`，Setup 需要 `--artifacts`：
+
+```bash
+cd ~/alphaavatar-candidates/0.6.8-012000034544-dirty.20261123134847
+sha256sum -c SHA256SUMS
+bash install.sh --file ./alphaavatar-0.6.8-012000034544-dirty.20261123134847-linux-x86_64.tar.gz
+# 在终端里回答 Y：安装器提供的 setup 会自动带上 --artifacts（本目录）
+# 以后，或者另开终端：
+alphaavatar setup --artifacts ~/alphaavatar-candidates/0.6.8-012000034544-dirty.20261123134847
+```
+
+- 已有安装时，这个包会成为 current（与升级同理）。请先停止 `alphaavatar start`。要与现有安装隔离，可以加 `--prefix DIR --bin-dir DIR`，并设置另一个 `ALPHAAVATAR_HOME`。
+- 正式 Release 发布后的默认入口：`curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash`，不需要 `--file` 或 `--artifacts`。
+
+### 6.10 未验证与剩余
+
+- 本批代码对应的 CI：待用户提交推送后核对；候选包是本地构建的，不是 CI 产物。
+- 本地 llama-cpp wheel 需要 glibc ≥ 2.32，CI 构建以 2.28 为上限；2.28 至 2.31 的兼容下限没有实测。
+- 干净环境是 bwrap 运行的 Ubuntu 用户态，不是完整的虚拟机或镜像。没有在其他发行版上实测。
+- 没有调用任何模型或远程服务，也没有运行 Doctor 的运行时诊断，没有产生费用。Qdrant 和自建服务器都只是配置，没有真实的服务端。
+- 剩余的小问题，都没有修复：
+  - Setup 写出的 profile 头部仍写着"created by `alphaavatar config init`"，下一行注明了"Chosen with `alphaavatar setup`"；
+  - 未发布构建上，`config init` 的 `Next` 只给出 `alphaavatar setup <bundle>`，没有带 `--artifacts`，不过 Setup 会在开始时就拒绝并说明用法；
+  - 场景 1 中"不读启动文件的 shell"第一次检查的结果无法复现；
+  - LanceDB 的 `table_names()` 弃用提示。

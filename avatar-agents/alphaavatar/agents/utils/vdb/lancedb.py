@@ -11,7 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import pathlib
+
+from .space import EmbeddingSpace, claim
 
 
 class LanceDBClient:
@@ -40,6 +43,30 @@ class LanceDBClient:
         if self.table_exists(table_name):
             return self.open_table(table_name)
         return self._db.create_table(table_name, data=data)
+
+    def claim_space(self, table_name: str, space: EmbeddingSpace, *, setting: str, ensure) -> None:
+        """Open ``table_name`` for vectors of ``space``, as ``space.claim`` checks and records
+        it: the record a JSON file beside the table, which needs no LanceDB to read."""
+        from alphaavatar.agents.utils.files.atomic import write_text_atomic
+
+        record = self.path / f"{table_name}.embedding.json"
+
+        def size() -> int | None:
+            field = self.open_table(table_name).schema.field("vector")
+            return getattr(field.type, "list_size", None)
+
+        claim(
+            table_name,
+            space,
+            label=f"LanceDB table {table_name!r} in {self.path}",
+            setting=setting,
+            exists=lambda: self.table_exists(table_name),
+            ensure=ensure,
+            read=lambda: json.loads(record.read_text("utf-8")) if record.exists() else None,
+            write=lambda found: write_text_atomic(record, json.dumps(found, indent=1) + "\n"),
+            count=lambda: self.open_table(table_name).count_rows(),
+            size=size,
+        )
 
     def drop_table(self, table_name: str) -> None:
         if self.table_exists(table_name):

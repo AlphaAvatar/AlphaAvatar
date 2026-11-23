@@ -26,6 +26,7 @@ import os
 import platform
 import re
 import select
+import shlex
 import shutil
 import signal
 import stat
@@ -53,15 +54,19 @@ pytestmark = pytest.mark.skipif(
 
 
 def package(
-    directory: Path, effect: str = "", package_id: str = ID, version: str = "9.9.9"
+    directory: Path,
+    effect: str = "",
+    package_id: str = ID,
+    version: str = "9.9.9",
+    release: str | None = "",
 ) -> Path:
     """A base package as install.sh reads one: one top directory, its manifest as build.sh
-    writes one for a release, its command."""
+    writes one, for a release by default (``release`` None: a CI build's), its command."""
     top = directory / f"alphaavatar-{package_id}"
     manifest = {
         "id": package_id,
         "version": version,
-        "release": f"v{version}",
+        "release": f"v{version}" if release == "" else release,
         "platform": "linux-x86_64",
         "glibc": "2.17",
         "cpu": [],
@@ -1647,3 +1652,35 @@ def test_a_terminal_s_stderr_gets_its_failure_in_red(layout) -> None:
     script = f"bash {SCRIPT} --file {good} --sha256 {'0' * 64} --prefix {tmp_path / 'prefix'}"
     status, shown = terminal(tmp_path, tools, script, [], extra={"TERM": "xterm-256color"})
     assert status == 1 and "\x1b[31mFAIL\x1b[0m  Not installed\r\n" in shown
+
+
+@pytest.mark.parametrize("wheels", [True, False], ids=["wheels-beside", "no-wheels"])
+def test_a_build_that_is_no_release_offers_setup_its_own_wheels_from_beside_its_package(
+    layout, wheels: bool
+) -> None:
+    """A CI or local build, its files together: the setup offered takes its wheels from where
+    the package is, before any of setup's questions; without them there, the command to run
+    names --artifacts, rather than a setup that would fail once asked."""
+    tmp_path, _, tools, _ = layout
+    effect = 'if [ "$1" = setup ]; then echo "args=$*" >> "$HOME/setup-ran"; exit 0; fi\n'
+    build = tmp_path / "build files"
+    built = package(build, effect=effect, release=None)
+    (built.parent / f"{built.name}.sha256").write_text(
+        hashlib.sha256(built.read_bytes()).hexdigest()
+    )
+    if wheels:
+        (build / "alpha_avatar_plugins_loop-9.9.9-py3-none-any.whl").write_bytes(b"wheel")
+    script = f"bash {SCRIPT} --file {shlex.quote(str(built))} --prefix {tmp_path / 'prefix'}"
+    reply = b"\r" if wheels else b"n\r"
+    status, shown = terminal(tmp_path, tools, script, [(OFFER, reply)])
+    assert status == 0, shown
+    home = tmp_path / "home"
+    if wheels:
+        assert (home / "setup-ran").read_text() == f"args=setup --artifacts {build}\n"
+        assert "OK    Setup done" in shown
+    else:
+        assert not (home / "setup-ran").exists()
+        assert next_steps(shown)[-1] == (
+            "alphaavatar setup --artifacts DIR",
+            "DIR: this build's wheels; it is not a release",
+        )

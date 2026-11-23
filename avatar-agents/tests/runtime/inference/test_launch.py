@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import multiprocessing as mp
 import os
+import re
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -452,10 +454,63 @@ def test_local_vector_runners_open_only_their_launch_workspace(
     }
     assert sorted(path.name for path in tmp_path.iterdir()) == ["home", "tmp", "workspace"]
     assert tables == {
-        "memory": ["memories.lance"],
+        # Each text embedding's table beside the record of the model whose vectors it holds.
+        "memory": ["memories.embedding.json", "memories.lance"],
         # Speaker vectors are kept per voice model.
-        "persona": ["faces.lance", "profiles.lance", "speakers_campplus.lance"],
+        "persona": [
+            "faces.lance",
+            "profiles.embedding.json",
+            "profiles.lance",
+            "speakers_campplus.lance",
+        ],
         "mcp": [],
     }
     assert providers == [("embedding", "openai", "text-embedding-3-small")] * 3
     assert servers["docs"]["headers"] == {"Authorization": "Bearer snapshot-token"}
+
+
+def test_a_vector_runner_refuses_a_table_another_embedding_model_made_and_keeps_it(
+    tmp_path: Path, ambient: os._Environ[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Memory and persona tables made with one embedding model: configured with another of the
+    same size, each runner refuses to start, its table and records as they were; with the
+    first model again, or a key of its own, each starts."""
+    from alphaavatar.agents.utils.vdb.space import EmbeddingSpaceError
+
+    monkeypatch.setattr(memory_lancedb, "create_embedding_model", lambda task: OfflineEmbeddings())
+    monkeypatch.setattr(persona_lancedb, "create_embedding_model", lambda task: OfflineEmbeddings())
+    workspace = WorkspacePaths.from_root(tmp_path / "workspace")
+
+    def start(embedding: dict) -> list[str]:
+        """Each runner started: what each refusal said, the settings naming its table."""
+        settings = copy.deepcopy(LOCAL)
+        for section in ("memory", "persona"):
+            settings[section]["vdb_config"]["embedding"] = embedding
+        config = snapshot_inference_config(AvatarConfig.model_validate(settings))
+        launch = RunnerLaunch(str(workspace.root), str(tmp_path / "models"), config=config)
+        refused = []
+        for runner_cls in (memory_lancedb.LanceDBRunner, persona_lancedb.LanceDBRunner):
+            runner = runner_cls()
+            runner.configure(launch)
+            try:
+                runner.initialize()
+            except EmbeddingSpaceError as error:
+                refused.append(re.search(r"give (\S+) another name", str(error)).group(1))
+            finally:
+                runner.close()
+        return refused
+
+    def kept() -> dict[str, bytes]:
+        root = workspace.data.indexes.root
+        return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+    assert start(EMBEDDING) == []
+    before = kept()
+    other = {"provider": "google", "model": "text-embedding-004"}
+    assert start(other) == [
+        "memory.vdb_config.collection_name",
+        "persona.vdb_config.profiler_collection_name",
+    ]
+    assert kept() == before  # Refused before anything was written.
+    assert start(EMBEDDING | {"extra": {"api_key_env": "ANOTHER_OPENAI_KEY"}}) == []
+    assert kept().keys() == before.keys()

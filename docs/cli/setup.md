@@ -14,7 +14,7 @@ alphaavatar setup my-avatar --plan   # print the install plan, change nothing
 | --- | --- |
 | `BUNDLE` | An existing bundle: no questions, the credentials from the environment, `.env` or those stored. Omitted, setup asks in a terminal |
 | `--name`, `--avatar-id` | The new bundle's name (default `avatar`) and Avatar ID (default: the name); not with `BUNDLE` |
-| `--artifacts DIR\|URL` | Where this build's own wheels are when it is not a release: a CI build's directory |
+| `--artifacts DIR\|URL` | Where this build's own wheels are when it is not a release: a CI or local build's directory. Without it, such a build is refused before the first question |
 | `--plan` | Print the plan as JSON: packages, sizes, SHA-256s; nothing is installed or written. A refusal prints `{"error": {"diagnostic": …}}` there too, the reason as the report gives it |
 
 ## Asked: a new bundle
@@ -68,8 +68,11 @@ included, as `start` would resolve them: the plugins of each part, the providers
 the vector stores, and the local models the switches leave on. A model task that names its
 model alone takes its kind and backend from the provider schema's defaults, as `start` does.
 It imports no plugin to plan.
-A selection this release's setup installs nothing for, such as a plugin that is not in the
-catalog, fails before anything is installed and is named by its setting:
+A vector index the Avatar's workspace keeps, made with another embedding model than the bundle
+names for it, fails the same way, before anything is installed: give the store another name, or
+configure the model it was made with. A selection this release's setup installs nothing for, such
+as a plugin that is not in the catalog, fails before anything is installed and is named by its
+setting:
 
 ```text
 FAIL  Setup failed; nothing was enabled

@@ -97,7 +97,9 @@ def package(tmp_path: Path) -> environment.Installation:
         },
     }
     (base / "share/alphaavatar/catalog.json").write_text(json.dumps(catalog))
-    (base / "share/alphaavatar/manifest.json").write_text(json.dumps({"id": "base-1"}))
+    # A release's: its own wheels come from its assets unless --artifacts says otherwise.
+    manifest = {"id": "base-1", "release": "v1.0"}
+    (base / "share/alphaavatar/manifest.json").write_text(json.dumps(manifest))
     return environment.Installation(base.parent.parent, base)
 
 
@@ -328,7 +330,7 @@ def test_an_existing_bundle_is_enabled_only_by_a_successful_install(
         raise environment.SetupError("the environment fails its check")
 
     def installed(installation, plan, sources, *, check, enable, **kwargs):
-        assert sources == environment.Sources("/ci/run", None)
+        assert sources == environment.Sources("/ci/run", "v1.0")
         enable()
         return installation.environment(plan)
 
@@ -884,3 +886,239 @@ def test_a_name_a_bundle_has_is_asked_again_and_refused_as_given(
         assert "Bundle 'taken' exists" in capsys.readouterr().err
         assert given.asked("Provider for") == []
     assert home_files() == before
+
+
+def test_a_name_whose_profiles_exist_is_never_written_over_even_shared(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """Profiles named as a new bundle would name its own, there already and shared by another
+    bundle: the name is asked again, or refused as given, before any question about it."""
+    from alphaavatar.host.configs import application_paths
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = application_paths()
+    create_bundle(paths, "keeper", avatar_id="keeper")
+    configs = paths.configs.root
+    # The keeper's memory profile moved under "orphan" and named there by its bundle.
+    shared = configs / "profiles/orphan/plugins/perception/memory.yaml"
+    shared.parent.mkdir(parents=True)
+    (configs / "profiles/keeper/plugins/perception/memory.yaml").rename(shared)
+    bundle = configs / "bundles/keeper.yaml"
+    text = bundle.read_text()
+    bundle.write_text(text.replace("memory: keeper/plugins/", "memory: orphan/plugins/"))
+    before = {p: p.read_bytes() for p in configs.rglob("*") if p.is_file()}
+
+    person = Person(
+        ("Bundle name", "orphan"), ("Bundle name", "fresh"), ("Install and enable?", "n")
+    )
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        person.answering(),
+    ):
+        assert main(["setup"]) == 1
+        assert f"Profiles named 'orphan' exist: {shared.parents[2]}" in capsys.readouterr().out
+        assert person.rules == [] and len(person.asked("Bundle name")) == 2
+        given = Person()
+        with given.answering():
+            assert main(["setup", "--name", "orphan"]) != 0
+        assert "Profiles named 'orphan' exist" in capsys.readouterr().err
+        assert given.prompts[-1:] != [] and given.asked("Provider for") == []
+    assert {p: p.read_bytes() for p in configs.rglob("*") if p.is_file()} == before
+
+
+def test_an_existing_bundle_set_up_again_keeps_every_file_as_a_person_left_it(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """A bundle edited by hand, one of its profiles shared with another bundle, the default and
+    the stored credentials another bundle reads: set up again, it is installed for as it is,
+    asked nothing but whether to install; cancelled, failed or enabled, every file of the
+    configuration stays to the byte, and so do the stored credentials."""
+    from alphaavatar.host.configs import application_paths, load_application, select_configuration
+    from alphaavatar.host.configs.credentials import credentials_path
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = application_paths()
+    create_bundle(
+        paths,
+        "other",
+        avatar_id="other",
+        make_default=True,
+        credentials={"OPENAI_API_KEY": "sk-stored-for-other"},
+    )
+    create_bundle(paths, "mine", avatar_id="mine")
+    configs = paths.configs.root
+    # Edited in place, comments and layout of a person's own; memory is the other bundle's.
+    edits = {
+        "profiles/mine/plugins/foundation/loop.yaml": (
+            "    model: gpt-5.6-luna",
+            "    model: gpt-4.1  # mine",
+        ),
+        "profiles/mine/plugins/foundation/voice.yaml": (
+            "  speed: 1.15",
+            "  speed: 1.3\n\n  # Slower, for me.",
+        ),
+        "profiles/other/plugins/perception/memory.yaml": (
+            "  environment:\n    enabled: true",
+            "  environment:\n    enabled: false  # Not mine.",
+        ),
+        "bundles/mine.yaml": ("memory: mine/plugins/", "memory: other/plugins/"),
+    }
+    for relative, (old, new) in edits.items():
+        path = configs / relative
+        assert path.read_text().count(old) == 1, relative
+        path.write_text(path.read_text().replace(old, new))
+    files = {p: p.read_bytes() for p in configs.rglob("*") if p.is_file()}
+    stored = credentials_path(paths).read_bytes()
+    settings = paths.settings_file.read_bytes()
+
+    def failed(*args, check, enable, **kwargs):
+        raise environment.SetupError("the environment fails its check")
+
+    def installed(installation, plan, sources, *, check, enable, **kwargs):
+        enable()
+        return installation.environment(plan)
+
+    def setup(install, answer: str | None) -> int:
+        person = Person(*((("Install and enable?", answer),) if answer else ()))
+        with (
+            mock.patch.object(environment.Installation, "running", return_value=package),
+            mock.patch.object(environment, "install", install),
+            mock.patch("sys.stdin.isatty", return_value=True),
+            mock.patch.dict(os.environ, CREDENTIALS),
+            person.answering(),
+        ):
+            code = main(["setup", "mine"])
+        # No questionnaire: only whether to install what the bundle's settings need.
+        assert [p.strip() for p in person.prompts] == ["Install and enable? [Y/n]:"]
+        return code
+
+    assert setup(installed, "n") == 1  # Cancelled.
+    assert "ENV memory off" in capsys.readouterr().out  # Planned from its settings as edited.
+    assert setup(failed, "y") == 1  # Failed.
+    assert {p: p.read_bytes() for p in configs.rglob("*") if p.is_file()} == files
+    assert (paths.settings_file.read_bytes(), credentials_path(paths).read_bytes()) == (
+        settings,
+        stored,
+    )
+    assert setup(installed, "y") == 0  # Enabled.
+    assert {p: p.read_bytes() for p in configs.rglob("*") if p.is_file()} == files
+    assert credentials_path(paths).read_bytes() == stored  # Another bundle's, untouched.
+    # Enabled: the default now, everything else as it was; it runs with the edits.
+    assert yaml.safe_load(paths.settings_file.read_text())["default_bundle"] == "mine"
+    avatar = load_application(select_configuration("mine")).avatar
+    assert avatar.loop.init_config["model"]["model"] == "gpt-4.1"
+    assert avatar.voice.tts.speed == 1.3
+    assert avatar.memory.init_config["environment"]["enabled"] is False
+    capsys.readouterr()
+
+
+def test_a_bundle_naming_another_embedding_for_the_vectors_its_avatar_keeps_is_refused_first(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """The Avatar's memory vectors made with one embedding, its bundle now naming another for
+    the same store: setup refuses before anything is installed or asked, and keeps everything;
+    a separate index, another collection name, installs. A new bundle for that Avatar too."""
+    from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
+    from alphaavatar.host.configs import application_paths
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = application_paths()
+    create_bundle(paths, "mine", avatar_id="mine")
+    store = paths.workspace("mine").data.indexes.namespace("memory").backend("lancedb").root
+    store.mkdir(parents=True)
+    small = {"provider": "openai", "model": "text-embedding-3-small"}
+    record = EmbeddingSpace.configured(small, 1536).record(
+        store="memory", setting="memory.vdb_config.collection_name"
+    )
+    (store / "memory.embedding.json").write_text(json.dumps(record))
+    memory = paths.configs.root / "profiles/mine/plugins/perception/memory.yaml"
+    text = memory.read_text()
+    google = "    provider: google\n    model: text-embedding-004"
+    memory.write_text(
+        text.replace("    provider: openai\n    model: text-embedding-3-small", google)
+    )
+    kept = {p: p.read_bytes() for p in paths.root.rglob("*") if p.is_file()}
+
+    def installed(installation, plan, sources, *, check, enable, **kwargs):
+        enable()
+        return installation.environment(plan)
+
+    install = mock.Mock(side_effect=installed)
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", install),
+        mock.patch("sys.stdin.isatty", return_value=False),
+        mock.patch.dict(os.environ, CREDENTIALS),
+    ):
+        assert main(["setup", "mine"]) == 1
+        said = capsys.readouterr().err
+        assert (
+            f"LanceDB table 'memory' in {store} holds vectors of openai text-embedding-3-small"
+            in said
+        )
+        assert "give memory.vdb_config.collection_name another name, a separate index" in said
+        assert not install.called
+        assert {p: p.read_bytes() for p in paths.root.rglob("*") if p.is_file()} == kept
+        # A separate index: installed, the first index and its record as they were.
+        memory.write_text(
+            memory.read_text().replace("collection_name: memory", "collection_name: memory_google")
+        )
+        assert main(["setup", "mine"]) == 0
+    assert json.loads((store / "memory.embedding.json").read_text()) == record
+
+    # A new bundle for the same Avatar, its embeddings from Google: refused before credentials.
+    person = Person(
+        ("Bundle name", "again"),
+        ("Avatar ID", "mine"),
+        ("Provider for embeddings", "google"),
+        ("Model for embeddings", "text-embedding-004"),
+    )
+    install.reset_mock()
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", install),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        person.answering(),
+    ):
+        assert main(["setup"]) == 1
+    assert "holds vectors of openai text-embedding-3-small" in capsys.readouterr().err
+    assert person.rules == [] and person.asked("API_KEY") == [] and not install.called
+    assert not (paths.configs.root / "bundles/again.yaml").exists()
+
+
+def test_a_build_that_is_no_release_needs_its_wheels_named_before_anything_is_asked(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """A CI or local build publishes its own wheels nowhere: without --artifacts, a new bundle
+    is refused before its first question, and an existing one before installing; given, or
+    with nothing to download, setup goes on. The plan alone needs no wheel."""
+    manifest = package.base / "share/alphaavatar/manifest.json"
+    manifest.write_text(json.dumps({"id": "base-1", "release": None}))
+    install = mock.Mock(
+        side_effect=lambda installation, plan, *a, enable, **k: (
+            enable(),
+            installation.environment(plan),
+        )[1]
+    )
+    said = "AlphaAvatar base-1 is not a release, so its own wheels are published nowhere"
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", install),
+        mock.patch.dict(os.environ, CREDENTIALS),
+    ):
+        asked = Person()
+        with mock.patch("sys.stdin.isatty", return_value=True), asked.answering():
+            assert main(["setup"]) == 1
+        assert said in capsys.readouterr().err and asked.prompts == [] and not install.called
+        assert main(["config", "init", "mine", "--avatar-id", "mine"]) == 0
+        capsys.readouterr()
+        with mock.patch("sys.stdin.isatty", return_value=False):
+            assert main(["setup", "mine"]) == 1
+            assert "`alphaavatar setup --artifacts DIR`" in capsys.readouterr().err
+            assert main(["setup", "mine", "--plan"]) == 0
+            assert main(["setup", "mine", "--artifacts", "/srv/build"]) == 0
+            assert install.call_args.args[2] == environment.Sources("/srv/build", None)
+    assert home_files()  # Enabled: given its wheels, nothing else was needed.

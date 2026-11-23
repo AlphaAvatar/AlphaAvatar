@@ -344,6 +344,15 @@ def set_default_bundle(paths: ApplicationPaths, name: str) -> None:
         raise
 
 
+def taken(paths: ApplicationPaths, name: str) -> Path | None:
+    """What a new bundle named ``name`` would be written over, which ``create_bundle`` refuses:
+    its bundle file, or its profiles' directory, which another bundle may name as well."""
+    for path in (bundle_path(paths, name), paths.configs.profiles_dir / check_bundle_name(name)):
+        if path.exists() or path.is_symlink():
+            return path
+    return None
+
+
 def create_bundle(
     paths: ApplicationPaths,
     name: str,

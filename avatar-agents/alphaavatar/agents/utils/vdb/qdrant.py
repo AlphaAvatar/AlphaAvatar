@@ -58,3 +58,43 @@ def get_client(
         )
 
     return client
+
+
+def claim_space(client, collection: str, space, *, setting: str, ensure) -> None:
+    """Open ``collection`` for vectors of ``space``, as ``space.claim`` checks and records it:
+    the record one point of a collection beside it, ``<collection>__embedding``, as a
+    collection keeps no metadata of its own."""
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+
+    from .space import claim
+
+    record = f"{collection}__embedding"
+
+    def read():
+        if not client.collection_exists(record):
+            return None
+        found = client.retrieve(record, ids=[0], with_payload=True)
+        return dict(found[0].payload) if found else None
+
+    def write(found) -> None:
+        if not client.collection_exists(record):
+            params = VectorParams(size=1, distance=Distance.DOT)
+            client.create_collection(collection_name=record, vectors_config=params)
+        client.upsert(record, points=[PointStruct(id=0, vector=[1.0], payload=found)])
+
+    def size() -> int | None:
+        vectors = client.get_collection(collection).config.params.vectors
+        return getattr(vectors, "size", None)  # Named vectors: none told.
+
+    claim(
+        collection,
+        space,
+        label=f"Qdrant collection {collection!r}",
+        setting=setting,
+        exists=lambda: client.collection_exists(collection),
+        ensure=ensure,
+        read=read,
+        write=write,
+        count=lambda: client.count(collection, exact=True).count,
+        size=size,
+    )

@@ -361,8 +361,10 @@ done
 fields="$("${installed:-$candidate}/python/bin/python3" -I -c 'import json, sys
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 print(m["id"], m["version"], m["glibc"], *m["cpu"])
-print(*m["imports"])' "$manifest")" || die "Not an AlphaAvatar package: no readable manifest"
-{ read -r id package_version glibc cpu; read -r imports; } <<< "$fields"
+print(*m["imports"])
+print(m.get("release") or "")' "$manifest")" || die "Not an AlphaAvatar package: no readable manifest"
+# The release last: none, its empty line is gone with the output's trailing newlines.
+{ read -r id package_version glibc cpu; read -r imports; read -r release || :; } <<< "$fields"
 [[ "$id" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || die "Invalid package id"
 [[ -z "$version" || "$package_version" == "$version" ]] || die "The package holds $package_version"
 step 1 Package "AlphaAvatar $package_version $dot build $id $dot SHA-256 verified"
@@ -546,9 +548,9 @@ elif [[ "$bin_dir" == *$'\n'* ]]; then
 elif [[ "${#path_files[@]}" -eq 0 ]]; then
   told=("not configured: the login shell (${SHELL:-none}) is not bash, zsh or sh"); path_failed=1
 else
-  for file in "${path_files[@]}"; do
-    if configure_file "$file"; then
-      [[ -n "$path_source" ]] || path_source="$file"
+  for startup in "${path_files[@]}"; do
+    if configure_file "$startup"; then
+      [[ -n "$path_source" ]] || path_source="$startup"
     else
       path_failed=1
     fi
@@ -571,6 +573,13 @@ fi
 # A first setup, offered in a terminal and run on that terminal, its input included: piped to
 # bash, this script's own input is the download. Whatever setup does, the installation stays.
 setup_next=1  # Whether setup is still to run.
+# A build that is no release publishes its own wheels nowhere: setup takes them from beside
+# the package given, where a build's files are kept together, and is told so.
+setup=(setup)
+if [[ -z "$release" && -n "$file" ]]; then
+  beside="$(cd -- "$(dirname -- "$file")" && pwd -P)"
+  if compgen -G "$beside/*.whl" > /dev/null; then setup+=(--artifacts "$beside"); fi
+fi
 if [[ "$switch" == envs/* || "$previous" == envs/* ]]; then
   setup_next=""  # Set up already: the bundles there stay as they are.
 elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
@@ -614,7 +623,7 @@ elif [[ -z "$non_interactive" ]] && { : < /dev/tty; } 2>/dev/null; then
   elif [[ "$answer" =~ ^answered:([Yy]([Ee][Ss])?)?$ ]]; then
     code=0
     trap ':' INT  # Ctrl-C ends setup, never this script: its report still follows.
-    PATH="$bin_dir:$PATH" "$entry" setup < /dev/tty > /dev/tty 2>&1 || code=$?
+    PATH="$bin_dir:$PATH" "$entry" "${setup[@]}" < /dev/tty > /dev/tty 2>&1 || code=$?
     trap - INT
     if [[ "$code" -eq 0 ]]; then
       status OK "Setup done"
@@ -635,7 +644,13 @@ if [[ -n "$path_failed" ]]; then
 elif [[ -n "$path_source" ]]; then
   todo+=("source $(shell_path "$path_source")" "this terminal; new ones find alphaavatar")
 fi
-[[ -z "$setup_next" ]] || todo+=("alphaavatar setup" "choose capabilities; it installs them")
+if [[ -n "$setup_next" && -z "$release" && "${#setup[@]}" -eq 1 ]]; then
+  todo+=("alphaavatar setup --artifacts DIR" "DIR: this build's wheels; it is not a release")
+elif [[ -n "$setup_next" ]]; then
+  shown_setup="alphaavatar setup"
+  [[ "${#setup[@]}" -eq 1 ]] || shown_setup+=" --artifacts $(shell_path "${setup[2]}")"
+  todo+=("$shown_setup" "choose capabilities; it installs them")
+fi
 if [[ "${#todo[@]}" -gt 0 ]]; then
   printf '\n%sNext%s\n' "$BOLD" "$RESET"
   commands "${todo[@]}"
