@@ -45,8 +45,13 @@ def _create_google_embedding(config: ProviderTaskConfig):
         ) from e
 
     kwargs = dict(config.extra or {})
+    # As the LLMs read theirs: environment, .env or stored, a blank one missing.
+    env_name = kwargs.pop("api_key_env", "GOOGLE_API_KEY")
+    key = kwargs.pop("api_key", None) or credential(env_name)
+    if not key:
+        raise RuntimeError(f"Environment variable {env_name!r} is required")
 
-    return GoogleGenerativeAIEmbeddings(model=config.model, **kwargs)
+    return GoogleGenerativeAIEmbeddings(model=config.model, api_key=key, **kwargs)
 
 
 def create_embedding_model(config: ProviderTaskConfig):

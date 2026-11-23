@@ -156,6 +156,17 @@ class TTSConfig(BaseModel):
     max_streams: int = Field(default=4, ge=1, le=32, strict=True)
     max_audio_seconds: float = Field(default=120.0, gt=0, le=3600, allow_inf_nan=False)
 
+    @staticmethod
+    def takes_instructions(plugin: str, model: str) -> bool:
+        """Whether an implementation and model read instructions: Voice.ai, tts-1 and tts-1-hd
+        do not."""
+        return plugin != "voiceai" and model not in ("tts-1", "tts-1-hd")
+
+    @staticmethod
+    def takes_speed(plugin: str) -> bool:
+        """Whether an implementation speaks at another speed than 1.0: Voice.ai does not."""
+        return plugin != "voiceai"
+
     @model_validator(mode="after")
     def validate_provider(self) -> "TTSConfig":
         check_server_key(self.api_key_env, self.base_url)
@@ -172,13 +183,13 @@ class TTSConfig(BaseModel):
             raise ValueError("voice.tts.speaker is required for OpenAI TTS")
         if self.speaker is not None and not self.speaker.strip():
             raise ValueError("voice.tts.speaker cannot be blank")
-        if self.plugin == "voiceai" and self.speed != 1.0:
+        if not self.takes_speed(self.plugin) and self.speed != 1.0:
             raise ValueError("Voice.ai TTS does not support voice.tts.speed")
         if self.plugin == "voiceai" and self.instructions is not None:
             raise ValueError("Voice.ai TTS does not support instructions")
         if self.instructions is not None and len(self.instructions) > 4096:
             raise ValueError("TTS instructions exceed 4096 characters")
-        if self.instructions is not None and self.model in ("tts-1", "tts-1-hd"):
+        if self.instructions is not None and not self.takes_instructions(self.plugin, self.model):
             raise ValueError("The selected TTS model does not support instructions")
         return self
 

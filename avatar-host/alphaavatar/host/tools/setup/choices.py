@@ -34,12 +34,44 @@ from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
+    from alphaavatar.host.configs.template import Change
     from alphaavatar.host.service.application.config import HostConfig
 
 VectorStore = Literal["lancedb", "qdrant"]
 OPENAI_KEY = "OPENAI_API_KEY"
-GOOGLE_KEY = "GOOGLE_API_KEY"  # ENV memory's Gemini, on in the reference configuration.
+GOOGLE_KEY = "GOOGLE_API_KEY"
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+# The providers each part takes, as its backend implements them and this release's catalog
+# installs them, the reference's first: the loop streams OpenAI's Responses API; the memory and
+# persona tasks are LangChain's structured output; ENV memory is Gemini's audio and video.
+TASK_PROVIDERS = ("openai", "anthropic", "google", "openrouter")
+PROVIDERS = {
+    "loop": ("openai",),
+    "conversation": TASK_PROVIDERS,
+    "tool": TASK_PROVIDERS,
+    "environment": ("google",),
+    "profiler": TASK_PROVIDERS,
+    "embedding": ("openai", "google"),
+}
+# The parts a server of one's own with OpenAI's API can serve, besides speech.
+SERVED = frozenset({"loop", "conversation", "tool", "profiler", "embedding"})
+TRANSCRIPTION = ("openai_segment", "openai_realtime")
+SYNTHESIS = ("openai", "voiceai")
+KEYS = {
+    "openai": OPENAI_KEY,
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": GOOGLE_KEY,
+    "openrouter": "OPENROUTER_API_KEY",
+    "voiceai": "VOICEAI_API_KEY",
+}
+NAMES = {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "openrouter": "OpenRouter",
+    "voiceai": "Voice.ai",
+}
 
 
 def server_problem(url: str, *, speech: bool) -> str | None:
@@ -64,43 +96,181 @@ def server_problem(url: str, *, speech: bool) -> str | None:
     return None
 
 
-@dataclass(frozen=True, slots=True)
-class Models:
-    """An OpenAI-compatible server of one's own for the models: the loop's through the
-    Responses API, which it streams; the memory and persona tasks' and the embeddings."""
-
-    url: str  # Its API root, e.g. http://gpu-host:8000/v1
-    chat: str  # The loop's model
-    tasks: str  # Memory and persona tasks
-    embedding: str
-
-    def __post_init__(self) -> None:
-        if problem := server_problem(self.url, speech=False):
-            raise ValueError(f"Model server {self.url}: {problem}")
+def _model(model: str) -> None:
+    if not model.strip():
+        raise ValueError("A model ID is required")
 
 
 @dataclass(frozen=True, slots=True)
-class Speech:
-    """An OpenAI-compatible server of one's own for transcription and speech."""
+class Model:
+    """A part's provider and model; ``server``, the API root of a server of one's own that
+    speaks OpenAI's API, as provider openai."""
 
-    url: str  # HTTPS unless on this machine, e.g. https://speech-host:8001/v1
-    transcription: str
-    synthesis: str
-    voice: str
+    provider: str
+    model: str
+    server: str | None = None
 
     def __post_init__(self) -> None:
-        if problem := server_problem(self.url, speech=True):
-            raise ValueError(f"Speech server {self.url}: {problem}")
+        _model(self.model)
+        if self.server is None:
+            return
+        if self.provider != "openai":
+            raise ValueError("A server of your own speaks OpenAI's API: its provider is openai")
+        if problem := server_problem(self.server, speech=False):
+            raise ValueError(f"Model server {self.server}: {problem}")
+
+    @property
+    def key(self) -> str:
+        """The variable its key is read from: the provider's, or its server's own."""
+        return server_key(self.server) if self.server else KEYS[self.provider]
+
+    def describe(self) -> str:
+        return (
+            f"{self.model} on {self.server}"
+            if self.server
+            else f"{NAMES[self.provider]} {self.model}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Transcription:
+    """Speech in: the STT implementation, its model, and a server of one's own with OpenAI's
+    audio API."""
+
+    plugin: str
+    model: str
+    server: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.plugin not in TRANSCRIPTION:
+            raise ValueError(f"Speech recognition takes {' or '.join(TRANSCRIPTION)}")
+        _model(self.model)
+        if self.server is not None and (problem := server_problem(self.server, speech=True)):
+            raise ValueError(f"Speech server {self.server}: {problem}")
+
+    @property
+    def provider(self) -> str:
+        return "openai"
+
+    @property
+    def key(self) -> str:
+        return server_key(self.server) if self.server else OPENAI_KEY
+
+
+@dataclass(frozen=True, slots=True)
+class Synthesis:
+    """Speech out: the TTS implementation, its model and voice, its speed, and a server of
+    one's own with OpenAI's audio API. A speed left unset is the reference's where the
+    implementation takes one; the reference's instructions stay where the model reads them."""
+
+    plugin: str
+    model: str
+    speaker: str | None
+    speed: float | None = None
+    server: str | None = None
+
+    def __post_init__(self) -> None:
+        from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
+
+        if self.plugin not in SYNTHESIS:
+            raise ValueError(f"Speech synthesis takes {' or '.join(SYNTHESIS)}")
+        _model(self.model)
+        if self.plugin == "openai" and not (self.speaker or "").strip():
+            raise ValueError("OpenAI speech needs a voice, such as ash")
+        if self.speed is not None and not TTSConfig.takes_speed(self.plugin) and self.speed != 1.0:
+            raise ValueError(f"{NAMES[self.plugin]} speech takes no speed: it speaks at 1.0")
+        if self.speed is not None and not 0.25 <= self.speed <= 4.0:
+            raise ValueError("A speed from 0.25 to 4.0")
+        if self.server is not None:
+            if self.plugin != "openai":
+                raise ValueError("A speech server of your own speaks OpenAI's audio API: openai")
+            if problem := server_problem(self.server, speech=True):
+                raise ValueError(f"Speech server {self.server}: {problem}")
+
+    @property
+    def provider(self) -> str:
+        return self.plugin
+
+    @property
+    def key(self) -> str:
+        return server_key(self.server) if self.server else KEYS[self.plugin]
+
+
+def _reference() -> dict[str, Any]:
+    """The reference configuration's choices, from the default profiles setup starts from."""
+    import yaml
+
+    from alphaavatar.host.configs.template import SECTIONS
+
+    profile = {section: yaml.safe_load(SECTIONS[section]) for section in ("loop", "voice")}
+    profile |= {section: yaml.safe_load(SECTIONS[section]) for section in ("memory", "persona")}
+
+    def task(section: str, part: str, name: str) -> Model:
+        found = profile[section]["init_config"][part]["provider"]["gateway"]["tasks"][name]
+        return Model(found["provider"], found["model"])
+
+    loop, voice = profile["loop"]["init_config"]["model"], profile["voice"]
+    embedding = profile["memory"]["vdb_config"]["embedding"]
+    return {
+        "loop": Model(loop["provider"], loop["model"]),
+        "conversation": task("memory", "conversation", "memory.conversation_delta"),
+        "tool": task("memory", "tool", "memory.tool_delta"),
+        "environment": task("memory", "environment", "memory.env_delta"),
+        "profiler": task("persona", "profiler", "persona.profile_delta"),
+        "embedding": Model(embedding["provider"], embedding["model"]),
+        "transcription": Transcription(voice["stt"]["plugin"], voice["stt"]["model"]),
+        "synthesis": Synthesis(
+            voice["tts"]["plugin"], voice["tts"]["model"], voice["tts"]["speaker"]
+        ),
+        "speed": voice["tts"]["speed"],
+    }
+
+
+REFERENCE = _reference()
 
 
 @dataclass(frozen=True, slots=True)
 class Selection:
+    """What a new bundle runs with: its parts on or off, and each part's model. Unset, a part
+    is as the reference configuration has it; the same decision gives the bundle's settings,
+    the packages they need, the credentials they read and the summary shown before installing.
+    """
+
     voice: bool = True  # Speech in and out; speech segments come from on-device VAD.
     vision: bool = True  # Camera frames reach the loop's model.
     local_models: bool = True  # Turn taking, addressing, face and speaker models on-device.
+    env_memory: bool = True  # Memories drawn from the session's audio and video, by Gemini.
     vector_store: VectorStore = "lancedb"  # Memory and persona vectors: workspace or Qdrant.
-    models: Models | None = None  # None: OpenAI's.
-    speech: Speech | None = None  # None: OpenAI's; with voice only.
+    loop: Model = REFERENCE["loop"]
+    conversation: Model = REFERENCE["conversation"]
+    tool: Model = REFERENCE["tool"]
+    environment: Model = REFERENCE["environment"]
+    profiler: Model = REFERENCE["profiler"]
+    embedding: Model = REFERENCE["embedding"]
+    transcription: Transcription = REFERENCE["transcription"]
+    synthesis: Synthesis = REFERENCE["synthesis"]
+
+    def __post_init__(self) -> None:
+        for part, offered in PROVIDERS.items():
+            chosen = getattr(self, part)
+            if chosen.provider not in offered:
+                raise ValueError(f"{part} takes {', '.join(offered)}, not {chosen.provider}")
+            if chosen.server is not None and part not in SERVED:
+                raise ValueError(f"{part} takes no server of your own")
+
+    @property
+    def speed(self) -> float:
+        """The speed speech is synthesized at: as chosen, else the reference's where taken."""
+        from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
+
+        if self.synthesis.speed is not None:
+            return self.synthesis.speed
+        return REFERENCE["speed"] if TTSConfig.takes_speed(self.synthesis.plugin) else 1.0
+
+    def models(self) -> dict[str, Model]:
+        """The parts that run a model: ENV memory's only while it is on."""
+        parts = ("loop", "conversation", "tool", "environment", "profiler", "embedding")
+        return {p: getattr(self, p) for p in parts if p != "environment" or self.env_memory}
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,7 +414,8 @@ def _tasks(value: Any, location: str) -> Iterator[tuple[str, str, str]]:
 
 
 def requirements_offered() -> frozenset[str]:
-    """Every requirement some selection installs."""
+    """Every requirement some selection installs. Each provider a part takes is served by the
+    same packages; its switches and vector store choose them."""
     stores: tuple[VectorStore, ...] = ("lancedb", "qdrant")
     switches = (True, False)
     return frozenset(
@@ -253,31 +424,48 @@ def requirements_offered() -> frozenset[str]:
         for vision in switches
         for local in switches
         for store in stores
-        for needed in requirements(Selection(voice, vision, local, store))
+        for needed in requirements(
+            Selection(voice=voice, vision=vision, local_models=local, vector_store=store)
+        )
     )
 
 
-def speech_key(selection: Selection) -> str | None:
-    """The variable speech reads its key from: OpenAI's, or its server's own."""
-    if not selection.voice:
-        return None
-    return OPENAI_KEY if selection.speech is None else server_key(selection.speech.url)
+# What reads each part's key, in the order the questions name them.
+USES = {
+    "loop": "the conversation model",
+    "conversation": "memory",
+    "tool": "tool memory",
+    "environment": "ENV memory",
+    "profiler": "persona profiles",
+    "embedding": "embeddings",
+    "transcription": "speech recognition",
+    "synthesis": "speech synthesis",
+}
 
 
 def credentials(selection: Selection) -> tuple[Credential, ...]:
-    """What the selection's services read: OpenAI's key, and each own server's by its URL."""
-    official = {
-        (True, True): "the model, embeddings, memory/persona tasks and speech",
-        (True, False): "the model, embeddings and memory/persona tasks",
-        (False, True): "speech",
-    }.get((selection.models is None, speech_key(selection) == OPENAI_KEY))
-    found = [Credential(OPENAI_KEY, f"{official}, from OpenAI")] if official else []
-    servers = [selection.models.url] if selection.models else []
-    if selection.voice and selection.speech:
-        servers.append(selection.speech.url)
-    for name, url in {server_key(url): url for url in servers}.items():
-        found.append(Credential(name, f"your server {url}; any text if it needs none"))
-    found.append(Credential(GOOGLE_KEY, "ENV memory, from Google's Gemini"))
+    """What the chosen services read: each variable once, with every part that reads it; a
+    part switched off reads none, so ENV memory off asks no Google key of its own."""
+    parts: dict[str, Model | Transcription | Synthesis] = dict(selection.models())
+    if selection.voice:
+        parts |= {"transcription": selection.transcription, "synthesis": selection.synthesis}
+    readers: dict[str, list[str]] = {}
+    servers: dict[str, str] = {}
+    owners: dict[str, str] = {}
+    for part, chosen in parts.items():
+        readers.setdefault(chosen.key, []).append(USES[part])
+        if chosen.server is not None:
+            servers[chosen.key] = chosen.server
+        owners[chosen.key] = chosen.provider
+    found = []
+    for name, users in readers.items():
+        what = ", ".join(users)
+        if name in servers:
+            found.append(
+                Credential(name, f"your server {servers[name]}: {what}; any text if it needs none")
+            )
+        else:
+            found.append(Credential(name, f"{what}, from {NAMES[owners[name]]}"))
     found += [
         Credential("LIVEKIT_URL", "the LiveKit server sessions use", secret=False),
         Credential("LIVEKIT_API_KEY", "LiveKit"),
@@ -292,114 +480,153 @@ def credentials(selection: Selection) -> tuple[Credential, ...]:
 
 
 def capabilities(selection: Selection) -> tuple[str, ...]:
-    """What the selection does, in words."""
+    """What the selection runs with, in words, as shown before anything is installed."""
+    on = {True: "on", False: "off"}
     store = {"lancedb": "LanceDB in the Avatar workspace", "qdrant": "your Qdrant server"}
-    models, speech = selection.models, selection.speech
-    found = ["sessions through LiveKit"]
-    found.append(
-        f"models from {models.url}: {models.chat}; tasks {models.tasks}; "
-        f"embeddings {models.embedding}"
-        if models
-        else "model and embeddings from OpenAI"
-    )
+    found = [
+        f"voice {on[selection.voice]} · vision {on[selection.vision]} · models on this machine "
+        f"{on[selection.local_models]} · ENV memory {on[selection.env_memory]}",
+        "sessions through LiveKit",
+        f"conversation: {selection.loop.describe()}",
+        f"memory: {selection.conversation.describe()}; tool memory {selection.tool.describe()}",
+    ]
+    if selection.env_memory:
+        found.append(f"ENV memory: {selection.environment.describe()}, from audio and video")
+    found += [
+        f"persona profiles: {selection.profiler.describe()}",
+        f"embeddings: {selection.embedding.describe()}",
+    ]
     if selection.voice:
+        stt, tts = selection.transcription, selection.synthesis
         found.append(
-            f"speech from {speech.url}: {speech.transcription}, {speech.synthesis} ({speech.voice})"
-            if speech
-            else "speech from OpenAI"
+            f"speech in: {stt.plugin} {stt.model}" + (f" on {stt.server}" * bool(stt.server))
         )
-    if selection.voice:
-        found.append("voice: speech in and out, voice activity detected on this machine")
-    found.append("vision: camera frames reach the model" if selection.vision else "vision off")
+        voice = f", voice {tts.speaker}" if tts.speaker else ""
+        found.append(
+            f"speech out: {tts.plugin} {tts.model}{voice}, speed {selection.speed:g}"
+            + (f" on {tts.server}" * bool(tts.server))
+        )
     if selection.local_models:
         local = "turn taking, addressing, speaker and face recognition"
-        if not selection.voice:
-            local = "face recognition"
-        found.append(f"models on this machine: {local}")
-    else:
-        found.append("no other models on this machine")
-    found.append(f"memory and persona: vectors in {store[selection.vector_store]}")
-    found.append("ENV memory: memories from the session's audio and video, by Google's Gemini")
+        found.append(f"models on this machine: {local if selection.voice else 'face recognition'}")
+    found += [
+        f"memory and persona: vectors in {store[selection.vector_store]}",
+        "tools: none on; switched on in the tools profile, `alphaavatar setup <bundle>` installs "
+        "DeepResearch and MCP, and this release's setup does not offer RAG",
+    ]
     return tuple(found)
 
 
-def sections(selection: Selection) -> dict[str, str]:
-    """The bodies of the template sections the selection changes, as profile texts."""
-    import yaml
+def _changes(selection: Selection) -> dict[str, list[Change]]:
+    """Each setting of the default profiles the selection changes, by profile."""
+    from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
+    from alphaavatar.host.configs.template import Change
 
-    from alphaavatar.host.configs.template import SECTIONS
+    found: dict[str, list[Change]] = {}
 
-    changed: dict[str, Any] = {}
+    def put(
+        section: str, *path: str, value: Any, note: str | None = None, after: str | None = None
+    ) -> None:
+        found.setdefault(section, []).append(Change(path, value, note, after))
 
-    def edit(section: str, *path: str, value: Any) -> None:
-        body = changed.setdefault(section, yaml.safe_load(SECTIONS[section]))
-        for key in path[:-1]:
-            body = body.setdefault(key, {})
-        body[path[-1]] = value
+    def model(section: str, path: tuple[str, ...], chosen: Model, reference: Model) -> None:
+        if chosen.provider != reference.provider:
+            put(section, *path, "provider", value=chosen.provider)
+        if chosen.model != reference.model:
+            put(section, *path, "model", value=chosen.model)
+        if chosen.server is not None:
+            put(
+                section,
+                *path,
+                "extra",
+                value={"base_url": chosen.server, "api_key_env": chosen.key},
+            )
 
     if not selection.voice:
-        for part in ("vad", "stt", "tts"):
-            changed.setdefault("voice", {})[part] = {"plugin": None}
+        for part, plugin in (("vad", "silero"), ("stt", "openai_segment"), ("tts", "openai")):
+            put("voice", part, "plugin", value=None, note=f"Voice off; {plugin} turns it on.")
     if not selection.vision:
-        edit("vision", "enabled", value=False)
+        put("vision", "enabled", value=False)
     if not (selection.voice and selection.local_models):
-        edit("router", "init_config", "addressing", "semantic", "enabled", value=False)
-        edit("router", "init_config", "turn_taking", "enabled", value=False)
-        edit("persona", "init_config", "speaker", "enabled", value=False)
+        put("router", "init_config", "addressing", "semantic", "enabled", value=False)
+        put("router", "init_config", "turn_taking", "enabled", value=False)
+        put("persona", "init_config", "speaker", "enabled", value=False)
     if not selection.local_models:
         # Visual addressing reads the faces persona finds.
-        edit("router", "init_config", "addressing", "visual", "enabled", value=False)
-        edit("persona", "init_config", "face", "enabled", value=False)
-    if models := selection.models:
-        server = {"base_url": models.url, "api_key_env": server_key(models.url)}
-        edit(
-            "loop",
-            "init_config",
-            "model",
-            value={
-                "backend": "openai",
-                "provider": "openai",
-                "model": models.chat,
-                "extra": server,
-            },
+        put("router", "init_config", "addressing", "visual", "enabled", value=False)
+        put("persona", "init_config", "face", "enabled", value=False)
+    if not selection.env_memory:
+        put("memory", "init_config", "environment", "enabled", value=False)
+
+    model("loop", ("init_config", "model"), selection.loop, REFERENCE["loop"])
+    for section, part, task in (
+        ("memory", "conversation", "memory.conversation_delta"),
+        ("memory", "tool", "memory.tool_delta"),
+        ("memory", "environment", "memory.env_delta"),
+        ("persona", "profiler", "persona.profile_delta"),
+    ):
+        path = ("init_config", part, "provider", "gateway", "tasks", task)
+        model(section, path, getattr(selection, part), REFERENCE[part])
+    for section, path in (
+        ("memory", ("vdb_config", "embedding")),
+        ("persona", ("vdb_config", "embedding")),
+        ("tools", ("mcp", "vdb_config", "embedding")),
+    ):
+        model(section, path, selection.embedding, REFERENCE["embedding"])
+
+    stt, tts = selection.transcription, selection.synthesis
+    for key, reference, chosen in (
+        ("plugin", REFERENCE["transcription"].plugin, stt.plugin),
+        ("model", REFERENCE["transcription"].model, stt.model),
+    ):
+        if chosen != reference:
+            put("voice", "stt", key, value=chosen)
+    for key, reference, chosen in (
+        ("plugin", REFERENCE["synthesis"].plugin, tts.plugin),
+        ("model", REFERENCE["synthesis"].model, tts.model),
+        ("speaker", REFERENCE["synthesis"].speaker, tts.speaker),
+    ):
+        if chosen != reference:
+            put("voice", "tts", key, value=chosen)
+    if selection.speed != REFERENCE["speed"]:
+        takes = TTSConfig.takes_speed(tts.plugin)
+        put(
+            "voice",
+            "tts",
+            "speed",
+            value=selection.speed,
+            note=None if takes else "Voice.ai takes no speed.",
         )
-        for section, part, task in (
-            ("memory", "conversation", "memory.conversation_delta"),
-            ("memory", "tool", "memory.tool_delta"),
-            ("persona", "profiler", "persona.profile_delta"),
-        ):
-            settings = {"provider": "openai", "model": models.tasks, "temperature": 0.1}
-            edit(
-                section,
-                "init_config",
-                part,
-                "provider",
-                "gateway",
-                "tasks",
-                task,
-                value=settings | {"extra": server},
-            )
-        for section in ("memory", "persona"):
-            embedding = {"provider": "openai", "model": models.embedding, "extra": server}
-            edit(section, "vdb_config", "embedding", value=embedding)
-    if (speech := selection.speech) and selection.voice:
-        edit("voice", "stt", "model", value=speech.transcription)
-        edit("voice", "stt", "base_url", value=speech.url)
-        edit("voice", "tts", "model", value=speech.synthesis)
-        edit("voice", "tts", "speaker", value=speech.voice)
-        edit("voice", "tts", "base_url", value=speech.url)
-        for part in ("stt", "tts"):
-            edit("voice", part, "api_key_env", value=speech_key(selection))
+    if not TTSConfig.takes_instructions(tts.plugin, tts.model):
+        reads = "Voice.ai takes" if tts.plugin == "voiceai" else f"{tts.model} takes"
+        put("voice", "tts", "instructions", value=None, note=f"{reads} no instructions.")
+    for part, chosen in (("stt", stt), ("tts", tts)):
+        if chosen.server is not None:
+            put("voice", part, "base_url", value=chosen.server)
+            put("voice", part, "api_key_env", value=chosen.key)
+
     for section in ("memory", "persona"):
         if selection.vector_store == "qdrant":
             # Resolved from the environment, or the stored credentials, when the bundle loads.
-            edit(section, "vdb_config", "url", value="${oc.env:QDRANT_URL}")
-            edit(section, "vdb_config", "api_key", value="${oc.env:QDRANT_API_KEY,null}")
-        else:
-            # Explicitly none: a QDRANT_URL in the environment does not move the vectors.
-            edit(section, "vdb_config", "url", value=None)
+            put(
+                section,
+                "vdb_config",
+                "url",
+                value="${oc.env:QDRANT_URL}",
+                note="Your Qdrant server.",
+            )
+            put(
+                section, "vdb_config", "api_key", value="${oc.env:QDRANT_API_KEY,null}", after="url"
+            )
+    return found
+
+
+def sections(selection: Selection) -> dict[str, str]:
+    """The default profiles the selection changes, each changed in place: every other setting,
+    comment and blank line as the profile ships."""
+    from alphaavatar.host.configs.template import SECTIONS, change_profile
+
     return {
-        section: "# Chosen with `alphaavatar setup`.\n"
-        + yaml.safe_dump(body, sort_keys=False, allow_unicode=True)
-        for section, body in changed.items()
+        section: "# Chosen with `alphaavatar setup`.\n" + change_profile(SECTIONS[section], found)
+        for section, found in _changes(selection).items()
     }

@@ -163,8 +163,10 @@ Next
 
 - Writes the given Avatar ID with every public setting written out: the reference's value,
   or its schema's default where the reference names none, with comments, to be edited. The
-  profiles ship in the package; the reference file is not needed. Tools are off: each one,
-  switched on in `tools.yaml`, is installed by `alphaavatar setup <bundle>`.
+  profiles ship in the package; the reference file is not needed. Tools are off. Switched on
+  in `tools.yaml`, DeepResearch and MCP are installed by `alphaavatar setup <bundle>`, as this
+  release's catalog offers them; it does not offer RAG, which `config check` and `setup` name
+  at `tools.rag.plugin`.
 
 ```text
 configs/bundles/my-avatar.yaml                 avatar, plus the profiles below

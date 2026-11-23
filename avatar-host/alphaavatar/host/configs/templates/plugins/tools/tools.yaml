@@ -1,11 +1,12 @@
-# No tool is on. Switch one on here, then `alphaavatar setup <bundle>` installs what it needs.
+# No tool is on. Switched on here, DeepResearch and MCP are installed by
+# `alphaavatar setup <bundle>` as this release's catalog offers them; it does not offer RAG.
 
 deepresearch:
   plugin: null  # default: web research through Tavily, which reads TAVILY_API_KEY.
   init_config: {}
 
 rag:
-  plugin: null  # default: answers from your documents; `alphaavatar setup` does not install it yet.
+  plugin: null  # default: answers from your documents; this release's setup does not offer it.
   init_config:
     doc_parser: docling
 

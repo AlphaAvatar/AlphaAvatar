@@ -72,11 +72,11 @@ def _yes(out: Report, question: str, default: bool = True) -> bool:
 def _choose(out: Report):
     """Each part of the reference configuration, kept or changed; a server of one's own for
     the models or speech, if chosen."""
-    from alphaavatar.host.tools.setup.choices import Models, Selection, Speech
+    from alphaavatar.host.tools.setup.choices import Model, Selection, Synthesis, Transcription
 
     out.wrapped(
-        "From the reference configuration: voice and vision on, memory and persona, each "
-        "model from the backend chosen below.",
+        "From the reference configuration: voice and vision on, memory with ENV memory and "
+        "persona, each model from the backend chosen below.",
         indent=4,
     )
     voice = _yes(out, "Voice: speech in and out, voice activity detected on this machine?")
@@ -84,51 +84,64 @@ def _choose(out: Report):
     local = _yes(
         out, "Models on this machine: turn taking, addressing, face and speaker recognition?"
     )
+    env = _yes(
+        out,
+        "ENV memory: memories drawn from the session's audio and video by Google's Gemini, "
+        "an external model?",
+    )
     out.write("    Vectors for memory and persona:")
     out.item("1  ", "LanceDB in the Avatar workspace", indent=6)
     out.item("2  ", "your Qdrant", indent=6)
     while (store := _ask(out, "Vector store", "1")) not in ("1", "2"):
         pass
-    models = speech = None
+    chosen: dict[str, object] = {}
     if not _yes(
         out, "Models from OpenAI? No: a server of your own with OpenAI's API, Responses included"
     ):
         url = _server(out, "  Server URL", speech=False)
         chat = _needed(out, "  Conversation model")
-        models = Models(
-            url,
-            chat,
-            _needed(out, "  Memory and persona model", chat),
-            _needed(out, "  Embedding model"),
-        )
+        tasks = Model("openai", _needed(out, "  Memory and persona model", chat), url)
+        chosen = {
+            "loop": Model("openai", chat, url),
+            "conversation": tasks,
+            "tool": tasks,
+            "profiler": tasks,
+            "embedding": Model("openai", _needed(out, "  Embedding model"), url),
+        }
     if voice and not _yes(
         out, "Speech from OpenAI? No: a server of your own with OpenAI's audio API"
     ):
-        speech = Speech(
-            _server(out, "  Server URL", speech=True),
-            _needed(out, "  Transcription model"),
-            _needed(out, "  Speech model"),
-            _needed(out, "  Voice"),
+        url = _server(out, "  Server URL", speech=True)
+        chosen["transcription"] = Transcription(
+            "openai_segment", _needed(out, "  Transcription model"), url
         )
+        model = _needed(out, "  Speech model")
+        chosen["synthesis"] = Synthesis("openai", model, _needed(out, "  Voice"), server=url)
     store = "lancedb" if store == "1" else "qdrant"
-    return Selection(voice, vision, local, store, models, speech)
+    return Selection(
+        voice=voice, vision=vision, local_models=local, env_memory=env, vector_store=store, **chosen
+    )
 
 
-def _described(*, voice: bool, vision: bool, local: bool, qdrant: bool, own: list[str]) -> str:
+def _described(
+    *, voice: bool, vision: bool, local: bool, env: bool, qdrant: bool, own: list[str]
+) -> str:
     """What a bundle runs with, on one line."""
     on = {True: "on", False: "off"}
     parts = [f"Voice {on[voice]}", f"Vision {on[vision]}", f"Local models {on[local]}"]
+    parts.append(f"ENV memory {on[env]}")
     return " · ".join([*parts, *(["Qdrant"] if qdrant else []), *own])
 
 
 def _selection_line(selection) -> str:
-    own = ["Models from your server"] if selection.models is not None else []
-    if selection.voice and selection.speech is not None:
+    own = ["Models from your server"] if selection.loop.server is not None else []
+    if selection.voice and selection.synthesis.server is not None:
         own.append("Speech from your server")
     return _described(
         voice=selection.voice,
         vision=selection.vision,
         local=selection.local_models,
+        env=selection.env_memory,
         qdrant=selection.vector_store == "qdrant",
         own=own,
     )
@@ -141,10 +154,13 @@ def _bundle_line(avatar, needs: dict[str, str]) -> str:
 
     local = ("router", "semantic"), ("router", "turn-taking"), ("persona", "speaker")
     local += (("persona", "face"),)
+    environment = avatar.memory.init_config.get("environment")
     return _described(
         voice=avatar.voice.stt.plugin is not None or avatar.voice.tts.plugin is not None,
         vision=bool(avatar.vision.enabled),
         local=any(plugin_requirement(*part) in needs for part in local),
+        # ENV memory runs only where its settings switch it on.
+        env=isinstance(environment, dict) and environment.get("enabled") is True,
         qdrant=vdb_requirement("qdrant") in needs,
         own=[],
     )

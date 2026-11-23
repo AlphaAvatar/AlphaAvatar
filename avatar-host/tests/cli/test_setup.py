@@ -145,7 +145,10 @@ def test_an_existing_bundle_is_planned_from_its_settings_and_refused_what_none_i
         assert main(["setup", "reference", "--plan"]) == 0
         assert json.loads(capsys.readouterr().out) == json.loads(first.out)
         assert json.loads(first.out)["requirements"] == list(requirements(Selection()))
-        steps = "01  Capabilities   Bundle reference · Voice on · Vision on · Local models on\n"
+        steps = (
+            "01  Capabilities   Bundle reference · Voice on · Vision on · Local models on"
+            " · ENV memory on\n"
+        )
         assert steps in first.err
         before = home_files()
         # Edited, it is planned as edited: no face recognition, no package for it.
@@ -274,7 +277,7 @@ def test_typed_session_credentials_are_checked_before_anything_is_stored_or_inst
     # The key and secret typed as the URL, as a host and a port: the values that take
     # effect, typed over what the environment holds, are the ones checked.
     typed = ("sk-new", "", "wss://lk-key:lk-fictional-secret", "lk-key", "lk-fictional-secret")
-    asked, hidden = answers("", "", "", "", "", "", "second", "", *typed)
+    asked, hidden = answers("", "", "", "", "", "", "", "second", "", *typed)
     caplog.set_level(logging.DEBUG)
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
@@ -347,7 +350,7 @@ def test_the_plan_alone_goes_to_stdout_even_when_setup_asks(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
     # Voice, vision, no local models, LanceDB, OpenAI's models and speech; the name, its ID.
-    queue = ["", "", "n", "", "", "", "remote", ""]
+    queue = ["", "", "n", "", "", "", "", "remote", ""]
 
     def typed(prompt: str = "") -> str:
         sys.stdout.write(prompt)  # As input() shows its prompt.
@@ -365,7 +368,9 @@ def test_the_plan_alone_goes_to_stdout_even_when_setup_asks(
     # The step and its questions went to stderr: stdout is the plan for a tool to read.
     assert "From the reference configuration" in output.err
     # (Answered here without a terminal's echo, so a prompt and the next line share one.)
-    assert "01  Capabilities   Voice on · Vision on · Local models off\n" in output.err
+    assert (
+        "01  Capabilities   Voice on · Vision on · Local models off · ENV memory on\n" in output.err
+    )
     assert home_files() == []
 
 
@@ -374,7 +379,7 @@ def test_a_plan_declined_installs_and_enables_nothing(
 ) -> None:
     installed = mock.Mock(side_effect=AssertionError("nothing installs"))
     # No local models, its name and ID, the credentials set already, not stored; then no.
-    asked, hidden = answers("", "", "n", "", "", "", "remote", "", "", "", "", "", "", "n", "n")
+    asked, hidden = answers("", "", "n", "", "", "", "", "remote", "", "", "", "", "", "", "n", "n")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
@@ -429,7 +434,7 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
         return installation.environment(plan)
 
     typed = ("sk-new", "google-new", "wss://livekit.invalid", "lk-key", "lk-secret")
-    asked, hidden = answers("", "", "", "", "", "", "second", "", *typed, "y", "n", "y")
+    asked, hidden = answers("", "", "", "", "", "", "", "second", "", *typed, "y", "n", "y")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
@@ -448,6 +453,42 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
     assert "OPENAI_API_KEY stays as stored" in output and "sk-new" not in output
 
 
+def test_env_memory_switched_off_asks_no_google_key_and_keeps_its_settings_to_switch_on(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    prompts: list[str] = []
+    # Each part as the reference has it but ENV memory; then the name and ID, the credentials
+    # the environment holds (Enter keeps them), not stored, and yes to installing.
+    queue = ["", "", "", "n", "", "", "", "quiet", "", "", "", "", "", "n", "y"]
+
+    def answer(prompt: str = "") -> str:
+        prompts.append(prompt)
+        return queue.pop(0)
+
+    def installed(installation, plan, sources, *, check, enable, **kwargs):
+        enable()
+        return installation.environment(plan)
+
+    without = {name: value for name, value in CREDENTIALS.items() if name != "GOOGLE_API_KEY"}
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", installed),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, without | {"COLUMNS": "1000"}),
+        mock.patch("builtins.input", answer),
+        mock.patch("getpass.getpass", answer),
+    ):
+        assert main(["setup"]) == 0
+    assert queue == [] and not [prompt for prompt in prompts if "GOOGLE_API_KEY" in prompt]
+    assert "ENV memory off" in capsys.readouterr().out
+    memory = Path.home() / ".local/share/alphaavatar/configs/profiles/quiet/plugins/perception"
+    text = (memory / "memory.yaml").read_text()
+    # Off, its settings and the comments on them kept: switched on, it runs as the reference.
+    assert "  environment:\n    enabled: false\n    include_audio: true\n" in text
+    assert "# Memories drawn from the session's audio and video by Google's Gemini" in text
+    assert "            provider: google\n            model: gemini-2.5-flash\n" in text
+
+
 def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
@@ -463,9 +504,9 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
         return installation.environment(plan)
 
     def setup(name: str, server: str, *typed: str) -> int:
-        # No voice, vision, no local models, LanceDB, the models from `server`; then the
+        # No voice, vision, no local models, ENV memory, LanceDB, the models from `server`; then the
         # name, the Avatar ID, the server's key, Google's and LiveKit's (set: Enter keeps them).
-        queue = ["n", "y", "n", "1", "n", server, "chat", "", "embed", name, "", *typed]
+        queue = ["n", "y", "n", "", "1", "n", server, "chat", "", "embed", name, "", *typed]
 
         def answer(prompt: str = "") -> str:
             prompts.append(prompt)
@@ -481,8 +522,9 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
             mock.patch.object(environment.Installation, "running", return_value=package),
             mock.patch.object(environment, "install", installed),
             mock.patch("sys.stdin.isatty", return_value=True),
-            # Wide: each question is one prompt, as this test reads them.
-            mock.patch.dict(os.environ, livekit | {"COLUMNS": "200"}),
+            # Wide: each question is one prompt, as this test reads them, the parts a server's
+            # key serves included.
+            mock.patch.dict(os.environ, livekit | {"COLUMNS": "1000"}),
             mock.patch("builtins.input", answer),
             mock.patch("getpass.getpass", answer),
         ):
@@ -577,7 +619,7 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
         return written
 
     typed = ("sk-new", "google-new", "wss://livekit.invalid", "lk-key", "lk-secret")
-    asked, hidden = answers("", "", "", "", "", "", "second", "", *typed, "y", "y")
+    asked, hidden = answers("", "", "", "", "", "", "", "second", "", *typed, "y", "y")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "check_environment", lambda *args: None),

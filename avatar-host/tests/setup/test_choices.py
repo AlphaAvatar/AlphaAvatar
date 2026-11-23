@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import difflib
 import importlib.util
 import itertools
 import os
 import threading
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -34,12 +36,13 @@ from pydantic import BaseModel
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.configs import ConfigSource, resolve_capabilities, validate_application
-from alphaavatar.host.configs.template import render_bundle
+from alphaavatar.host.configs.template import SECTIONS, render_bundle
 from alphaavatar.host.tools.setup.choices import (
     OPENAI_KEY,
-    Models,
+    Model,
     Selection,
-    Speech,
+    Synthesis,
+    Transcription,
     bundle_requirements,
     credentials,
     requirements,
@@ -52,9 +55,9 @@ from alphaavatar.host.workspace import ApplicationPaths
 
 ROOT = Path(__file__).resolve().parents[3]
 SELECTIONS = [
-    Selection(*values)
-    for values in itertools.product(
-        (True, False), (True, False), (True, False), ("lancedb", "qdrant")
+    Selection(voice=voice, vision=vision, local_models=local, env_memory=env, vector_store=store)
+    for voice, vision, local, env, store in itertools.product(
+        (True, False), (True, False), (True, False), (True, False), ("lancedb", "qdrant")
     )
 ]
 # Models and the libraries that run them, besides Silero's ONNX Runtime; and CUDA.
@@ -70,6 +73,27 @@ LOCAL = {
     "torchaudio",
     "transformers",
 }
+
+
+def own_models(url: str, chat: str = "chat", tasks: str = "tasks", embedding: str = "embed"):
+    """Every model but ENV memory's from one server of one's own: the loop's, the tasks' and
+    the embeddings."""
+    task = Model("openai", tasks, url)
+    return {
+        "loop": Model("openai", chat, url),
+        "conversation": task,
+        "tool": task,
+        "profiler": task,
+        "embedding": Model("openai", embedding, url),
+    }
+
+
+def own_speech(url: str, transcription: str = "transcribe", speech: str = "speak", voice="voice"):
+    """Speech in and out from one server of one's own with OpenAI's audio API."""
+    return {
+        "transcription": Transcription("openai_segment", transcription, url),
+        "synthesis": Synthesis("openai", speech, voice, server=url),
+    }
 
 
 def bundle_of(selection: Selection) -> dict:
@@ -90,8 +114,8 @@ def compose(selection: Selection, home: Path):
 
 
 def label(selection: Selection) -> str:
-    parts = (selection.voice, selection.vision, selection.local_models, selection.vector_store)
-    return "-".join(map(str, parts))
+    parts = (selection.voice, selection.vision, selection.local_models, selection.env_memory)
+    return "-".join(map(str, (*parts, selection.vector_store)))
 
 
 @pytest.mark.parametrize("selection", SELECTIONS, ids=label)
@@ -110,23 +134,22 @@ def test_each_selection_asks_for_exactly_what_its_bundle_resolves_to(
 def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path) -> None:
     from alphaavatar.plugins.provider.openai.llms.config import OpenAIClientConfig
 
-    models = Models("http://gpu.invalid:8000/v1", "qwen3-32b", "qwen3-8b", "bge-m3")
-    speech = Speech("https://speech.invalid:8001/v1", "whisper-large-v3", "kokoro", "af_heart")
-    own = Selection(models=models, speech=speech)
+    models, speech = "http://gpu.invalid:8000/v1", "https://speech.invalid:8001/v1"
+    own = Selection(
+        **own_models(models, "qwen3-32b", "qwen3-8b", "bge-m3"),
+        **own_speech(speech, "whisper-large-v3", "kokoro", "af_heart"),
+    )
     config = compose(own, tmp_path / "home")
-    models_key, speech_key = server_key(models.url), server_key(speech.url)
-    avatar, server = config.avatar, {"base_url": models.url, "api_key_env": models_key}
+    models_key, speech_key = server_key(models), server_key(speech)
+    avatar, server = config.avatar, {"base_url": models, "api_key_env": models_key}
     loop = avatar.loop.init_config["model"]
     assert (loop["backend"], loop["model"], loop["extra"]) == ("openai", "qwen3-32b", server)
     # The loop's Responses client is pointed at the server; tasks and embeddings go there too.
-    assert OpenAIClientConfig.model_validate(loop["extra"]).base_url == models.url
+    assert OpenAIClientConfig.model_validate(loop["extra"]).base_url == models
     tasks = avatar.persona.init_config["profiler"]["provider"]["gateway"]["tasks"]
-    assert tasks["persona.profile_delta"] == {
-        "provider": "openai",
-        "model": "qwen3-8b",
-        "temperature": 0.1,
-        "extra": server,
-    }
+    task = tasks["persona.profile_delta"]
+    assert (task["provider"], task["model"], task["temperature"]) == ("openai", "qwen3-8b", 0.1)
+    assert task["extra"] == server
     for section in (avatar.memory, avatar.persona):
         assert section.vdb_config["embedding"] == {
             "provider": "openai",
@@ -134,9 +157,9 @@ def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path
             "extra": server,
         }
     voice = avatar.voice
-    assert (voice.stt.base_url, voice.stt.model) == (speech.url, "whisper-large-v3")
+    assert (voice.stt.base_url, voice.stt.model) == (speech, "whisper-large-v3")
     assert (voice.tts.base_url, voice.tts.model, voice.tts.speaker) == (
-        speech.url,
+        speech,
         "kokoro",
         "af_heart",
     )
@@ -146,8 +169,15 @@ def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path
     assert found == list(requirements(own)) == list(requirements(Selection()))
     asked = {credential.name: credential.purpose for credential in credentials(own)}
     assert OPENAI_KEY not in asked
-    assert asked[models_key] == f"your server {models.url}; any text if it needs none"
-    assert asked[speech_key] == f"your server {speech.url}; any text if it needs none"
+    assert asked[models_key] == (
+        f"your server {models}: the conversation model, memory, tool memory, persona profiles, "
+        "embeddings; any text if it needs none"
+    )
+    assert asked[speech_key] == (
+        f"your server {speech}: speech recognition, speech synthesis; any text if it needs none"
+    )
+    # ENV memory stays Gemini's: never a text model on the server.
+    assert asked["GOOGLE_API_KEY"] == "ENV memory, from Google"
 
 
 class Server:
@@ -255,10 +285,9 @@ def check_keys(own: str, model_server: Server, speech_server: Server, tmp_path: 
     from alphaavatar.agents.avatar.provider.factory import create_embedding_model
     from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
-    models = Models(model_server.url, "chat", "tasks", "embed")
-    speech = Speech(speech_server.url, "transcribe", "speak", "voice")
     selection = Selection(
-        models=models if own != "speech" else None, speech=speech if own != "models" else None
+        **(own_models(model_server.url) if own != "speech" else {}),
+        **(own_speech(speech_server.url) if own != "models" else {}),
     )
     MODELS_KEY, SPEECH_KEY = server_key(model_server.url), server_key(speech_server.url)
     keys = {OPENAI_KEY: "sk-openai-fictional", MODELS_KEY: "models-fictional"}
@@ -344,11 +373,10 @@ def test_a_key_variable_named_after_a_server_is_sent_to_that_server_alone(
 
     from alphaavatar.core.log.diagnostics import error_fields
 
-    models = Models("http://gpu.invalid:8000/v1", "chat", "tasks", "embed")
-    speech = Speech("https://speech.invalid:8001/v1", "transcribe", "speak", "voice")
-    bundle = bundle_of(Selection(models=models, speech=speech))
+    models, speech = "http://gpu.invalid:8000/v1", "https://speech.invalid:8001/v1"
+    bundle = bundle_of(Selection(**own_models(models), **own_speech(speech)))
     (*parents, place), location = KEYED[where]
-    url = speech.url if parents[0] == "voice" else models.url
+    url = speech if parents[0] == "voice" else models
 
     def moved(base_url: str | None, **changes: str):
         document = copy.deepcopy(bundle)
@@ -410,8 +438,9 @@ def test_a_server_url_is_taken_where_the_backends_it_serves_take_it(url: str) ->
     speech = accepts(lambda: OpenAITTS(model="m", speaker="s", api_key="k", base_url=url))
     assert (server_problem(url, speech=False) is None) == models
     assert (server_problem(url, speech=True) is None) == speech
-    assert accepts(lambda: Models(url, "c", "t", "e")) == models
-    assert accepts(lambda: Speech(url, "t", "s", "v")) == speech
+    assert accepts(lambda: Model("openai", "c", url)) == models
+    assert accepts(lambda: Transcription("openai_segment", "t", url)) == speech
+    assert accepts(lambda: Synthesis("openai", "s", "v", server=url)) == speech
 
 
 def test_the_reference_keeps_vision_and_plans_its_runners_with_or_without_local_models(
@@ -495,9 +524,7 @@ EDITS = {
 
 
 @pytest.mark.parametrize(
-    "selection",
-    [*SELECTIONS, Selection(models=Models("http://m.invalid:8000/v1", "c", "t", "e"))],
-    ids=label,
+    "selection", [*SELECTIONS, Selection(**own_models("http://m.invalid:8000/v1"))], ids=label
 )
 def test_an_existing_bundle_plans_what_its_selection_does(
     selection: Selection, tmp_path: Path
@@ -696,3 +723,251 @@ def test_a_bare_base_checks_the_session_transport_credentials_offline(tmp_path: 
         "LIVEKIT_API_SECRET": "lk-fictional-secret",
     }
     assert bare(paths.root, bundle, installed_plugins(), given)["credentials"] is None
+
+
+SPEECH = "https://speech.invalid:8001/v1"
+INSTRUCTIONS = yaml.safe_load(SECTIONS["voice"])["tts"]["instructions"]
+CHOSEN = "# Chosen with `alphaavatar setup`.\n"
+
+
+@pytest.mark.parametrize(
+    ("plugin", "model", "voice", "instructions", "speed"),
+    [
+        ("openai", "gpt-4o-mini-tts", "ash", INSTRUCTIONS, 1.15),
+        ("openai", "tts-1", "alloy", None, 1.15),
+        ("openai", "tts-1-hd", "alloy", None, 1.15),
+        ("voiceai", "voiceai-tts-v1", None, None, 1.0),
+    ],
+    ids=["gpt-4o-mini-tts", "tts-1", "tts-1-hd", "voiceai"],
+)
+def test_speech_out_keeps_the_settings_its_implementation_and_model_take(
+    plugin: str,
+    model: str,
+    voice: str | None,
+    instructions: str | None,
+    speed: float,
+    tmp_path: Path,
+) -> None:
+    """The reference's voice, speed and instructions stay where the implementation and model
+    take them; where not, the bundle says so and still loads. A server of one's own running
+    tts-1 failed to load here once, holding the reference's instructions."""
+    server = SPEECH if plugin == "openai" else None
+    selection = Selection(synthesis=Synthesis(plugin, model, voice, server=server))
+    tts = compose(selection, tmp_path / "home").avatar.voice.tts
+    assert (tts.plugin, tts.model, tts.speaker) == (plugin, model, voice)
+    assert (tts.instructions, tts.speed) == (instructions, speed)
+    text = sections(selection)["voice"]
+    if instructions is None:
+        reads = "Voice.ai takes" if plugin == "voiceai" else f"{model} takes"
+        assert f"  instructions: null  # {reads} no instructions.\n" in text
+    else:
+        assert "  instructions: >\n    Speak naturally," in text
+    if plugin == "voiceai":
+        assert "  speed: 1.0  # Voice.ai takes no speed.\n" in text
+        asked = {credential.name: credential.purpose for credential in credentials(selection)}
+        assert asked["VOICEAI_API_KEY"] == "speech synthesis, from Voice.ai"
+
+
+def test_a_setting_speech_out_does_not_take_is_refused_by_name(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Voice.ai speech takes no speed"):
+        Synthesis("voiceai", "voiceai-tts-v1", None, speed=1.2)
+    assert Selection(synthesis=Synthesis("voiceai", "voiceai-tts-v1", None, speed=1.0)).speed == 1
+    with pytest.raises(ValueError, match="needs a voice"):
+        Synthesis("openai", "tts-1", None)
+    # Instructions written by hand for a model that reads none are refused where they are set.
+    bundle = bundle_of(Selection(synthesis=Synthesis("openai", "tts-1", "alloy")))
+    bundle["voice"]["tts"]["instructions"] = "Speak slowly."
+    with pytest.raises(ValueError, match="does not support instructions"):
+        validated(bundle, tmp_path / "home")
+
+
+def test_env_memory_off_keeps_its_settings_runs_nothing_and_asks_no_google_key(
+    tmp_path: Path,
+) -> None:
+    from alphaavatar.plugins.memory.config import DefaultMemoryConfig
+
+    off = Selection(env_memory=False)
+    memory = compose(off, tmp_path / "off").avatar.memory
+    environment = DefaultMemoryConfig.model_validate(memory.init_config).model_dump()["environment"]
+    task = environment["provider"]["gateway"]["tasks"]["memory.env_delta"]
+    assert environment["enabled"] is False  # Not run; kept, to be switched on again.
+    assert (task["provider"], task["model"], task["input_adapter"]) == (
+        "google",
+        "gemini-2.5-flash",
+        "langchain_gemini",
+    )
+    assert "GOOGLE_API_KEY" not in {credential.name for credential in credentials(off)}
+    assert requirements(off) == requirements(Selection())  # Shared with the other tasks.
+    # Another part on Google asks for the key, for that part alone.
+    google = Selection(env_memory=False, profiler=Model("google", "gemini-2.5-pro"))
+    asked = {credential.name: credential.purpose for credential in credentials(google)}
+    assert asked["GOOGLE_API_KEY"] == "persona profiles, from Google"
+    asked = {credential.name: credential.purpose for credential in credentials(Selection())}
+    assert asked["GOOGLE_API_KEY"] == "ENV memory, from Google"
+    # ENV memory is Gemini's audio and video: no text model or server takes its place.
+    for other in (
+        Model("openai", "gpt-4o"),
+        Model("openai", "qwen3", "http://gpu.invalid:8000/v1"),
+    ):
+        with pytest.raises(ValueError, match="environment takes google"):
+            Selection(environment=other)
+
+
+def test_each_part_takes_its_own_provider_and_model_and_each_key_is_asked_once(
+    tmp_path: Path,
+) -> None:
+    from alphaavatar.agents.avatar.provider.factory import create_embedding_model, create_llm_model
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+
+    server = "http://gpu.invalid:8000/v1"
+    selection = Selection(
+        loop=Model("openai", "qwen3-32b", server),
+        conversation=Model("anthropic", "claude-sonnet-4-5"),
+        tool=Model("openrouter", "deepseek/deepseek-chat"),
+        profiler=Model("google", "gemini-2.5-pro"),
+        embedding=Model("google", "text-embedding-004"),
+    )
+    config = compose(selection, tmp_path / "home")
+    avatar = config.avatar
+
+    def task(section: str, part: str, name: str) -> dict:
+        return getattr(avatar, section).init_config[part]["provider"]["gateway"]["tasks"][name]
+
+    tasks = {
+        "conversation": task("memory", "conversation", "memory.conversation_delta"),
+        "tool": task("memory", "tool", "memory.tool_delta"),
+        "profiler": task("persona", "profiler", "persona.profile_delta"),
+        "environment": task("memory", "environment", "memory.env_delta"),
+    }
+    assert {part: (t["provider"], t["model"]) for part, t in tasks.items()} == {
+        "conversation": ("anthropic", "claude-sonnet-4-5"),
+        "tool": ("openrouter", "deepseek/deepseek-chat"),
+        "profiler": ("google", "gemini-2.5-pro"),
+        "environment": ("google", "gemini-2.5-flash"),  # Its own: the reference's.
+    }
+    assert avatar.loop.init_config["model"]["extra"] == {
+        "base_url": server,
+        "api_key_env": server_key(server),
+    }
+    for vdb in (avatar.memory.vdb_config, avatar.persona.vdb_config, avatar.tools.mcp.vdb_config):
+        assert vdb["embedding"] == {"provider": "google", "model": "text-embedding-004"}
+    asked = {credential.name: credential.purpose for credential in credentials(selection)}
+    assert asked == {
+        server_key(
+            server
+        ): f"your server {server}: the conversation model; any text if it needs none",
+        "ANTHROPIC_API_KEY": "memory, from Anthropic",
+        "OPENROUTER_API_KEY": "tool memory, from OpenRouter",
+        "GOOGLE_API_KEY": "ENV memory, persona profiles, embeddings, from Google",
+        "OPENAI_API_KEY": "speech recognition, speech synthesis, from OpenAI",
+        "LIVEKIT_URL": "the LiveKit server sessions use",
+        "LIVEKIT_API_KEY": "LiveKit",
+        "LIVEKIT_API_SECRET": "LiveKit",
+    }
+    # One install serves every provider: what start resolves is what setup plans.
+    found = sorted({need.requirement for need in resolve_capabilities(config).needs})
+    assert found == list(requirements(selection)) == list(requirements(Selection()))
+    # Each reads its own key as start provides it; a blank one is none.
+    keys = {name: f"{name.lower()}-fictional" for name in asked if not name.startswith("LIVEKIT")}
+    embedding = ProviderTaskConfig.model_validate(
+        avatar.memory.vdb_config["embedding"] | {"kind": "embedding"}
+    )
+    with mock.patch.dict(os.environ, keys):
+        for part in ("conversation", "tool", "profiler"):
+            model = create_llm_model(ProviderTaskConfig.model_validate(tasks[part]))
+            model.validate_input()
+            asyncio.run(model.aclose())
+        embedder = create_embedding_model(embedding)
+        assert embedder._model.google_api_key.get_secret_value() == keys["GOOGLE_API_KEY"]
+    with mock.patch.dict(os.environ, {"GOOGLE_API_KEY": " \t"}):
+        with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
+            create_embedding_model(embedding)
+
+
+def test_a_part_that_reuses_another_s_model_writes_it_out_for_each() -> None:
+    chosen = Model("anthropic", "claude-sonnet-4-5")
+    texts = sections(Selection(conversation=chosen, tool=chosen, profiler=chosen))
+    memory = yaml.safe_load(texts["memory"])["init_config"]
+    persona = yaml.safe_load(texts["persona"])["init_config"]
+    for settings, part, name in (
+        (memory, "conversation", "memory.conversation_delta"),
+        (memory, "tool", "memory.tool_delta"),
+        (persona, "profiler", "persona.profile_delta"),
+    ):
+        task = settings[part]["provider"]["gateway"]["tasks"][name]
+        assert (task["provider"], task["model"]) == ("anthropic", "claude-sonnet-4-5")
+    # On its own lines in each place, never an alias the file would hide it behind.
+    assert texts["memory"].count("            provider: anthropic\n") == 2
+    assert not any(isinstance(event, yaml.AliasEvent) for event in yaml.parse(texts["memory"]))
+
+
+def covered(shipped: object, written: object) -> bool:
+    """Whether every setting of ``shipped`` is still in ``written``: where a value was a
+    mapping, its settings; an empty one may have gained some."""
+    if isinstance(shipped, dict) and shipped:
+        return isinstance(written, dict) and all(
+            key in written and covered(value, written[key]) for key, value in shipped.items()
+        )
+    return True
+
+
+CHANGED = {
+    "servers and qdrant": Selection(
+        local_models=False,
+        env_memory=False,
+        vector_store="qdrant",
+        **own_models("http://gpu.invalid:8000/v1"),
+        transcription=Transcription("openai_realtime", "gpt-realtime-whisper", SPEECH),
+        synthesis=Synthesis("openai", "tts-1", "alloy", 1.2, SPEECH),
+    ),
+    "all off": Selection(voice=False, vision=False, local_models=False, env_memory=False),
+    "voice.ai": Selection(synthesis=Synthesis("voiceai", "voiceai-tts-v1", None)),
+}
+
+
+@pytest.mark.parametrize("name", CHANGED)
+def test_a_changed_profile_keeps_every_other_setting_comment_and_blank_line(name: str) -> None:
+    from alphaavatar.host.configs.template import _find
+    from alphaavatar.host.tools.setup.choices import _changes
+
+    selection = CHANGED[name]
+    changes = _changes(selection)
+    for section, text in sections(selection).items():
+        shipped, body = SECTIONS[section], text.removeprefix(CHOSEN)
+        assert text.startswith(CHOSEN)
+
+        # Every comment line and blank line stays, in order; a note ends its own line.
+        def kept(t: str) -> list[str]:
+            return [line for line in t.splitlines() if not line.strip() or line.lstrip()[0] == "#"]
+
+        assert kept(body) == kept(shipped), section
+
+        # So does each comment at the end of a setting's line, unless a note replaces it.
+        def trailing(t: str) -> Counter[str]:
+            return Counter(
+                line.split("  # ", 1)[1]
+                for line in t.splitlines()
+                if "  # " in line and line.lstrip()[0] != "#"
+            )
+
+        lines, replaced = shipped.splitlines(), Counter()
+        for change in changes[section]:
+            at = _find(lines, change.path)
+            if change.note and at is not None and "  # " in lines[at]:
+                replaced[lines[at].split("  # ", 1)[1]] += 1
+        assert trailing(shipped) - trailing(body) == replaced, section
+        assert covered(yaml.safe_load(shipped), yaml.safe_load(body)), section
+        # Two spaces in from its group, as the profiles are written.
+        indents = [len(line) - len(line.lstrip(" ")) for line in body.splitlines() if line.strip()]
+        assert all(i % 2 == 0 for i in indents) and all(
+            b <= a + 2 for a, b in zip(indents, indents[1:], strict=False)
+        ), section
+        # What changed is only the settings the selection names, the instructions' text with them.
+        names = {c.path[-1] for c in changes[section]}
+        names |= {k for c in changes[section] if isinstance(c.value, dict) for k in c.value}
+        # In the voice profile only the instructions' text sits four spaces in.
+        instructions = {line.strip() for line in shipped.splitlines() if line.startswith("    ")}
+        for line in difflib.ndiff(shipped.splitlines(), body.splitlines()):
+            if line[:2] in ("- ", "+ "):
+                setting = line[2:].strip()
+                assert setting.split(":")[0] in names or setting in instructions, (section, line)

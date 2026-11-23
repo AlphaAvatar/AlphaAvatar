@@ -20,19 +20,22 @@ alphaavatar setup my-avatar --plan   # print the install plan, change nothing
 ## Asked: a new bundle
 
 `alphaavatar setup` starts from the reference configuration `config init` writes: voice and
-vision on, memory and persona. In a terminal, it asks:
+vision on, memory with ENV memory, and persona; no tool on. In a terminal, it asks:
 
 1. Each part, kept with Enter or switched off: voice (speech in and out, voice activity
    detected on this machine), vision (camera frames reach the model), models on this machine
-   (turn taking, addressing, face and speaker recognition), and the vector store for memory and
-   persona (LanceDB in the Avatar workspace, or your Qdrant).
+   (turn taking, addressing, face and speaker recognition), ENV memory (memories drawn from the
+   session's audio and video by Google's Gemini, an external model), and the vector store for
+   memory and persona (LanceDB in the Avatar workspace, or your Qdrant). A part switched off
+   keeps its settings in the profiles, to switch it on later, and needs no credential.
 2. Where the models come from, and the speech if voice is on: OpenAI, or a server of your own
    with OpenAI's API. A server of your own is asked for its URL, then the models (conversation
    through the Responses API, memory and persona tasks, embeddings) or speech (transcription,
    synthesis, voice). Speech needs `https://` unless the server is on this machine; a URL the
    backends would refuse is asked again.
 3. The bundle name and Avatar ID.
-4. The credentials the choice needs, then whether to store them.
+4. The credentials the choice needs, each once with the parts that read it; then whether to
+   store them. ENV memory off asks for no Google key.
 5. The plan, then whether to install and enable it.
 
 Without a terminal, setup refuses with exit code 1 and names `alphaavatar setup <bundle>`.

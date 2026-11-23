@@ -23,10 +23,12 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
 import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from alphaavatar.host.workspace import ApplicationPaths
 
@@ -92,8 +94,109 @@ def _template(section: str) -> Path:
 
 
 # The default profiles, one section each, by layer; `alphaavatar setup` starts from them and
-# replaces the sections its choices change.
+# changes the settings its choices change, in place.
 SECTIONS = {section: _template(section).read_text("utf-8") for section in LAYERS}
+
+# A setting's line in a profile: its indentation, key, and what follows the colon.
+_SETTING = re.compile(r"^( *)([A-Za-z0-9_.\-]+):(?=\s|$)(.*)$")
+
+
+def _setting(line: str) -> tuple[int, str, str] | None:
+    found = _SETTING.match(line)
+    return (len(found[1]), found[2], found[3]) if found else None
+
+
+def _end(lines: list[str], index: int) -> int:
+    """Where the setting on ``index`` ends: after its last more indented line, blank lines and
+    comments that follow it not included."""
+    indent, end = _setting(lines[index])[0], index + 1
+    for at in range(index + 1, len(lines)):
+        line = lines[at]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if len(line) - len(line.lstrip(" ")) <= indent:
+            break
+        end = at + 1
+    return end
+
+
+def _find(lines: list[str], path: Sequence[str]) -> int | None:
+    start, stop, indent, found = 0, len(lines), 0, None
+    for key in path:
+        found, at = None, start
+        while at < stop:
+            setting = _setting(lines[at])
+            if setting is not None and setting[0] == indent:
+                if setting[1] == key:
+                    found = at
+                    break
+                at = _end(lines, at)
+                continue
+            at += 1
+        if found is None:
+            return None
+        start, stop, indent = found + 1, _end(lines, found), indent + 2
+    return found
+
+
+def _scalar(value: Any) -> str:
+    import yaml
+
+    return yaml.safe_dump(value, default_flow_style=True, width=1 << 20).split("\n...")[0].strip()
+
+
+def _lines(key: str, value: Any, indent: int, comment: str) -> list[str]:
+    """A setting as the profiles write one: a mapping as a block, anything else on its line."""
+    if isinstance(value, dict) and value:
+        children = [line for k, v in value.items() for line in _lines(k, v, indent + 2, "")]
+        return [f"{' ' * indent}{key}:{comment}", *children]
+    return [f"{' ' * indent}{key}: {_scalar(value)}{comment}"]
+
+
+@dataclass(frozen=True, slots=True)
+class Change:
+    """A setting a choice changes in a default profile, where it is; one the profile lacks is
+    added under its parent, after the sibling ``after`` names. ``note`` replaces its comment."""
+
+    path: tuple[str, ...]
+    value: Any
+    note: str | None = None
+    after: str | None = None
+
+
+def change_profile(text: str, changes: Sequence[Change]) -> str:
+    """The profile with each change made where its setting is: every other line, comment and
+    blank line as it was. The result is checked against the same changes made to its data."""
+    import yaml
+
+    lines = text.splitlines()
+    for change in changes:
+        *parents, key = change.path
+        at = _find(lines, change.path)
+        if at is not None:
+            indent, _, rest = _setting(lines[at])
+            comment = re.search(r"\s+#.*$", rest)
+            kept = f"  # {change.note}" if change.note else (comment[0] if comment else "")
+            lines[at : _end(lines, at)] = _lines(key, change.value, indent, kept)
+            continue
+        parent = _find(lines, parents)
+        if parent is None:
+            raise KeyError(f"No setting {'.'.join(parents)} to add {key} under")
+        sibling = _find(lines, (*parents, change.after)) if change.after else None
+        where = _end(lines, sibling if sibling is not None else parent)
+        note = f"  # {change.note}" if change.note else ""
+        lines[where:where] = _lines(key, change.value, len(parents) * 2, note)
+    result = "\n".join(lines) + "\n"
+    expected = yaml.safe_load(text)
+    for change in changes:
+        *parents, key = change.path
+        target = expected
+        for part in parents:
+            target = target[part]
+        target[key] = change.value
+    if yaml.safe_load(result) != expected:
+        raise ValueError(f"Changing {[c.path for c in changes]} would not keep the profile intact")
+    return result
 
 
 @dataclass(frozen=True, slots=True)
