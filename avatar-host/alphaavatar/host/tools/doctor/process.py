@@ -170,6 +170,9 @@ async def _supervise(
         reclaimed = _reclaim(process, noticed=exited.done(), asked=asked, problems=problems)
         await wait_for_cleanup(asyncio.ensure_future(reclaimed))
     path = os.path.join(args[4], _REPORT)
+    if process.exitcode is None:
+        # Killed and still not reaped: it has no exit to tell, and what it left is reclaiming's.
+        return None, f"the diagnostic process {process.pid} was killed and is not reaped"
     if process.exitcode != 0 or not os.path.exists(path):
         why = f"the diagnostic process exited with code {process.exitcode}"
         # Ended on its own, not killed: where an uncaught error ends, its output does.

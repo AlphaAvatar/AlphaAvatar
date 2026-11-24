@@ -390,7 +390,9 @@ runtime, then the temporary directory goes; `session.cleanup` fails if any of it
 process, or the diagnostic process itself had to be killed or left something behind. Asked to
 stop, the diagnostic process has 60 s to close; once its exit is noticed, it has a few seconds
 more to be reaped, as the kernel lets a process that has ended be reaped a moment after its
-pipes close. Each kill names the deadline it missed and how long was waited.
+pipes close. Each kill names the deadline it missed and how long was waited; a process still
+not reaped a few seconds after its kill is reported as such, and left, never waited on without
+end.
 
 ## Results
 

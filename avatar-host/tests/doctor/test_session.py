@@ -736,11 +736,20 @@ def test_a_diagnostic_process_that_does_not_stop_is_ended_with_its_group(
     assert code == 1
     cleanup = checks["session.cleanup"]
     assert cleanup["status"] == "FAIL"
-    # Killed at the deadline it missed, said as it was: asked to stop, it had 1 s to close.
-    assert (
-        "the diagnostic process had not exited 1.0 s after it was asked to stop, its 1 s to "
-        "close: killed"
-    ) in cleanup["details"]
+    # Killed at the deadline it missed, said as it was: asked to stop, it had 1 s to close,
+    # and the wait it names is at least that, a scheduler's lateness above it as measured.
+    killed = [
+        float(found.group(1))
+        for detail in cleanup["details"]
+        if (
+            found := re.fullmatch(
+                r"the diagnostic process had not exited (\d+\.\d) s after it was asked to "
+                r"stop, its 1 s to close: killed",
+                detail,
+            )
+        )
+    ]
+    assert len(killed) == 1 and 1.0 <= killed[0] < 10, cleanup["details"]
     # Killed: whatever it printed last is not why it ended.
     assert checks["session.start"]["details"] == ["the diagnostic process exited with code -9"]
     assert gone(int((chain.files / "pid").read_text()))

@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import multiprocessing.process
 import os
+import re
+import signal
 import time
 from pathlib import Path
 
@@ -41,6 +43,23 @@ def supervise(run: Path, *, limit: float = 30.0) -> tuple[object, list[str], flo
 
     found = asyncio.run(run_it())
     return found, problems, time.monotonic() - began
+
+
+KILLED = re.compile(
+    r"the diagnostic process had not exited (\d+\.\d) s after it was asked to stop, its 1 s to "
+    r"close: killed"
+)
+
+
+def killed_after(problems: list[str]) -> float:
+    """How long the one kill said it waited once the process was asked to stop: at least its
+    deadline, never before it; a scheduler's lateness above it, as measured."""
+    (problem,) = problems
+    found = KILLED.fullmatch(problem)
+    assert found, problem
+    waited = float(found.group(1))
+    assert 1.0 <= waited < 5.0, problem
+    return waited
 
 
 def gone(pid: int) -> bool:
@@ -109,10 +128,7 @@ def test_a_process_that_does_not_stop_is_killed_at_its_close_deadline_said_as_it
     found, problems, took = supervise(tmp_path, limit=0.5)
     assert 1.5 <= took < 10
     assert found == (None, "the diagnostic process exited with code -9")
-    assert problems == [
-        "the diagnostic process had not exited 1.0 s after it was asked to stop, its 1 s to "
-        "close: killed"
-    ]
+    assert killed_after(problems) <= took - 0.5  # Its budget, then its time to close.
     assert gone(int((tmp_path / "started").read_text()))
 
 
@@ -144,10 +160,7 @@ def test_a_cancelled_supervisor_still_closes_the_process_by_its_deadlines(
     if child == "stops":
         assert problems == [] and (tmp_path / "report.pickle").exists()
     else:
-        assert problems == [
-            "the diagnostic process had not exited 1.0 s after it was asked to stop, its 1 s "
-            "to close: killed"
-        ]
+        killed_after(problems)
 
 
 def test_what_the_process_leaves_running_in_its_group_is_killed_and_named(
@@ -163,3 +176,30 @@ def test_what_the_process_leaves_running_in_its_group_is_killed_and_named(
             break
         time.sleep(0.05)
     assert gone(left)
+
+
+def test_a_process_still_unreaped_after_its_kill_is_told_so_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Killed, and not reaped within ``KILLED_SECONDS``, as when the kill has not taken yet:
+    the supervisor returns that it is not reaped, beside what reclaiming found, rather than
+    failing on an exit code there is none of. The test ends the process itself."""
+    monkeypatch.setattr(doctor_process, "CLOSE_SECONDS", 1.0)
+    monkeypatch.setattr(doctor_process, "KILLED_SECONDS", 0.3)
+    monkeypatch.setattr(doctor_process, "_kill", lambda group, owner: None)  # Not taken yet.
+    monkeypatch.setattr(doctor_process, "_main", doubles.deaf)
+    try:
+        found, problems, _ = supervise(tmp_path, limit=0.5)
+        pid = int((tmp_path / "started").read_text())
+        assert found == (None, f"the diagnostic process {pid} was killed and is not reaped")
+        assert len(problems) == 2
+        killed_after(problems[:1])
+        assert problems[1] == (
+            f"the diagnostic process {pid} was not reaped 0.3 s after it was killed: left"
+        )
+        assert not gone(pid)
+    finally:
+        os.killpg(int((tmp_path / "started").read_text()), signal.SIGKILL)
+        for child in multiprocessing.active_children():  # Reaped here, by the test.
+            child.join(timeout=10)
+    assert gone(pid)

@@ -22,7 +22,7 @@
 | 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
 | 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 已提交（`01200003`），通过审查 |
 | 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 已提交（`e300619e`）；第一轮审查的四处修复已提交（`a9b2081a`，§7）；第二轮修复已提交（`37bd78b5`，§8）；第三轮复核的 KD-61 确定请求之后的窗口已修复，候选包已重建并复验，待审查（§9） |
-| 展示 | Setup 的 Tools 提示和分组的 04 Install 摘要，config check 的分组颜色和续行 | 已提交（`e33257dc`，§10）；KD-62 已提交（`937896fa`，§11）；O-36 与摘要开关解析已修复，待审查（§12） |
+| 展示 | Setup 的 Tools 提示和分组的 04 Install 摘要，config check 的分组颜色和续行 | 已提交（`e33257dc`，§10）；KD-62 已提交（`937896fa`，§11）；O-36 与开关解析已提交（`8ddcfecf`，§12）；收尾三项已完成，待审查（§13） |
 
 ## 1. 批次 0：demo.yaml
 
@@ -1419,3 +1419,84 @@ alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-937896fa9ca1-dirty.202
 - 本轮改动尚未提交；提交推送后核对对应 SHA 的 Quality 和 Linux package。
 - O-34：离线全量在 CI 上接近或超过 10 分钟的期限，本轮又新增约 30 个用例（本地 396 s）。`937896fa` 已再次超时。是否调高期限，仍由用户决定。
 - 没有付费调用、真实通话或长时间压力测试。其他延期项不变，包括 O-35 和两条窄终端长行。
+
+## 13. 收尾：杀后仍未回收的诊断、CI 期限、耗时断言（基线 `8ddcfecf`）
+
+复核认可回收竞态与开关解析的修复（§12），本轮只做三项收尾。摘要开关、已认可的 CLI 布局和其他延期项不变。
+
+### 13.1 基线与 CI
+
+`8ddcfecf`：Linux package（45394080511）为 success；Quality（45394080705）在 "Run deterministic offline tests" 这一步超过 10 分钟，失败原因是 O-34，本轮已把期限调高。
+
+### 13.2 杀后仍未回收（`doctor/process.py`）
+
+- 问题：被杀后超过 `KILLED_SECONDS` 仍未回收时，`_reclaim()` 记下 left 后返回，`process.exitcode` 仍为 None。`_supervise()` 随后的 `process.exitcode > 0` 抛出 TypeError，盖掉了"未回收"的诊断。复核已用真实 spawn 子进程复现。
+- 修复：在判断退出码之前先处理 `exitcode is None`，返回 "the diagnostic process <pid> was killed and is not reaped"，`problems` 中已收集的清理问题照样保留，`session.cleanup` 仍会据此判为 FAIL。
+  - 不写成普通的非零退出；
+  - 没有延长或去掉任何等待；
+  - 取消保护、进程组清理、正常退出的行为都不变。
+- 回归 `test_a_process_still_unreaped_after_its_kill_is_told_so_not_raised`，走完整的 `_supervise()` 路径：
+  - 子进程不响应停止请求；`_kill` 换成什么都不做，模拟杀的请求还没生效，于是在 `KILLED_SECONDS`（0.3 s）内仍未回收；
+  - 核对返回的是失败诊断而不是异常，并保留超时被杀与 left 两条问题；
+  - 测试最后自己杀掉并回收这个进程。
+
+  在 `8ddcfecf` 的 `process.py` 上，这个用例因 TypeError（`'>' not supported between instances of 'NoneType' and 'int'`）失败，修复后通过。
+- 变异：去掉这个分支，被这个用例发现。
+
+### 13.3 O-34：离线测试步骤改为 20 分钟（`.github/workflows/quality.yml`）
+
+- 按用户决定，"Run deterministic offline tests" 的 `timeout-minutes` 从 10 改为 20；install 作业的总上限仍为 45 分钟。
+- 这一步的内容不变：测试失败即退出、`--durations=10`，以及运行前后的 `git status --porcelain --ignored` 比对。各功能自身的超时设置不变。
+- 之后不再靠重跑解决这一步的期限问题。
+
+### 13.4 耗时断言
+
+- 问题：`tests/doctor/test_process.py` 的两个超时用例，把说明里的实际等待时间断言为 `1.0 s`。生产代码记录的是实际经过的时间，CI 调度稍晚时，正确的 `1.1 s` 也会失败。`test_session.py` 的完整链路超时用例也是同样的写法，一并修改。
+- 修改：按格式解析说明，核对阶段（被要求停止之后）、期限（`its 1 s to close`）和实际等待的数值：
+  - 数值至少等于期限，即没有提前杀；
+  - 允许合理的调度延迟（`test_process.py` 为 5 s 以内，完整链路为 10 s 以内）；
+  - `test_process.py` 还核对这个数值不超过监督函数实际经过的时间减去预算。
+- 变异：把关闭期限减半（提前杀）后，三个用例都失败。
+
+### 13.5 验证
+
+- Doctor 测试 74 passed；离线全量 1218 passed，241 warnings，399 s，运行前后未跟踪和被忽略的文件一致；仓库规范检查都通过，pre-commit 没有改动文件。
+- `docs/cli/doctor.md` 写明：杀后仍未回收时，报告为未回收并放弃等待，不会无限等待。
+- `docs/bugs-zh.md`：O-36 补上这次的修复；O-34 移入已修复，写明用户的决定。
+
+### 13.6 修复后的候选包与验收
+
+| 项 | 内容 |
+|---|---|
+| 源码 | HEAD `8ddcfecf170eb6320443d510183cf95ad575ee14` 加本轮改动：6 个跟踪文件，`git diff` 的 sha256 前缀 `58d5789b83f37d02`。构建前后核对过，diff 与构建时一致 |
+| 构建 | `packaging/linux/build.sh --allow-dirty --max-glibc 2.32`；uv 0.10.0、Python 3.13.12；构建机 Alibaba Cloud Linux 3（glibc 2.32） |
+| Build ID | `0.6.8-8ddcfecf170e-dirty.20261124124935`；manifest 中 `release` 为 null |
+| 内容核对 | 包内 Host 的 `doctor/process.py`、`setup/choices.py`、`cli/commands/setup.py` 与工作区逐字节相同 |
+| 位置 | `~/alphaavatar-candidates/0.6.8-8ddcfecf170e-dirty.20261124124935/`；§12.5 的候选包不包含本轮修复 |
+| SHA-256 | 包 `5f6f5352942cfbbd04259e5ea2192945d6861cb9a42392fba6accd43cf66fdcd`；manifest `e25d7796…55b1`；install.sh `02ff07ac…98`；SHA256SUMS `894b7495…c248` |
+
+干净环境（与 §6.6 相同，每个场景用新的 rootfs 副本）：
+
+- 包内的修复：
+  - 未回收：用已安装包自己的 `_supervise()`，杀的请求未生效，在 `KILLED_SECONDS` 内仍未回收。返回 `(None, "the diagnostic process 21 was killed and is not reaped")`，并保留超时被杀与 left 两条问题，没有 TypeError；进程由脚本最后自己清理；
+  - 回收竞态：同 §12.2 的条件跑 300 次，0 次误杀；
+  - 开关插值：`true` 显示开启，`false` 显示 Off。
+- 安装器接续真实 Setup：105 个包 / 514 MB，`PASS · 8 runners`。四个代表性分支、7 个 Bundle 的 YAML 检查、基础包预检、已有配置保护都通过。
+- 从 CI 为 `8ddcfecf` 构建的包（`0.6.8-8ddcfecf170e`，Linux package 运行 45394080511，artifact 14920715879，`SHA256SUMS` 全部 OK）升级：
+  - SHA-256 错误、首次安装前的准备失败：都拒绝，状态不变；
+  - 升级：77 个包 / 188 MB，`PASS · 2 runners`；
+  - `cleanup` 释放 795 MB，应用数据不变。
+
+```bash
+cd ~/alphaavatar-candidates/0.6.8-8ddcfecf170e-dirty.20261124124935
+sha256sum -c SHA256SUMS
+bash install.sh --file ./alphaavatar-0.6.8-8ddcfecf170e-dirty.20261124124935-linux-x86_64.tar.gz
+alphaavatar setup --artifacts ~/alphaavatar-candidates/0.6.8-8ddcfecf170e-dirty.20261124124935
+# 已有安装时（先停止 alphaavatar start）：
+alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-8ddcfecf170e-dirty.20261124124935/alphaavatar-0.6.8-8ddcfecf170e-dirty.20261124124935-linux-x86_64.tar.gz
+```
+
+### 13.7 未验证与剩余
+
+- 本轮改动尚未提交；提交推送后核对对应 SHA 的 Quality（这一步期限已改为 20 分钟）和 Linux package。
+- 没有付费调用、真实通话或长时间压力测试；其他延期项不变。
