@@ -338,7 +338,7 @@
 | 2026-10 | **Processor-owned Memory Runtime**          | Independently manages Conversation, Tool, Environment and Retrieval capabilities while consuming authoritative committed turns and canonical model/tool records. |
 | 2026-10 | **Unified Memory Storage and Exports**      | Separates the global primary Memory records from owner/episode/context Markdown projections, derived indexes and graph namespaces under one workspace layout. |
 | 2026-11 | **Owner-based Retrieval and Batch Ownership** | Retrieval reads memories by type and owners; mixed batches keep their verified owners; a failed ENV batch retries only its own range; passive retrieval is time-bounded. |
-| 2026-11 | **Embedding-space Records** | Each text-vector store records the embedding model that made it; another model is refused before anything changes, Setup included. |
+| 2026-11 | **Embedding-space Records** | Each text-vector store records the embedding model that made it; another model is refused when the Host opens the store, before anything changes. Setup checks ahead only existing local LanceDB records; Qdrant and the actual vector size are checked as the store opens. |
 
 ### 🧭 TODO
 

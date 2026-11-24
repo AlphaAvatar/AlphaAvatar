@@ -194,11 +194,20 @@ Pushing a production `vX.Y.Z` tag runs this pipeline:
 push v* tag
     ↓
 Quality checks (lint, build, install)
-    ↓
-Generate Release Notes
-    ↓
-Create GitHub Release
+    ↓                                    ↓
+Linux package                            Generate Release Notes
+  built in manylinux_2_28 for the tag,     docs/releases/vX.Y.Z.md
+  installed and set up on a clean          + GitHub's PR changelog
+  Ubuntu 24.04
+    ↓                                    ↓
+Create GitHub Release (after both)
+  a draft with the notes → attach the package files → download them from the
+  draft and check names, sizes and SHA-256s → publish
 ```
+
+The Linux package job builds only when the tag names the Host version (`v` +
+`avatar-host`'s `__version__`) and points at the commit being built. A published
+Release keeps its files: a re-run changes nothing once it is public.
 
 `.github/workflows/release.yml` does not upload anything to PyPI or TestPyPI.
 A passing source build does not prove that a particular distribution is available
@@ -221,7 +230,8 @@ make release VERSION=0.6.9 TYPE=prod
 ```
 
 The final `make release` pushes the `v0.6.9` tag; GitHub Actions runs the
-quality, notes, and Release creation stages. Alternatively, push an existing
+quality, Linux package, notes, and Release stages shown above.
+`make release` neither changes versions nor builds anything itself. Alternatively, push an existing
 local `vX.Y.Z` tag after checking that it points to the intended source commit.
 The workflow combines `docs/releases/vX.Y.Z.md` (if present) with GitHub's
 configured PR changelog (`.github/release.yml`). Re-running the release job
@@ -266,9 +276,11 @@ committed `uv.lock`, as described in the main README.
 
 ### 3. Verify the result
 
-Verify that GitHub Actions completed the three release stages and that
+Verify that GitHub Actions completed the four release stages and that
 `https://github.com/AlphaAvatar/AlphaAvatar/releases/tag/vX.Y.Z` contains
-the expected manual and generated notes. Verify PyPI separately, **only**
+the expected manual and generated notes and the Linux package files
+(`install.sh`, the package and its `.sha256`, the manifest, the wheels and
+`SHA256SUMS`). Verify PyPI separately, **only**
 for a package that was deliberately published.
 
 Changing `.github/workflows/release.yml` on `main` does not retroactively fix

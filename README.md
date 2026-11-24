@@ -283,17 +283,17 @@ Linux x86_64 with glibc 2.28 or newer, the latest release:
 
 ```bash
 curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash
-alphaavatar setup    # choose what the Avatar runs with; or config init <bundle> --avatar-id <id>, then setup <bundle>
+```
+
+The installer asks whether to run `alphaavatar setup` right away. Then, as its `Next` says, or in a new terminal:
+
+```bash
+alphaavatar setup    # only if setup was skipped or did not finish; or config init <bundle> --avatar-id <id>, then setup <bundle>
 alphaavatar doctor   # static checks, then the runtime diagnosis in rounds, once you agree to it
 alphaavatar start    # runs the bundle setup enabled
 ```
 
-The installer needs Bash, and the latest release to publish its Linux files, as releases do from
-v0.6.9 on. A given version, a downloaded package or a mirror: see
-[DEPLOY.md](docs/DEPLOY.md#or-install-the-linux-package-then-choose-capabilities).
-
-From source, for development, the default branch: it holds changes not yet released, while the
-package above is the latest release. To check out a release's source, see [DEPLOY.md](docs/DEPLOY.md).
+For development, from source (the default branch, with changes not yet released):
 
 ```bash
 git clone --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
@@ -304,7 +304,7 @@ ENV_FILE=.env.dev alphaavatar doctor
 ENV_FILE=.env.dev alphaavatar dev
 ```
 
-See [DEPLOY.md](docs/DEPLOY.md#or-install-the-linux-package-then-choose-capabilities) for unattended installs, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
+See [DEPLOY.md](docs/DEPLOY.md) for other versions and mirrors, a release's source, unattended installs, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
 
 <h3>💻 Laptop</h3>
 

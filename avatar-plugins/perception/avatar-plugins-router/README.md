@@ -94,7 +94,7 @@ router.init_config.addressing.visual    -> VisualAddressingConfig
 router.init_config.turn_taking          -> TurnTakingConfig
 ```
 
-Addressing owns observation/model settings. Turn Taking owns evidence fusion, coordination, interruption and deadlines. `addressing_wait_sec`, `transcript_wait_sec`, `transcript_timeout_sec`, `unsegmented_alignment_sec`, `speech_completion_wait_sec`, `commit_timeout_sec`, `max_pending_inputs`, `max_window_segments` and `fusion` belong directly to turn_taking, not its policy subtree. `transcript_wait_sec` only reports a pending transcript; `transcript_timeout_sec` is the hard deadline that retires it.
+Addressing owns observation/model settings. Turn Taking owns evidence fusion, coordination, interruption and deadlines. `addressing_wait_sec`, `transcript_wait_sec`, `transcript_timeout_sec`, `unsegmented_alignment_sec`, `speech_completion_wait_sec`, `commit_timeout_sec`, `max_pending_inputs`, `max_window_segments` and `fusion` belong directly to turn_taking, not its policy subtree. `transcript_wait_sec` only reports a pending transcript; `transcript_timeout_sec` is the hard deadline that retires it. The schema's `transcript_wait_sec` is 0.75 s; `demo.yaml` and the profiles `config init` and Setup write set it to 3.0 s, equal to the deadline, so no pending transcript is reported before the deadline.
 
 `interruption.enabled` controls supported Turn interruption; `interruption.audio_only_speech_start` additionally selects immediate audio-only speech-start interruption. There is no parallel `voice.allow_interruptions` switch.
 

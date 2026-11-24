@@ -175,7 +175,7 @@ flowchart LR
 ### 6.1 提出决定、封闭输入与实际提交
 
 - HOLD 保留当前输入，后续语音继续参与轮次判断。轮次判断已确定但 STT 未齐时，可固定该次输入成员并保存原决定，继续接收新的输入。
-- 转录结果按完整 segment 引用返回原输入；不因后来人物识别或来源相同而改归另一个窗口。`transcript_wait_sec` 默认 0.75 秒，是等待观察点；`transcript_timeout_sec` 默认 3 秒，规定该次等待的绝对硬期限，已有期限不能由重评延长。
+- 转录结果按完整 segment 引用返回原输入；不因后来人物识别或来源相同而改归另一个窗口。`transcript_wait_sec` 默认 0.75 秒，是等待观察点；`transcript_timeout_sec` 默认 3 秒，规定该次等待的绝对硬期限，已有期限不能由重评延长。`demo.yaml` 以及 `config init`、Setup 写出的 profile 把观察点设为 3 秒，与硬期限重合，因此期限之前不会报告 pending。
 - `COMMIT` 标注只是提出接纳请求。真正提交后，`TurnRuntime` 发布 `TurnSnapshot` 到已有 Turn 事件流；[TurnTakingProcessor._consume_turns()](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/processor.py) 消费它作为成功确认。
 - 成功确认更新 cutoff、回收对应 `input_id`，并刷新受影响的轮次判断模型上下文。其他尚未提交的输入保留；不能按当前时间或一个消费游标一并清空。
 - `admission_deadline_ns` 是接纳期限，不是新 ID。未获确认的已发布记录有界回收；Engine 也核验决定携带的接纳期限，避免超时后重新生效。

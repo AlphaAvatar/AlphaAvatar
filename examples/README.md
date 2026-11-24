@@ -35,7 +35,7 @@ Keep two-space indentation, section separators and purposeful blank lines. Prese
 
 Temporal alignment is `runtime.perception.temporal_alignment`, not a sibling of perception. Conversation pipeline configuration contains extraction and consolidation only. `item_ops`, `candidate_source`, `similarity_threshold`, `max_candidates_per_item` and `timeout` now belong inside `pipeline.consolidation`; a `pipeline.maintenance` mapping is rejected.
 
-The multimodal reference retains `candidate_source: union`. Demo and voice-minimal preserve their explicit `consolidated_lookup` setting; the Hiyori examples retain the processor defaults. This formatting migration does not force one candidate policy on every scenario.
+The multimodal reference and Demo set `candidate_source: union`; voice-minimal sets `consolidated_lookup` explicitly; the Hiyori examples retain the processor default, `consolidated_lookup`. This formatting migration does not force one candidate policy on every scenario.
 
 ## Runner parallelism
 
