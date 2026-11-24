@@ -22,7 +22,7 @@
 | 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
 | 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 已提交（`01200003`），通过审查 |
 | 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 已提交（`e300619e`）；第一轮审查的四处修复已提交（`a9b2081a`，§7）；第二轮修复已提交（`37bd78b5`，§8）；第三轮复核的 KD-61 确定请求之后的窗口已修复，候选包已重建并复验，待审查（§9） |
-| 展示 | Setup 的 Tools 提示和分组的 04 Install 摘要，config check 的分组颜色和续行 | 完成，待审查（§10） |
+| 展示 | Setup 的 Tools 提示和分组的 04 Install 摘要，config check 的分组颜色和续行 | 已提交（`e33257dc`，§10）；复核的 P2（已有 Bundle 的模型摘要）已修复，待审查（§11） |
 
 ## 1. 批次 0：demo.yaml
 
@@ -1255,3 +1255,54 @@ alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-37bd78b55e7b-dirty.202
 - 没有调用付费模型，没有通话和压力测试（用户说明本轮不需要）。录制时的安装和校验是真实执行，没有调用远程模型服务。
 - 已有但不在本轮范围的展示问题，没有修改：窄终端（60、40 列）下，列表选择后回显所选答案的那一行（例如 `Provider for speech recognition: OpenAI, segment by segment (openai_segment)`），以及凭据步骤的 `Not stored: …` 说明，都会超出宽度，由终端折行。
 - 本轮改动尚未提交，没有对应的 CI。
+
+## 11. 展示优化的复核修复：已有 Bundle 的模型摘要跟随实际配置（基线 `e33257dc`）
+
+复核认为颜色、分组、换行和 JSON 符合要求，只剩一处 P2：已有 Bundle 的模型摘要没有完全跟随实际配置（KD-62）。两条窄终端长行仍留待后续，本轮不改。
+
+### 11.1 基线与 CI
+
+- `e33257dc`：Linux package（45369883730）为 success；Quality（45369883587）失败，失败在 "Run deterministic offline tests" 这一步，原因与本轮无关，见 O-36：
+  - `doctor/test_session.py` 的两个用例因 `session.cleanup` 失败，报告写着 "did not exit within 60 s: killed"，但第二个用例整体只用了 14.6 s；
+  - 推测是 `_reclaim()` 的 `is_alive()` 判断与进程退出之间存在竞争。没有修改，留给用户决定。本地离线全量两次都通过；
+  - 在此之前 Quality 失败的两次（`1cb5c828`、`5bc91176`）都是这一步超过 10 分钟（O-34），与此不同。
+
+### 11.2 三个表现与修复（`tools/setup/choices.py`）
+
+- 复现，都在 `e33257dc` 上：
+  - 自定义任务与默认任务并存时，摘要显示默认任务的模型；只留自定义任务时，那一行消失；
+  - 关闭的处理器仍显示为在用；
+  - Persona 用 Google embedding 时，只显示 Memory 的 OpenAI。
+- 修复，只涉及摘要的读取与展示：
+  - `PROCESSORS` 表记下默认 memory、persona 插件各处理器的默认契约：开关未设置时的默认值、选任务的设置（`task` 或 `profile_delta_task`）、未设置时的默认任务（ENV memory 没有默认，必须设置）。`bundle_shown()` 按 start 的选择读取：先读设置里写明的任务和开关，没写的用这张表。仍然不导入插件，基础包上也能显示。测试逐项与插件自己的 schema 比对，表不会与插件悄悄不一致；
+  - 关闭的处理器显示 `Off  configured: <provider> <model>`。YAML 不改；
+  - Memory、Persona、MCP 的 embedding 分别读取（MCP 要启用）。全部相同时显示一行，即原来认可的布局；不同时每行写明使用方，例如 `· memory, MCP`；
+  - 设置里看不出的写成 `Not told: …`，不用其他默认模型代替：插件不是 default（`as memory 'x' chooses it`）、所选任务不在 gateway 中、没有设置任务；
+  - `Part` 增加 `on` 和 `unknown`，`Shown` 增加 `embeddings`。新 Bundle 的 `shown()` 仍是一个 embedding 供 memory 和 persona 使用；
+  - 配置生成（`_changes`）、依赖规划（`bundle_requirements`）、运行时都不变。
+
+### 11.3 测试
+
+- 新增 CLI 回归（`test_setup.py`，都是"已有 Bundle 在终端上运行 Setup"）：
+  - 自定义任务与默认任务并存、默认任务已删除两种情形，Memory 和 Persona 都显示所选任务的模型；
+  - Conversation、Tool memory、Profiler 分别关闭：显示 `Off` 和保留的模型，其余照常，YAML 中的开关不变；
+  - embedding 不同（Persona 用 Google，MCP 启用）时分行，相同时为一行。
+- `test_choices.py`：
+  - `PROCESSORS` 与 memory、persona 插件 schema 的默认值逐项一致；
+  - 所选任务不在 gateway、没有设置任务、插件不是 default 三种情形都写成看不出，不用默认模型代替。
+- 在 `e33257dc` 的 `choices.py`、`setup.py` 上（从仓库外替换导入）：6 个新用例失败。embedding 相同的情形，以及原有的默认 Bundle、新 Bundle、拒绝计划、语音关闭等摘要用例都通过。修复后 11 个全部通过。
+- 变异 6 个，全部被发现：
+  - 总是读默认任务；
+  - 忽略开关；
+  - 只读 Memory 的 embedding；
+  - 只显示第一个 embedding；
+  - 看不出时改用默认任务的模型；
+  - 表里 Persona 选任务的设置写错。
+- 相关测试（CLI、setup、configs，包括配置生成和文件保护）489 passed；离线全量 1187 passed，241 warnings，387 s，运行前后未跟踪和被忽略的文件一致；仓库规范检查都通过。
+- PTY（假包）：一个已有 Bundle，Memory 用自定义 Anthropic 任务、Tool memory 关闭、Persona 用自定义 OpenRouter 任务（默认任务已删除）并用 Google embedding、MCP 启用。摘要正确，`NO_COLOR` 下文字完全相同、没有转义字符。
+- 文档：`docs/cli/setup.md` 中已有 Bundle 摘要的说明；`docs/bugs-zh.md` 的 KD-62（已修复）、O-36（待决定）。
+
+### 11.4 未验证与剩余
+
+- 本轮改动尚未提交，没有对应的 CI；`e33257dc` 的 Quality 失败见 O-36。
+- 没有付费调用、通话或压力测试。

@@ -882,6 +882,115 @@ def test_an_existing_bundle_s_summary_shows_its_own_settings_before_it_installs(
     assert "hidden" not in out and "None enabled" not in summary
 
 
+def _summary_of(package, capsys, name: str, *edits: tuple[str, tuple[str, ...], object]) -> str:
+    """The install summary of the bundle ``name``, config init's with ``edits`` (a section,
+    the keys to a setting, its value) made as a person makes them, set up on a terminal."""
+    assert main(["config", "init", name, "--avatar-id", name]) == 0
+    capsys.readouterr()
+    for section, keys, value in edits:
+        edit(profile(name, section), *keys, value=value)
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", enabled),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        Person(("Install and enable?", "y")).answering(),
+    ):
+        assert main(["setup", name]) == 0
+    out = capsys.readouterr().out
+    return out[out.index("04  Install") : out.index("Install and enable?")]
+
+
+ANTHROPIC = {"provider": "anthropic", "model": "claude-sonnet-4-5"}
+CONVERSATION = ("init_config", "conversation", "provider")
+PROFILER = ("init_config", "profiler", "provider")
+
+
+@pytest.mark.parametrize("default", ["kept", "deleted"])
+def test_an_existing_bundle_s_summary_shows_the_task_each_processor_selects(
+    default: str, package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """Memory's conversation and persona's profiler naming tasks of their own, beside the
+    default ones or in their place: the summary shows the models those tasks name, as start
+    runs them, never the default tasks'."""
+    tasks = {"my.memory": ANTHROPIC}
+    profiles = {"my.profile": {"provider": "google", "model": "gemini-2.5-flash"}}
+    if default == "kept":
+        tasks |= {"memory.conversation_delta": {"provider": "openai", "model": "gpt-4o"}}
+        profiles |= {"persona.profile_delta": {"provider": "openai", "model": "gpt-4o"}}
+    summary = _summary_of(
+        package,
+        capsys,
+        "tasked",
+        ("memory", (*CONVERSATION, "task"), "my.memory"),
+        ("memory", (*CONVERSATION, "gateway", "tasks"), tasks),
+        ("persona", (*PROFILER, "profile_delta_task"), "my.profile"),
+        ("persona", (*PROFILER, "gateway", "tasks"), profiles),
+    )
+    assert "      Memory          Anthropic    claude-sonnet-4-5\n" in summary
+    assert "      Persona         Google       gemini-2.5-flash\n" in summary
+    assert "      Tool memory     OpenAI       gpt-4o\n" in summary  # As its own task names.
+
+
+@pytest.mark.parametrize(
+    ("section", "processor", "label"),
+    [
+        ("memory", "conversation", "Memory"),
+        ("memory", "tool", "Tool memory"),
+        ("persona", "profiler", "Persona"),
+    ],
+)
+def test_an_existing_bundle_s_summary_shows_a_processor_switched_off_as_off(
+    section: str,
+    processor: str,
+    label: str,
+    package: environment.Installation,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A processor switched off runs no model: shown off, with the model its settings keep
+    for it; its settings as they were."""
+    summary = _summary_of(
+        package, capsys, "quiet", (section, ("init_config", processor, "enabled"), False)
+    )
+    assert f"      {label.ljust(16)}Off          configured: OpenAI gpt-4o\n" in summary
+    others = {"Memory", "Tool memory", "Persona"} - {label}
+    for other in others:
+        assert f"      {other.ljust(16)}OpenAI       gpt-4o\n" in summary, other
+    path = profile("quiet", section)
+    assert yaml.safe_load(path.read_text())["init_config"][processor]["enabled"] is False
+
+
+@pytest.mark.parametrize("same", [False, True], ids=["apart", "together"])
+def test_an_existing_bundle_s_summary_shows_each_store_s_embedding(
+    same: bool, package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """Memory, persona and MCP each with the embedding its settings name: one row where they
+    are one, else a line each, with the stores that use it."""
+    google = {"provider": "google", "model": "text-embedding-004"}
+    edits = [
+        ("tools", ("mcp", "enabled"), True),
+        ("tools", ("mcp", "servers"), {"docs": {"url": "https://mcp.invalid/"}}),
+    ]
+    if not same:
+        edits.append(("persona", ("vdb_config", "embedding"), google))
+    path = package.base / "share/alphaavatar/catalog.json"
+    catalog = json.loads(path.read_text())
+    need = "alpha-avatar-plugins-mcp"
+    catalog["requirements"][need] = [need]
+    artifact = {"version": "1", "file": f"{need}.whl", "sha256": "0" * 64, "size": 1}
+    catalog["distributions"][need] = artifact | {"url": None}
+    catalog["plugins"]["tools.mcp"] = {"default": need}
+    path.write_text(json.dumps(catalog))
+    summary = _summary_of(package, capsys, "stores", *edits)
+    if same:
+        assert "      Embedding       OpenAI       text-embedding-3-small\n" in summary
+    else:
+        assert (
+            "      Embedding       OpenAI       text-embedding-3-small · memory, MCP\n"
+            "                      Google       text-embedding-004 · persona\n"
+        ) in summary
+
+
 def test_voice_off_asks_nothing_of_speech_and_vectors_in_qdrant_read_its_url(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:

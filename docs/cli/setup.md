@@ -54,8 +54,13 @@ keeps each of its answers. In a terminal, it asks step by step:
 4. **Install**: what the bundle runs with and the plan, in groups (the bundle, its
    capabilities, each part's model, speech, where vectors are kept and the tools, then the
    installation), then whether to install and enable it. An existing bundle's come from its
-   settings: its tools on, its stores where they are, a server of its own by its address alone,
-   without credential, query or fragment.
+   settings as written: each processor's model as the task it selects names it (`provider.task`,
+   persona's `profile_delta_task`), one switched off shown `Off` with the model its settings
+   keep, each store's embedding (one row where memory, persona and MCP share it, else a line
+   each with its stores), its tools on, its stores where they are, a server of its own by its
+   address alone, without credential, query or fragment. What the settings leave to a plugin
+   other than the default, or a task its gateway lacks, is shown as not told, never as another
+   model.
 
 On a terminal, a provider is chosen from a list: the arrow keys move, typing narrows it to the
 options holding what is typed, Escape clears that, Enter takes the marked one. With `TERM=dumb`

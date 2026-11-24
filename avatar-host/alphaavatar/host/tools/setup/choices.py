@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
 from alphaavatar.agents.runtime.plugin import plugin_requirement
@@ -557,14 +557,41 @@ def public_address(url: str) -> str:
     return f"{parts.scheme}://{f'[{host}]' if ':' in host else host}{port}{parts.path}"
 
 
+class _Processor(NamedTuple):
+    """How a default plugin's processor chooses its model, as its settings' schema has it: its
+    section and name, its switch where unset, the setting naming its gateway task, and the
+    task where that is unset (None: there is none, so it must be set)."""
+
+    section: str
+    name: str
+    enabled: bool
+    setting: str
+    task: str | None
+
+
+# The processors of the default memory and persona plugins that run a model of their own, by
+# part. Another implementation chooses as it does, which its settings do not tell.
+PROCESSORS = {
+    "conversation": _Processor("memory", "conversation", True, "task", "memory.conversation_delta"),
+    "tool": _Processor("memory", "tool", True, "task", "memory.tool_delta"),
+    "environment": _Processor("memory", "environment", False, "task", None),
+    "profiler": _Processor(
+        "persona", "profiler", True, "profile_delta_task", "persona.profile_delta"
+    ),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class Part:
     """A part as setup shows it: who runs it (its provider, or for speech its
-    implementation), its model, and where a server of one's own is, as ``public_address``."""
+    implementation), its model and where a server of one's own is (``public_address``);
+    whether it runs, and why its model is not told where its settings do not tell it."""
 
-    provider: str
-    model: str
+    provider: str | None
+    model: str | None
     server: str | None = None
+    on: bool = True
+    unknown: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -576,7 +603,8 @@ class Shown:
     vision: bool
     local_models: bool
     env_memory: bool
-    models: dict[str, Part]  # Each part running a model, by its name in ``MODEL_SETTINGS``.
+    models: dict[str, Part]  # Each part with a model of its own, by its name in ``LABELS``.
+    embeddings: tuple[tuple[Part, tuple[str, ...]], ...]  # Each embedding, and its stores.
     transcription: Part | None  # None: no speech in.
     synthesis: Part | None
     speaker: str | None  # The voice; None, the model's own.
@@ -588,19 +616,22 @@ class Shown:
 
 
 def shown(selection: Selection) -> Shown:
-    """A new bundle's selection as shown: its stores where it keeps vectors, no tool on."""
+    """A new bundle's selection as shown: one embedding for its stores, no tool on."""
 
     def part(chosen: Model | Transcription | Synthesis, provider: str) -> Part:
         return Part(provider, chosen.model, chosen.server and public_address(chosen.server))
 
     speech = selection.speech()
     store = (selection.vector_store, None)
+    models = selection.models()
+    embedding = models.pop("embedding")
     return Shown(
         voice=selection.voice,
         vision=selection.vision,
         local_models=selection.local_models,
         env_memory=selection.env_memory,
-        models={name: part(m, m.provider) for name, m in selection.models().items()},
+        models={name: part(m, m.provider) for name, m in models.items()},
+        embeddings=((part(embedding, embedding.provider), ("memory", "persona")),),
         transcription=speech and part(speech[0], speech[0].plugin),
         synthesis=speech and part(speech[1], speech[1].plugin),
         speaker=selection.synthesis.speaker,
@@ -612,30 +643,66 @@ def shown(selection: Selection) -> Shown:
 
 
 def bundle_shown(avatar: Any, needs: Mapping[str, str]) -> Shown:
-    """An existing bundle as shown, from its settings and what its plan installs (``needs``,
-    from ``bundle_requirements``): each part as set, each store where it is, each tool on."""
+    """An existing bundle as shown, from its settings as written and what its plan installs
+    (``needs``, from ``bundle_requirements``): each processor's model as the task it selects
+    names it, off where switched off; each store's embedding and where it is; each tool on.
+    Nothing is imported from the plugins: what a default leaves to them is their schema's
+    (``PROCESSORS``), and what another implementation chooses is said not to be told."""
     from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
     from alphaavatar.agents.utils.vdb.config import vdb_backend
 
     settings = avatar.model_dump()
     local = ("router", "semantic"), ("router", "turn-taking"), ("persona", "speaker")
     local += (("persona", "face"),)
-    environment = _at(settings, "memory", "init_config", "environment")
-    # ENV memory runs only where its settings switch it on.
-    env = isinstance(environment, dict) and environment.get("enabled") is True
+    mcp = settings["tools"]["mcp"]
 
-    def part(found: Any, provider: str | None = None) -> Part | None:
+    def part(found: Any, provider: str | None = None, *, on: bool = True) -> Part | None:
         if not isinstance(found, Mapping) or not found.get("model"):
             return None
         server = found.get("base_url") or _at(found, "extra", "base_url")
         name = provider or str(found.get("provider") or "openai")
-        return Part(name, str(found["model"]), server and public_address(str(server)))
+        return Part(name, str(found["model"]), server and public_address(str(server)), on=on)
+
+    def processor(chooses: _Processor) -> Part | None:
+        # As start chooses it: the task its provider names, else its schema's default.
+        plugin = _at(settings, chooses.section, "plugin")
+        if plugin is None:
+            return None  # No part of the section runs.
+        if plugin != "default":
+            return Part(None, None, unknown=f"as {chooses.section} {plugin!r} chooses it")
+        found = _at(settings, chooses.section, "init_config", chooses.name)
+        found = found if isinstance(found, Mapping) else {}
+        on = found.get("enabled", chooses.enabled) is True
+        provider = found.get("provider") if isinstance(found.get("provider"), Mapping) else {}
+        task = provider[chooses.setting] if chooses.setting in provider else chooses.task
+        if task and (model := part(_at(provider, "gateway", "tasks", task), on=on)) is not None:
+            return model
+        if not on:
+            return Part(None, None, on=False)
+        why = f"its task {task!r} is not in its gateway" if task else "no task set"
+        return Part(None, None, unknown=why)
 
     models = {}
-    for name, (section, path) in MODEL_SETTINGS.items():
-        runs = _at(settings, section, "plugin") is not None and (name != "environment" or env)
-        if runs and (found := part(_at(settings, section, *path))) is not None:
+    if _at(settings, "loop", "plugin") is not None:
+        section, path = MODEL_SETTINGS["loop"]
+        if (loop := part(_at(settings, section, *path))) is not None:
+            models["loop"] = loop
+    for name, chooses in PROCESSORS.items():
+        if (found := processor(chooses)) is not None:
             models[name] = found
+    env = _at(settings, "memory", "init_config", "environment")
+    env_memory = isinstance(env, dict) and env.get("enabled") is True
+
+    # Each store's embedding, those alike in one: memory, persona and MCP where they run.
+    uses: dict[Part, list[str]] = {}
+    for section, path in EMBEDDINGS:
+        if section == "tools":
+            runs = bool(mcp.get("enabled") and mcp.get("plugin"))
+        else:
+            runs = _at(settings, section, "plugin") is not None
+        if runs and (found := part(_at(settings, section, *path))) is not None:
+            uses.setdefault(found, []).append("MCP" if section == "tools" else section)
+
     stt, tts = settings["voice"]["stt"], settings["voice"]["tts"]
     transcription = part(stt, stt["plugin"]) if stt.get("plugin") else None
     synthesis = part(tts, tts["plugin"]) if tts.get("plugin") else None
@@ -656,7 +723,6 @@ def bundle_shown(avatar: Any, needs: Mapping[str, str]) -> Shown:
     for name, shown_as in (("deepresearch", "DeepResearch"), ("rag", "RAG")):
         if plugin := _at(settings, "tools", name, "plugin"):
             tools.append(f"{shown_as} ({plugin})")
-    mcp = settings["tools"]["mcp"]
     if mcp.get("enabled") and mcp.get("plugin"):
         servers = len(mcp.get("servers") or {})
         tools.append(f"MCP ({mcp['plugin']}, {servers} server{'' if servers == 1 else 's'})")
@@ -666,8 +732,9 @@ def bundle_shown(avatar: Any, needs: Mapping[str, str]) -> Shown:
         voice=stt.get("plugin") is not None or plugin is not None,
         vision=bool(avatar.vision.enabled),
         local_models=any(plugin_requirement(*part) in needs for part in local),
-        env_memory=env,
+        env_memory=env_memory,
         models=models,
+        embeddings=tuple((found, tuple(users)) for found, users in uses.items()),
         transcription=transcription,
         synthesis=synthesis,
         speaker=tts.get("speaker"),

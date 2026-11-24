@@ -339,10 +339,17 @@ def _summary(
 
     on = {True: "On", False: "Off"}
 
-    def model(part) -> list[Span]:
+    def model(part, *users: str) -> list[Span]:
+        # As it runs; off, with the model its settings keep; else why it is not told.
+        if part.unknown is not None:
+            return [Span(f"Not told: {part.unknown}")]
         provider = "Your server" if part.server else NAMES.get(part.provider, part.provider)
-        found = [Span(provider.ljust(PROVIDER)), Span(part.model)]
-        return found + ([Span(f" · {part.server}")] if part.server else [])
+        where = [Span(f" · {part.server}")] if part.server else []
+        used = [Span(f" · {', '.join(users)}")] if users else []
+        if not part.on:
+            kept = [Span(f"configured: {provider} {part.model}"), *where] if part.model else []
+            return [Span("Off".ljust(PROVIDER)), *kept]
+        return [Span(provider.ljust(PROVIDER)), Span(part.model), *where, *used]
 
     def speech(part, *more: str) -> str:
         if part is None:
@@ -365,6 +372,9 @@ def _summary(
         fixed = "" if TTSConfig.takes_speed(tts.provider) else " (fixed)"
         voice = shown.speaker or "the model's own"
         speaking.append(("Voice / Speed", f"{voice} · {float(shown.speed)}{fixed}"))
+    # One embedding for every store as one row; several, a line each with its stores.
+    many = len(shown.embeddings) > 1
+    embeddings = tuple(model(part, *(users if many else ())) for part, users in shown.embeddings)
     # Memory's and persona's stores, once where they are one.
     stores = {store(*found) for found in shown.vectors.values()}
     vectors: tuple[Line, ...] = (stores.pop(),) if len(stores) == 1 else ("None",)
@@ -385,7 +395,10 @@ def _summary(
             ("Local models", (on[shown.local_models],)),
             ("ENV memory", (on[shown.env_memory],)),
         ],
-        "Models": [(LABELS[name], (model(part),)) for name, part in shown.models.items()],
+        "Models": [
+            *((LABELS[name], (model(part),)) for name, part in shown.models.items()),
+            *([("Embedding", embeddings)] if embeddings else []),
+        ],
         "Speech": [(label, (value,)) for label, value in speaking],
         "Storage & Tools": [("Vectors", vectors), ("Tools", _tools(shown.tools, bundle, new=new))],
         "Installation": [

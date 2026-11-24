@@ -461,6 +461,63 @@ def test_the_reference_keeps_vision_and_plans_its_runners_with_or_without_local_
     ]
 
 
+def test_setup_reads_each_processor_s_model_as_its_plugin_s_schema_chooses_it() -> None:
+    """What the summary leaves to the default plugins, read without importing them: each
+    processor's switch where unset, the setting naming its task, and the task where that is
+    unset, as their settings' own schemas have them."""
+    from alphaavatar.agents.runtime.plugin import AvatarModule, resolve_plugin
+    from alphaavatar.host.tools.setup.choices import PROCESSORS
+
+    schemas = {
+        section: resolve_plugin(AvatarModule(section), "default").factory.settings({})
+        for section in ("memory", "persona")
+    }
+    for part, chooses in PROCESSORS.items():
+        processor = getattr(schemas[chooses.section], chooses.name)
+        provider = processor.provider.model_dump()
+        assert (processor.enabled, provider.get(chooses.setting, "unset")) == (
+            chooses.enabled,
+            chooses.task,
+        ), part
+        assert {key for key in provider if key == "task" or key.endswith("_task")} == {
+            chooses.setting
+        }, part
+
+
+def test_a_bundle_s_model_its_settings_do_not_tell_is_said_so_never_another_s() -> None:
+    """A task its gateway lacks, no task where none is the default, another implementation of
+    the section: not told, and why; never the default task's model in its place."""
+    from alphaavatar.host.tools.setup.choices import bundle_shown
+
+    reference = yaml.safe_load(SECTIONS["memory"])
+
+    def models(edit, plugin: str = "default") -> dict:
+        memory = copy.deepcopy(reference) | {"plugin": plugin}
+        edit(memory["init_config"])
+        avatar = mock.Mock()
+        avatar.model_dump.return_value = {
+            "loop": {"plugin": None},
+            "memory": memory,
+            "persona": {"plugin": None},
+            "tools": {"mcp": {"enabled": False}},
+            "voice": {"stt": {"plugin": None}, "tts": {"plugin": None}},
+        }
+        return bundle_shown(avatar, {}).models
+
+    def missing(init: dict) -> None:
+        init["conversation"]["provider"]["task"] = "my.missing"
+
+    def untasked(init: dict) -> None:
+        init["environment"]["enabled"] = True
+        init["environment"]["provider"]["task"] = None
+
+    found = models(missing)["conversation"]
+    assert found.unknown == "its task 'my.missing' is not in its gateway"
+    assert models(untasked)["environment"].unknown == "no task set"
+    other = models(lambda init: None, plugin="other")
+    assert {part.unknown for part in other.values()} == {"as memory 'other' chooses it"}
+
+
 def test_the_catalog_gives_setup_each_plugin_s_storage_namespace(tmp_path: Path) -> None:
     """The module the Linux build records for each implementation, from its wheel's entry
     point, gives the storage namespace its runner keeps data under, for every plugin installed
