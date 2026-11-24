@@ -51,6 +51,7 @@
 | ⚙️ **Behavior**           | Controls response style, workflow selection, tool-use policy, and proactive assistance rules.                                         |   🧩 Planned  |
 | 🌍 **World Sandbox**      | Enables AlphaAvatar to interact with external virtual environments, code sandboxes, simulated worlds, or apps.                        |   🧩 Planned  |
 | 🏠 **Native Host & Runtime** | Owns application lifecycle, native model/tool execution, execution processes, session attachments, RTC selection, and observability independently of the LiveKit Agents SDK. | ✅ Done (v0.6.8) |
+| 🛠️ **Installation & Diagnostics** | Linux package, interactive Setup, bundles, profiles and credentials, forward upgrade and cleanup, Doctor diagnosis and runner metrics. | ✅ Done (v0.6.9) |
 
 ---
 
@@ -126,6 +127,7 @@
 | 2026-08 | Added explicit separation between participant transport identity, session-scoped participant ID, temporary user identity, and Persona-resolved user identity. |
 | 2026-08 | Added application-, participant-, and runtime-time separation so persistence, user timezone context, and realtime temporal alignment use independent time semantics. |
 | 2026-08 | Added creation-date session storage using `sessions/YYYY-MM-DD/<session_id>/` while keeping the session creation date immutable across long-running sessions. |
+| 2026-11 | Added `ParticipantRuntime`, which reads a Turn's participants from its input whenever they are needed and keeps settled speech and face associations for the whole session; private Memory and Persona reads use the accepted identity. |
 
 ### 🧭 TODO
 
@@ -187,6 +189,10 @@
 | 2026-10 | **Native Loop and Runtime Capabilities** | Removed SDK foreground execution, introduced callable capability bindings, validated native provider streaming, tool policies, and authoritative model/tool records. |
 | 2026-10 | **Processor-owned Foundation Services** | Context, Loop, Provider and Voice provide shared runtime services while consuming plugins retain their own business logic and lifecycle. |
 | 2026-10 | **Python 3.13 Toolchain** | Standardized Python 3.13 package metadata, workspace lock, Ruff/pre-commit and CI build/install/adapter gates. |
+| 2026-11 | **Configurable Runner Workers** | Runners take explicit launch inputs; replicable runners (Silero VAD, Smart Turn v3) run several worker processes, with bounded per-method queues, separate deadlines, bounded restarts without replay and per-method health metrics. |
+| 2026-11 | **Bundles, Profiles and Credentials** | Commented profiles from complete templates, `config init` and `config check`, interactive and unattended Setup, and stored credentials kept apart from configuration. |
+| 2026-11 | **Linux Package, Upgrade and Cleanup** | A Linux x86_64 package with its own CPython 3.13, an installer that sets PATH and offers Setup, transactional forward upgrade (no rollback or downgrade) and cleanup of unused builds. |
+| 2026-11 | **Doctor Diagnosis and Metrics** | Static checks and an authorized runtime diagnosis on fixed speech and image samples, with lost-sentence attribution, stage latency, runner queue figures and credential-free text/JSON reports. |
 
 ### 🧭 TODO
 
@@ -196,7 +202,7 @@
 | 🔹 | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events. | 🧩 Planned |
 | 🔹 | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, native-client adapters, and realtime media streams. | 🧩 Planned |
 | 🔹 | Add version control and compatibility checks for each plugin package, provider integration, config schema, and runtime protocol. | 🧩 Planned |
-| 🔹 | Add latency profiling and optimization across the voice pipeline, provider calls, tool invocation, memory retrieval, RAG, MCP, status feedback, and native-client adapters. | 🧩 Planned |
+| 🔹 | Optimize latency across the voice pipeline, provider calls, tool invocation, memory retrieval, RAG, MCP, status feedback, and native-client adapters, starting with streaming transcription, synthesis from the first short sentence, pre-established provider connections and early recall embedding; Doctor measures the current voice stages (v0.6.9). | 🧩 Planned |
 
 ## Vision
 
@@ -274,6 +280,8 @@
 | 2026-09 | **LiveKit Turn Detection Removal**  | Removed LiveKit text turn detection and the legacy acoustic invocation path from AlphaAvatar-owned user-turn decisions. |
 | 2026-10 | **Processor-owned Router Configuration** | Addressing and Turn Taking moved under processor-owned directories and configuration, alongside independently managed speech processors. |
 | 2026-10 | **Streaming Speech and Caption Synchronization** | Added bounded PCM synthesis and prefetch, improved speech segmentation, playback-paced transcript release, and independent async audio/caption transport. |
+| 2026-11 | **Utterance Input Window** | One open input window across pauses, anonymous segments and speaker labels; explicit HOLD reasons, bounded uncertainty waits with notices, and progress only on committed Turns. |
+| 2026-11 | **Transcript Terminal States and Deadlines** | One terminal state per STT segment; a late final joins its Turn until a hard deadline, after which the Turn commits with a notice; a bounded segment-to-Turn correlation trace. |
 
 ### 🧭 TODO
 
@@ -329,6 +337,8 @@
 | 2026-08 | **Structured Memory Timestamps**            | Memory items now persist structured `created_at` timestamps instead of user-facing session-time strings, enabling reliable ordering across sessions and timezones. |
 | 2026-10 | **Processor-owned Memory Runtime**          | Independently manages Conversation, Tool, Environment and Retrieval capabilities while consuming authoritative committed turns and canonical model/tool records. |
 | 2026-10 | **Unified Memory Storage and Exports**      | Separates the global primary Memory records from owner/episode/context Markdown projections, derived indexes and graph namespaces under one workspace layout. |
+| 2026-11 | **Owner-based Retrieval and Batch Ownership** | Retrieval reads memories by type and owners; mixed batches keep their verified owners; a failed ENV batch retries only its own range; passive retrieval is time-bounded. |
+| 2026-11 | **Embedding-space Records** | Each text-vector store records the embedding model that made it; another model is refused before anything changes, Setup included. |
 
 ### 🧭 TODO
 
@@ -371,6 +381,7 @@
 | 2026-09 | **Speaker Model Packaging & Validation** | Migrated speaker-vector and speaker-attribute ONNX models into dedicated versioned Hugging Face repositories, corrected speaker-attribute preprocessing and gender-label ordering, and separated model caches by purpose. |
 | 2026-10 | **Processor-owned Persona Runtime** | Moved concrete Profiler, Speaker and Face business logic, configuration, providers and lifecycle to the Persona plugin; Agents retains abstract contracts. |
 | 2026-10 | **On-demand Model Initialization** | Standardized processor model cache/resolution and initializes only enabled runners, without a separate model-download command. |
+| 2026-11 | **CAM++ Speaker Vectors and Session Entities** | CAM++ zh-en ONNX speaker vectors, one voice or face entity per session across sources, nearest-first multi-face association, short-speech carry-over and weighted stored-vector updates. |
 
 ### 🧭 TODO
 
@@ -548,7 +559,7 @@ The active client direction is AlphaAvatar Web, App, and OS. Third-party messagi
 
 | Version | Focus | Expected Outcome |
 | :------ | :---- | :--------------- |
-| **v0.6.9** | Installation, configuration, diagnostics and parallelism | Native installation, forward upgrade and removal of unused versions without requiring a system Python/Node installation (no rollback or downgrade); guided profile/bundle and credential setup; Host CLI Doctor and latency metrics; configurable inference runner replicas; bounded long-running, cancellation, voice and queue stress testing. |
+| **v0.6.9** ✅ | Installation, configuration, diagnostics and parallelism | Done: native Linux installation, forward upgrade and removal of unused versions without requiring a system Python/Node installation (no rollback or downgrade); guided profile/bundle and credential setup; Host CLI Doctor and latency metrics; configurable inference runner workers; bounded long-running, cancellation, voice and queue stress testing. See the [release notes](releases/v0.6.9.md). |
 | **v0.6.10** | Persona and product interface | Configurable Persona profile detail with current behavior as the default; integrate the updated Figma product experience into Avatar App. |
 | **v0.7.0** | Documentation and demo stability | Consolidate user-facing guides, architecture documentation, standalone Roadmap and website/docs messaging; publish a reliable reference demo. |
 | **v0.7.1** | Identity, references and configuration consistency | Unify `avatar_id`, `session_id`, `context_id`, `turn_id`, existing `run_id` and source references across the runtime; enrich Memory source references; standardize environment and release version management. |

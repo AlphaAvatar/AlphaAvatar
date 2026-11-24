@@ -631,6 +631,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | [releases/v0.6.6.md](docs/releases/v0.6.6.md) | 查阅 v0.6.6 的统一计时与多模态对齐、不可变轮次、供应商中立输入、Output，以及按播放节奏推进的转录。用于了解该历史版本。 |
 | [releases/v0.6.7.md](docs/releases/v0.6.7.md) | 查阅 v0.6.7 的原生语义寻址、对话焦点、Smart Turn、寻址融合、全双工中断与精确轮次快照。用于了解该历史版本。 |
 | [releases/v0.6.8.md](docs/releases/v0.6.8.md) | 查阅 v0.6.8 的原生 Host/RTC 所有权、Foundation 与处理器插件、流式模型、工具与语音执行、CPython 3.13 和迁移。用于了解该历史版本。 |
+| [releases/v0.6.9.md](docs/releases/v0.6.9.md) | 查阅 v0.6.9 的 Linux 安装包、Setup、bundle／profile 与凭据、向前升级与清理、Doctor、runner worker、转写期限、按整句累计的 turn taking、参与者归属和 embedding 空间保护。用于了解该版本及其已知限制。 |
 | [agent-logs/](docs/agent-logs/) | Claude 与其他 Agent 对项目改动、验证和未完成工作的按日期记录。 |
 
 仓库的其他入口：

@@ -632,6 +632,7 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | [releases/v0.6.6.md](docs/releases/v0.6.6.md) | Review v0.6.6 unified timing and multimodal alignment, immutable Turns, provider-neutral input, Output, and playout-paced transcripts. Historical version context. |
 | [releases/v0.6.7.md](docs/releases/v0.6.7.md) | Review v0.6.7 native semantic addressing, conversation focus, Smart Turn, addressing fusion, full-duplex interruption, and exact Turn snapshots. Historical version context. |
 | [releases/v0.6.8.md](docs/releases/v0.6.8.md) | Review v0.6.8 native Host/RTC ownership, Foundation and processor plugins, streaming model/tool/voice execution, CPython 3.13, and migration. Historical version context. |
+| [releases/v0.6.9.md](docs/releases/v0.6.9.md) | Review v0.6.9 Linux package, Setup, bundles/profiles and credentials, forward upgrade and cleanup, Doctor, runner workers, transcript deadlines, utterance-level turn taking, participant ownership and embedding-space protection. Version context and known limitations. |
 | [agent-logs/](docs/agent-logs/) | Dated records of Claude and other agents' project changes, validation and unresolved work. |
 
 Additional repository entry points:

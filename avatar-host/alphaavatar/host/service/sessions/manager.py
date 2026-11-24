@@ -22,7 +22,7 @@ from .attachment import SessionAttachment
 
 
 class SessionManager:
-    """Single-attachment execution binding for v0.6.8, not a reconnection service."""
+    """Single-attachment execution binding for v0.6.9, not a reconnection service."""
 
     def __init__(self) -> None:
         self._bindings: dict[str, tuple[HostExecution, SessionAttachment]] = {}
@@ -36,7 +36,7 @@ class SessionManager:
         if self._closed or key in self._bindings or key in self._retiring:
             raise RuntimeError("Session attachment cannot be registered")
         if execution in self._executions:
-            raise RuntimeError("v0.6.8 does not rebind an execution to another attachment")
+            raise RuntimeError("v0.6.9 does not rebind an execution to another attachment")
 
         self._executions.add(execution)
         self._bindings[key] = (execution, attachment)
