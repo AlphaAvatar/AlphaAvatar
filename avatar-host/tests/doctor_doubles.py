@@ -669,3 +669,51 @@ def _deny_network(log: Path, port: int | None = None) -> None:
         setattr(socket.socket, name, refuse(f"socket.{name}"))
     for name in ("gethostbyname", "gethostbyname_ex", "create_connection"):
         setattr(socket, name, refuse(f"socket.{name}"))
+
+
+"""Diagnostic processes of their own, for the supervisor alone: each leads its group, as the
+real one does, and is given what it is: (stop, payload, source, services, rebound, run, ...)"""
+
+
+def _reported(run: str) -> None:
+    import pickle
+
+    with open(os.path.join(run, "report.pickle"), "wb") as stream:
+        pickle.dump({}, stream)
+
+
+def reports(stop: object, *args: object) -> None:
+    """Reports at once and returns."""
+    os.setsid()
+    _reported(str(args[4]))
+
+
+def stops(stop, *args: object) -> None:
+    """Runs until asked to stop, then reports and returns."""
+    os.setsid()
+    Path(args[4], "started").write_text(str(os.getpid()))
+    try:
+        stop.recv()
+    except EOFError:
+        pass
+    _reported(str(args[4]))
+
+
+def deaf(stop: object, *args: object) -> None:
+    """Asked to stop, it never does."""
+    import time
+
+    os.setsid()
+    Path(args[4], "started").write_text(str(os.getpid()))
+    while True:
+        time.sleep(1)
+
+
+def leaves(stop: object, *args: object) -> None:
+    """Reports and returns, leaving a process it started running in its group."""
+    import subprocess
+
+    os.setsid()
+    left = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    Path(args[4], "left").write_text(str(left.pid))
+    _reported(str(args[4]))

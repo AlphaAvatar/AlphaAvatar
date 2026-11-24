@@ -387,7 +387,10 @@ diagnosis: what runs is closed, the rounds not run are reported as such, and the
 130; cancelling `Diagnosis.run()` closes the same way before it raises. After
 success, failure, timeout or interruption, sessions and their executors close before the
 runtime, then the temporary directory goes; `session.cleanup` fails if any of it, a runner
-process, or the diagnostic process itself had to be killed or left something behind.
+process, or the diagnostic process itself had to be killed or left something behind. Asked to
+stop, the diagnostic process has 60 s to close; once its exit is noticed, it has a few seconds
+more to be reaped, as the kernel lets a process that has ended be reaped a moment after its
+pipes close. Each kill names the deadline it missed and how long was waited.
 
 ## Results
 

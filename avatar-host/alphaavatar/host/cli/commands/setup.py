@@ -278,9 +278,9 @@ def _name(out: Report, paths, given: str | None) -> str:
         return name
 
 
-def _described(*, voice: bool, vision: bool, local: bool, env: bool, qdrant: bool) -> str:
-    """What a bundle runs with, on one line."""
-    on = {True: "on", False: "off"}
+def _described(*, voice: bool, vision: bool, local: bool, env: bool | None, qdrant: bool) -> str:
+    """What a bundle runs with, on one line; a switch not told, said so."""
+    on = {True: "on", False: "off", None: "not told"}
     parts = [f"Voice {on[voice]}", f"Vision {on[vision]}", f"Local models {on[local]}"]
     parts.append(f"ENV memory {on[env]}")
     return " · ".join([*parts, *(["Qdrant"] if qdrant else [])])
@@ -341,14 +341,14 @@ def _summary(
 
     def model(part, *users: str) -> list[Span]:
         # As it runs; off, with the model its settings keep; else why it is not told.
-        if part.unknown is not None:
-            return [Span(f"Not told: {part.unknown}")]
         provider = "Your server" if part.server else NAMES.get(part.provider, part.provider)
         where = [Span(f" · {part.server}")] if part.server else []
         used = [Span(f" · {', '.join(users)}")] if users else []
-        if not part.on:
+        if part.on is False:
             kept = [Span(f"configured: {provider} {part.model}"), *where] if part.model else []
             return [Span("Off".ljust(PROVIDER)), *kept]
+        if part.unknown is not None:
+            return [Span(f"Not told: {part.unknown}")]
         return [Span(provider.ljust(PROVIDER)), Span(part.model), *where, *used]
 
     def speech(part, *more: str) -> str:
@@ -372,6 +372,8 @@ def _summary(
         fixed = "" if TTSConfig.takes_speed(tts.provider) else " (fixed)"
         voice = shown.speaker or "the model's own"
         speaking.append(("Voice / Speed", f"{voice} · {float(shown.speed)}{fixed}"))
+    env = shown.models.get("environment")
+    env_memory = on.get(shown.env_memory) or f"Not told: {env.unknown if env else 'its switch'}"
     # One embedding for every store as one row; several, a line each with its stores.
     many = len(shown.embeddings) > 1
     embeddings = tuple(model(part, *(users if many else ())) for part, users in shown.embeddings)
@@ -393,7 +395,7 @@ def _summary(
             ("Voice", (on[shown.voice],)),
             ("Vision", (on[shown.vision],)),
             ("Local models", (on[shown.local_models],)),
-            ("ENV memory", (on[shown.env_memory],)),
+            ("ENV memory", (env_memory,)),
         ],
         "Models": [
             *((LABELS[name], (model(part),)) for name, part in shown.models.items()),

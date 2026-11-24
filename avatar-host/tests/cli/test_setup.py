@@ -882,9 +882,16 @@ def test_an_existing_bundle_s_summary_shows_its_own_settings_before_it_installs(
     assert "hidden" not in out and "None enabled" not in summary
 
 
-def _summary_of(package, capsys, name: str, *edits: tuple[str, tuple[str, ...], object]) -> str:
+def _summary_of(
+    package,
+    capsys,
+    name: str,
+    *edits: tuple[str, tuple[str, ...], object],
+    environ: dict[str, str] | None = None,
+) -> str:
     """The install summary of the bundle ``name``, config init's with ``edits`` (a section,
-    the keys to a setting, its value) made as a person makes them, set up on a terminal."""
+    the keys to a setting, its value) made as a person makes them, set up on a terminal with
+    ``environ`` beside the credentials."""
     assert main(["config", "init", name, "--avatar-id", name]) == 0
     capsys.readouterr()
     for section, keys, value in edits:
@@ -893,7 +900,7 @@ def _summary_of(package, capsys, name: str, *edits: tuple[str, tuple[str, ...], 
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", enabled),
         mock.patch("sys.stdin.isatty", return_value=True),
-        mock.patch.dict(os.environ, CREDENTIALS),
+        mock.patch.dict(os.environ, CREDENTIALS | (environ or {})),
         Person(("Install and enable?", "y")).answering(),
     ):
         assert main(["setup", name]) == 0
@@ -958,6 +965,57 @@ def test_an_existing_bundle_s_summary_shows_a_processor_switched_off_as_off(
         assert f"      {other.ljust(16)}OpenAI       gpt-4o\n" in summary, other
     path = profile("quiet", section)
     assert yaml.safe_load(path.read_text())["init_config"][processor]["enabled"] is False
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_an_existing_bundle_s_switches_read_from_the_environment_are_read_as_start_reads_them(
+    value: str, package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """Memory's conversation and ENV memory switched by variables: the strings interpolation
+    leaves read as their plugin's schema reads them, the capability and its model's row
+    agreeing."""
+    on = value == "true"
+    summary = _summary_of(
+        package,
+        capsys,
+        "switched",
+        ("memory", ("init_config", "conversation", "enabled"), "${oc.env:MEMORY_EXTRACTION_ON}"),
+        ("memory", ("init_config", "environment", "enabled"), "${oc.env:ENV_MEMORY_ON}"),
+        environ={"MEMORY_EXTRACTION_ON": value, "ENV_MEMORY_ON": value},
+    )
+    memory = "OpenAI       gpt-4o" if on else "Off          configured: OpenAI gpt-4o"
+    assert f"      Memory          {memory}\n" in summary
+    assert f"      ENV memory      {'On' if on else 'Off'}\n" in summary
+    env = (
+        "Google       gemini-2.5-flash"
+        if on
+        else "Off          configured: Google gemini-2.5-flash"
+    )
+    assert f"      ENV memory      {env}\n" in summary
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        (True, "OpenAI       gpt-4o"),
+        (False, "Off          configured: OpenAI gpt-4o"),
+        ("yes", "OpenAI       gpt-4o"),
+        ("off", "Off          configured: OpenAI gpt-4o"),
+        (1, "OpenAI       gpt-4o"),
+        (0, "Off          configured: OpenAI gpt-4o"),
+        ("maybe", "Not told: its switch 'maybe' is not true or false"),
+    ],
+    ids=["true", "false", "yes", "off", "one", "zero", "invalid"],
+)
+def test_an_existing_bundle_s_switch_is_read_in_each_form_its_schema_takes(
+    value: object, shown: str, package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """A switch written as a bool, a word or a number reads as the schema reads it; one the
+    schema refuses is said so, never shown off."""
+    summary = _summary_of(
+        package, capsys, "forms", ("memory", ("init_config", "tool", "enabled"), value)
+    )
+    assert f"      Tool memory     {shown}\n" in summary
 
 
 @pytest.mark.parametrize("same", [False, True], ids=["apart", "together"])

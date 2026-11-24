@@ -484,6 +484,29 @@ def test_setup_reads_each_processor_s_model_as_its_plugin_s_schema_chooses_it() 
         }, part
 
 
+@pytest.mark.parametrize(
+    "value", [True, False, "true", "False", "yes", "no", "on", "off", "1", "0", 1, 0, "maybe", 2]
+)
+def test_setup_reads_a_switch_as_the_plugins_schemas_read_it(value: object) -> None:
+    """Each form a switch can take, as each default processor's own schema reads it: the same
+    bool, or refused alike."""
+    from pydantic import ValidationError
+
+    from alphaavatar.agents.runtime.plugin import AvatarModule, resolve_plugin
+    from alphaavatar.host.tools.setup.choices import PROCESSORS, _switch
+
+    for chooses in PROCESSORS.values():
+        factory = resolve_plugin(AvatarModule(chooses.section), "default").factory
+        # With its task set, as ENV memory needs one once on: only the switch at stake.
+        settings = {"enabled": value, "provider": {chooses.setting: "a.task"}}
+        try:
+            read = factory.settings({chooses.name: settings})
+        except ValidationError:
+            assert _switch(value) is None, (chooses.name, value)
+        else:
+            assert _switch(value) is getattr(read, chooses.name).enabled, (chooses.name, value)
+
+
 def test_a_bundle_s_model_its_settings_do_not_tell_is_said_so_never_another_s() -> None:
     """A task its gateway lacks, no task where none is the default, another implementation of
     the section: not told, and why; never the default task's model in its place."""

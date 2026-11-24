@@ -557,6 +557,17 @@ def public_address(url: str) -> str:
     return f"{parts.scheme}://{f'[{host}]' if ':' in host else host}{port}{parts.path}"
 
 
+def _switch(value: Any) -> bool | None:
+    """A switch as the plugins' settings schemas read one (a bool, ``"true"``, ``"no"``, 1, …,
+    as pydantic reads ``bool``), whatever interpolation left it as; None for one they refuse."""
+    from pydantic import TypeAdapter, ValidationError
+
+    try:
+        return TypeAdapter(bool).validate_python(value)
+    except ValidationError:
+        return None
+
+
 class _Processor(NamedTuple):
     """How a default plugin's processor chooses its model, as its settings' schema has it: its
     section and name, its switch where unset, the setting naming its gateway task, and the
@@ -590,7 +601,7 @@ class Part:
     provider: str | None
     model: str | None
     server: str | None = None
-    on: bool = True
+    on: bool | None = True  # None: whether it runs is not told either.
     unknown: str | None = None
 
 
@@ -602,7 +613,7 @@ class Shown:
     voice: bool
     vision: bool
     local_models: bool
-    env_memory: bool
+    env_memory: bool | None  # None: not told, as its row in ``models`` says why.
     models: dict[str, Part]  # Each part with a model of its own, by its name in ``LABELS``.
     embeddings: tuple[tuple[Part, tuple[str, ...]], ...]  # Each embedding, and its stores.
     transcription: Part | None  # None: no speech in.
@@ -669,10 +680,12 @@ def bundle_shown(avatar: Any, needs: Mapping[str, str]) -> Shown:
         if plugin is None:
             return None  # No part of the section runs.
         if plugin != "default":
-            return Part(None, None, unknown=f"as {chooses.section} {plugin!r} chooses it")
+            return Part(None, None, on=None, unknown=f"as {chooses.section} {plugin!r} chooses it")
         found = _at(settings, chooses.section, "init_config", chooses.name)
         found = found if isinstance(found, Mapping) else {}
-        on = found.get("enabled", chooses.enabled) is True
+        if (on := _switch(found.get("enabled", chooses.enabled))) is None:
+            why = f"its switch {found['enabled']!r} is not true or false"
+            return Part(None, None, on=None, unknown=why)
         provider = found.get("provider") if isinstance(found.get("provider"), Mapping) else {}
         task = provider[chooses.setting] if chooses.setting in provider else chooses.task
         if task and (model := part(_at(provider, "gateway", "tasks", task), on=on)) is not None:
@@ -690,8 +703,8 @@ def bundle_shown(avatar: Any, needs: Mapping[str, str]) -> Shown:
     for name, chooses in PROCESSORS.items():
         if (found := processor(chooses)) is not None:
             models[name] = found
-    env = _at(settings, "memory", "init_config", "environment")
-    env_memory = isinstance(env, dict) and env.get("enabled") is True
+    # ENV memory on or off as its processor's row says, or not told with it.
+    env_memory = models["environment"].on if "environment" in models else False
 
     # Each store's embedding, those alike in one: memory, persona and MCP where they run.
     uses: dict[Part, list[str]] = {}

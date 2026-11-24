@@ -51,6 +51,10 @@ if TYPE_CHECKING:
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
 
 CLOSE_SECONDS = 60.0  # Past the session's budget: closing what ran, then the group goes.
+# Its exit noticed (its pipes closed), how long it may take to be reaped: a moment, at most.
+REAP_SECONDS = 5.0
+KILLED_SECONDS = 5.0  # Killed, how long it may take to be reaped before it is left.
+_POLL = 0.005
 _REPORT = "report.pickle"
 _OUTPUT = "output.log"
 
@@ -129,6 +133,7 @@ async def _supervise(
     process = context.Process(target=_main, args=(reader, *args), name="doctor:session")
     loop = asyncio.get_running_loop()
     exited = loop.create_future()
+    asked: list[float] = []  # When it was asked to stop, once it was.
     try:
         process.start()
     finally:
@@ -138,6 +143,11 @@ async def _supervise(
         loop.remove_reader(process.sentinel)
         exited.done() or exited.set_result(None)
 
+    def ask() -> None:
+        # Closing this end asks it to stop: it closes what runs and still reports.
+        asked or asked.append(loop.time())
+        writer.close()
+
     loop.add_reader(process.sentinel, ended)
     try:
         waiter = asyncio.ensure_future(stop.wait())
@@ -145,12 +155,11 @@ async def _supervise(
             await asyncio.wait((exited, waiter), timeout=limit, return_when=asyncio.FIRST_COMPLETED)
         finally:
             waiter.cancel()
-        if not exited.done():
-            # Asked to stop, or over its budget: it closes what runs and still reports.
-            writer.close()
+        if not exited.done():  # Asked to stop, or over its budget.
+            ask()
             await asyncio.wait((exited,), timeout=CLOSE_SECONDS)
     except asyncio.CancelledError:
-        writer.close()
+        ask()
         await wait_for_cleanup(
             asyncio.ensure_future(asyncio.wait((exited,), timeout=CLOSE_SECONDS))
         )
@@ -158,7 +167,8 @@ async def _supervise(
     finally:
         writer.close()
         loop.remove_reader(process.sentinel)
-        _reclaim(process, problems)
+        reclaimed = _reclaim(process, noticed=exited.done(), asked=asked, problems=problems)
+        await wait_for_cleanup(asyncio.ensure_future(reclaimed))
     path = os.path.join(args[4], _REPORT)
     if process.exitcode != 0 or not os.path.exists(path):
         why = f"the diagnostic process exited with code {process.exitcode}"
@@ -179,12 +189,47 @@ def _last_line(path: str) -> str:
     return next((line.strip()[:500] for line in reversed(lines) if line.strip()), "")
 
 
-def _reclaim(process: mp.process.BaseProcess, problems: list[str]) -> None:
-    """The process and its group: what is still there after closing is killed and named."""
-    if process.is_alive():
+async def _reaped(process: mp.process.BaseProcess, seconds: float) -> bool:
+    """Whether the process is reaped within ``seconds``, polled without blocking: its exit is
+    noticed as its pipes close, a moment before it can be reaped, and a blocking wait then
+    would not be bounded."""
+    deadline = asyncio.get_running_loop().time() + seconds
+    while process.is_alive():  # Non-blocking: waitpid with WNOHANG.
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(_POLL)
+    return True
+
+
+async def _reclaim(
+    process: mp.process.BaseProcess, *, noticed: bool, asked: list[float], problems: list[str]
+) -> None:
+    """The process and its group: what is still there is killed and named, by the deadline it
+    missed. Its exit noticed, it is reaped within ``REAP_SECONDS``; not noticed, it had
+    ``CLOSE_SECONDS`` once asked to stop."""
+    loop = asyncio.get_running_loop()
+    if noticed:
+        if not await _reaped(process, REAP_SECONDS):
+            _kill(process.pid, process)
+            problems.append(
+                f"the diagnostic process closed its pipes but was not reaped within "
+                f"{REAP_SECONDS:g} s: killed"
+            )
+    elif process.is_alive():
+        waited = loop.time() - asked[0] if asked else 0.0
         _kill(process.pid, process)
-        problems.append(f"the diagnostic process did not exit within {CLOSE_SECONDS:g} s: killed")
-    process.join()
+        problems.append(
+            f"the diagnostic process had not exited {waited:.1f} s after it was asked to stop, "
+            f"its {CLOSE_SECONDS:g} s to close: killed"
+        )
+    if not await _reaped(process, KILLED_SECONDS):
+        problems.append(
+            f"the diagnostic process {process.pid} was not reaped {KILLED_SECONDS:g} s after "
+            "it was killed: left"
+        )
+        return
+    process.join()  # Reaped: at once.
+
     try:
         os.killpg(process.pid, 0)
     except (ProcessLookupError, PermissionError):

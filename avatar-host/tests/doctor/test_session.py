@@ -736,7 +736,11 @@ def test_a_diagnostic_process_that_does_not_stop_is_ended_with_its_group(
     assert code == 1
     cleanup = checks["session.cleanup"]
     assert cleanup["status"] == "FAIL"
-    assert "the diagnostic process did not exit within 1 s: killed" in cleanup["details"]
+    # Killed at the deadline it missed, said as it was: asked to stop, it had 1 s to close.
+    assert (
+        "the diagnostic process had not exited 1.0 s after it was asked to stop, its 1 s to "
+        "close: killed"
+    ) in cleanup["details"]
     # Killed: whatever it printed last is not why it ended.
     assert checks["session.start"]["details"] == ["the diagnostic process exited with code -9"]
     assert gone(int((chain.files / "pid").read_text()))

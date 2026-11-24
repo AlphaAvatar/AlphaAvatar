@@ -22,7 +22,7 @@
 | 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
 | 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 已提交（`01200003`），通过审查 |
 | 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 已提交（`e300619e`）；第一轮审查的四处修复已提交（`a9b2081a`，§7）；第二轮修复已提交（`37bd78b5`，§8）；第三轮复核的 KD-61 确定请求之后的窗口已修复，候选包已重建并复验，待审查（§9） |
-| 展示 | Setup 的 Tools 提示和分组的 04 Install 摘要，config check 的分组颜色和续行 | 已提交（`e33257dc`，§10）；复核的 P2（已有 Bundle 的模型摘要）已修复，待审查（§11） |
+| 展示 | Setup 的 Tools 提示和分组的 04 Install 摘要，config check 的分组颜色和续行 | 已提交（`e33257dc`，§10）；KD-62 已提交（`937896fa`，§11）；O-36 与摘要开关解析已修复，待审查（§12） |
 
 ## 1. 批次 0：demo.yaml
 
@@ -1306,3 +1306,116 @@ alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-37bd78b55e7b-dirty.202
 
 - 本轮改动尚未提交，没有对应的 CI；`e33257dc` 的 Quality 失败见 O-36。
 - 没有付费调用、通话或压力测试。
+
+## 12. 0.6.9 内修复：O-36 Doctor 回收竞态、摘要开关的布尔解析（基线 `937896fa`）
+
+用户决定这两处都在 0.6.9 内做最小修复；其他延期项结论不变。
+
+### 12.1 基线与 CI
+
+- `937896fa`：Linux package（45379758016）为 success；Quality（45379758329）失败在 "Run deterministic offline tests" 这一步超过 10 分钟（O-34），不是 O-36。这一步上一次用了 494 s（`e33257dc`），已记入 O-34。是否调高这一步的期限，仍由用户决定。
+- `e33257dc` 的 Quality（45369883587）失败才是 O-36。
+
+### 12.2 O-36：Doctor 的进程回收（`doctor/process.py`）
+
+- 原因：`_reclaim()` 一收到退出通知（sentinel 可读）就用 `is_alive()` 判断。内核先关闭退出中进程的管道，稍后它才能被 `waitpid` 回收，所以在这段窗口里，一个已经正常返回的进程会被杀掉，并被报告为"60 s 未退出"。复核已用真实子进程复现。
+- 本机复现（未打补丁的真实内核时序）：父子进程绑在同一 CPU，子进程 `nice 19` 后立即正常返回，各跑 400 次：
+  - `937896fa` 的回收：6 次误杀并误报；
+  - 修复后：0 次；
+  - 两边每次都拿到了报告。
+- 修复：
+  - 回收改为异步、有界，用 `wait_for_cleanup` 保护，调用方取消也不会放弃这一步；
+  - 区分两个阶段：
+    - 已收到退出通知：在 `REAP_SECONDS`（5 s）内用非阻塞的 `waitpid`（`is_alive()`）轮询，等到可回收为止；仍不可回收才杀掉，并写明"closed its pipes but was not reaped within 5 s"；
+    - 从未收到退出通知：在被要求停止后的 `CLOSE_SECONDS`（60 s）期限到时才杀掉，说明中写出实际等待时长和期限（"had not exited 60.0 s after it was asked to stop, its 60 s to close"）；
+  - 杀掉之后同样有界地等待回收（`KILLED_SECONDS`，5 s）；`join()` 只在已回收后调用，事件循环里没有无界阻塞；
+  - 没有使用同步的 `join(超时)`：sentinel 就绪后，CPython 的 `Popen.wait(timeout)` 会进入阻塞的 `waitpid`，超时管不住它；
+  - 取消时照旧先要求停止、等完关闭期限、再回收；残留在进程组里的子进程照旧杀掉并报告。
+- 文档：`docs/cli/doctor.md` 写明关闭期限、回收窗口，以及杀掉时的说明。
+
+### 12.3 摘要开关的布尔解析（`tools/setup/choices.py`）
+
+- 问题：`enabled` 用 `is True` 判断。`${oc.env:…}` 插值后留下的字符串 `"true"`，以及直接写的 `"true"`、整数 `1`，都显示为 Off，而运行时的 schema 读作开启；无效值也被悄悄当成 Off。
+- 修复：
+  - `_switch()` 按插件 schema 的 bool 规则解析（`TypeAdapter(bool)`，即 pydantic 的 lax bool）。三个处理器的 `enabled` 都是普通的 `bool` 字段，测试对每种形式逐一与它们自己的 schema 比对：读出相同的值，或者同样拒绝；
+  - schema 不接受的值写成 `Not told: its switch 'maybe' is not true or false`，不显示为 Off；
+  - Capabilities 的 ENV memory 与它在 Models 中的行用同一次解析，两处一致；
+  - `Part.on` 为 None 表示开关本身看不出，与"开着但模型看不出"（例如没有设置任务）区分开；
+  - 默认值仍按已核对的 `PROCESSORS`；不改写 YAML，不导入插件。
+
+### 12.4 测试
+
+- `tests/doctor/test_process.py`（新增，在真实 spawn 子进程上运行 `_supervise()`）：
+  - 退出通知先于可回收状态（`is_alive()` 在第一次被问后的 50 ms 内仍为真，模拟内核的那段窗口）：不杀、不报告；
+  - 正常返回；
+  - 一直不可回收：在回收期限到时杀掉，说明写明这一阶段；
+  - 一直不停止：在关闭期限到时杀掉，说明写出实际等待时长与期限，进程已不在；
+  - 取消：会停止的进程被回收、拿到报告；不停止的进程在关闭期限到时杀掉；取消都继续传给调用方；
+  - 残留在进程组里的子进程被杀掉并报告。
+
+  在 `937896fa` 的 `process.py` 上：第一种情形失败，报告正是"did not exit within 60 s: killed"；超时的两种只因说明文字不同而失败（两边都会杀掉）；回收期限的情形旧代码没有这一阶段；正常、可停止的取消、残留子进程三种两边都通过。
+- `test_session.py` 中已有的不停止用例改为新的说明文字。
+- 开关：
+  - CLI 回归：Memory conversation 和 ENV memory 的开关用 `${oc.env:…}` 插值，变量设为 true、false，Memory 行和 ENV memory 的 Capabilities 行都正确，并且彼此一致；
+  - Tool memory 的开关分别写成 `True`、`False`、`"yes"`、`"off"`、`1`、`0`、`"maybe"`；
+  - `test_choices.py` 中 14 种形式逐一与三个处理器的 schema 比对；
+  - 在 `937896fa` 上，插值 true、`"yes"`、`1`、`"maybe"` 四种失败，表示关闭的几种两边都通过。
+- 变异 7 个，全部被发现：
+  - 回收时只看一次；
+  - 忽略退出通知；
+  - 恢复旧的超时说明；
+  - 不清理进程组；
+  - 用 `bool(value)` 解析；
+  - 无效值当作 Off；
+  - ENV memory 的能力状态与它的行分开计算。
+- 保留的回归都通过：自定义任务、关闭状态、各自的 embedding、新 Bundle 默认摘要、文件保护。
+- Doctor 测试 73 passed；离线全量 1217 passed，241 warnings，396 s，运行前后未跟踪和被忽略的文件一致；仓库规范检查都通过，pre-commit 没有改动文件。
+
+### 12.5 修复后的候选包
+
+| 项 | 内容 |
+|---|---|
+| 源码 | HEAD `937896fa9ca178ba41a748aeb1a70b0355bb8c1d` 加本轮改动：9 个跟踪文件和 1 个新文件（`tests/doctor/test_process.py`），`git diff` 的 sha256 前缀 `798ea2d374d78e81`。构建前后核对过，diff 与构建时一致 |
+| 构建 | `packaging/linux/build.sh --allow-dirty --max-glibc 2.32`；uv 0.10.0、Python 3.13.12；构建机 Alibaba Cloud Linux 3（glibc 2.32） |
+| Build ID | `0.6.8-937896fa9ca1-dirty.20261124121424`；manifest 中 `release` 为 null，uv.lock sha256 `6e2c34f7…`（与 CI 相同） |
+| 内容核对 | 包内 Host 的 `doctor/process.py`、`setup/choices.py`、`cli/commands/setup.py`、`cli/render.py`、`cli/commands/config.py` 与工作区逐字节相同 |
+| 位置 | `~/alphaavatar-candidates/0.6.8-937896fa9ca1-dirty.20261124121424/`；之前的候选包都不代表这两处修复 |
+| SHA-256 | 包 `5ef336f23a9ad47f4620159680c9ae9e3267e37a134911f88629e1028ab48b26`；manifest `94f28a2f…28f8`；install.sh `02ff07ac…98`；SHA256SUMS `2dc39e83…b6b1`；`sha256sum -c SHA256SUMS` 全部 OK |
+
+### 12.6 干净环境验收（这个构建）
+
+环境与 §6.6 相同，每个场景用新的 rootfs 副本。
+
+- 包内这两处修复：
+  - 回收竞态：在干净环境里，用已安装包自己的 Python 和 `doctor/process.py`，以 §12.2 的条件（同一 CPU、子进程 `nice 19`、正常返回）跑 300 次：0 次误杀、0 次清理问题，每次都拿到报告；
+  - 开关：已有 Bundle 的 Memory conversation 开关写成 `${oc.env:MEMORY_EXTRACTION_ON}`，在终端里运行 Setup 摘要。变量为 `true` 时显示 `Memory  OpenAI  gpt-4o`，为 `false` 时显示 `Off  configured: OpenAI gpt-4o`；之后 YAML 改回原样。
+- 安装与 Setup：
+  - 安装器接续真实 Setup，105 个包 / 514 MB，`PASS · 8 runners`；Ctrl+C 后安装保留；终端恢复，没有残留进程；
+  - `config check`、`doctor --no-metrics`、`config init` 都通过；
+  - 四个代表性分支都通过（own 105 个包 / 427 MB；mixed 112 个包 / 521 MB；speech、voiceai 复用环境）；
+  - 7 个 Bundle 的 YAML 检查没有问题，没有任何凭据值。
+- 场景 2 第一次运行时，我的验收脚本里一条旧断言失败：Voice.ai 分支断言输出里没有 `Speed`，而摘要现在有 `Voice / Speed` 这一行。Setup 本身已成功。改为断言没有询问速度、摘要显示 `the model's own · 1.0 (fixed)` 后，在新的 root 里重跑通过。
+- 基础包预检（场景 6）的七种情形，与已有配置保护（场景 5），都与之前相同、通过。
+- 升级与 cleanup，从 CI 为 `937896fa` 构建的包（`0.6.8-937896fa9ca1`，Linux package 运行 45379758016，artifact 14913461583，`SHA256SUMS` 全部 OK）：
+  - SHA-256 错误、候选包首次安装前的准备失败：都拒绝，状态不变；
+  - 升级：77 个包 / 188 MB，`PASS · 2 runners`；
+  - 旧版的记录照样生效；
+  - `cleanup --dry-run` 不写任何东西；`cleanup` 只删除旧版，释放 795 MB；
+  - 应用数据的哈希不变。
+
+### 12.7 给用户的候选包命令
+
+```bash
+cd ~/alphaavatar-candidates/0.6.8-937896fa9ca1-dirty.20261124121424
+sha256sum -c SHA256SUMS
+bash install.sh --file ./alphaavatar-0.6.8-937896fa9ca1-dirty.20261124121424-linux-x86_64.tar.gz
+alphaavatar setup --artifacts ~/alphaavatar-candidates/0.6.8-937896fa9ca1-dirty.20261124121424
+# 已有安装时（先停止 alphaavatar start）：
+alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-937896fa9ca1-dirty.20261124121424/alphaavatar-0.6.8-937896fa9ca1-dirty.20261124121424-linux-x86_64.tar.gz
+```
+
+### 12.8 未验证与剩余
+
+- 本轮改动尚未提交；提交推送后核对对应 SHA 的 Quality 和 Linux package。
+- O-34：离线全量在 CI 上接近或超过 10 分钟的期限，本轮又新增约 30 个用例（本地 396 s）。`937896fa` 已再次超时。是否调高期限，仍由用户决定。
+- 没有付费调用、真实通话或长时间压力测试。其他延期项不变，包括 O-35 和两条窄终端长行。
