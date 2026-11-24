@@ -470,7 +470,7 @@ def test_a_plan_declined_installs_and_enables_nothing(
         assert main(["setup"]) == 1
     output = capsys.readouterr()
     # The plan and what it downloads were shown before the question; then nothing changed.
-    assert re.search(r"\n    \d+ packages · 0 MB to download\n", output.out)
+    assert re.search(r"\n      Packages +\d+\n      Download +0 MB\n", output.out)
     assert person.rules == []
     assert output.err == "WARN  Cancelled; nothing was enabled\n\n"
     assert home_files() == []
@@ -805,9 +805,12 @@ def test_each_part_is_asked_its_provider_then_its_model_and_each_key_once(
     assert person.asked("GOOGLE_API_KEY, for ENV memory, embeddings, from Google") != []
     assert "02  Models         OpenAI · Anthropic · Google · OpenRouter · Voice.ai\n" in out
     # The summary, after the questions and before anything is installed.
-    summary = "    memory: Anthropic claude-sonnet-4-5; tool memory Anthropic claude-sonnet-4-5\n"
+    summary = "      Memory          Anthropic    claude-sonnet-4-5\n"
     assert out.index("03  Credentials    Ready") < out.index(summary) < out.index("Install and")
-    assert "    speech out: voiceai voiceai-tts-v1, speed 1, no instructions\n" in out
+    assert "      Tool memory     Anthropic    claude-sonnet-4-5\n" in out
+    assert "      Persona         OpenRouter   openai/gpt-4.1-mini\n" in out
+    assert "      TTS             voiceai · voiceai-tts-v1 · no instructions\n" in out
+    assert "      Voice / Speed   the model's own · 1.0 (fixed)\n" in out
     assert "fictional" not in out
     # The bundle runs as answered.
     avatar = load_application(select_configuration("mixed")).avatar
@@ -826,6 +829,57 @@ def test_each_part_is_asked_its_provider_then_its_model_and_each_key_once(
     )
     tts = avatar.voice.tts
     assert (tts.plugin, tts.speaker, tts.speed, tts.instructions) == ("voiceai", None, 1.0, None)
+
+
+def test_an_existing_bundle_s_summary_shows_its_own_settings_before_it_installs(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """An existing bundle, set up on a terminal: its tools on, its conversation on a server of
+    its own whose URL holds a credential, memory's vectors in Qdrant. The summary shows each as
+    set, the server's address without its credential, query or fragment, and the bundle as the
+    default it is already; then the question."""
+    assert main(["config", "init", "tooled", "--avatar-id", "tooled-id"]) == 0
+    capsys.readouterr()
+    # The tools a build's catalog installs, as a release's has them.
+    path = package.base / "share/alphaavatar/catalog.json"
+    catalog = json.loads(path.read_text())
+    for module, name in (("tools.deepresearch", "deepresearch"), ("tools.mcp", "mcp")):
+        need = f"alpha-avatar-plugins-{name}"
+        catalog["requirements"][need] = [need]
+        artifact = {"version": "1", "file": f"{need}.whl", "sha256": "0" * 64, "size": 1}
+        catalog["distributions"][need] = artifact | {"url": None}
+        catalog["plugins"][module] = {"default": need}
+    path.write_text(json.dumps(catalog))
+    tools = profile("tooled", "tools")
+    edit(tools, "deepresearch", "plugin", value="default")
+    edit(tools, "mcp", "enabled", value=True)
+    edit(tools, "mcp", "servers", value={"docs": {"url": "https://mcp.invalid/"}})
+    server = "https://person:hidden-pass@gpu.invalid:8000/v1?token=hidden-token#hidden-part"
+    extra = {"base_url": server, "api_key_env": "MY_GPU_KEY"}
+    edit(profile("tooled", "loop"), "init_config", "model", "extra", value=extra)
+    edit(profile("tooled", "memory"), "vdb_config", "url", value="https://qdrant.invalid:6333")
+    person = Person(("Install and enable?", "y"))
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", enabled),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS | {"MY_GPU_KEY": "gpu-fictional"}),
+        person.answering(),
+    ):
+        assert main(["setup", "tooled"]) == 0
+    out = capsys.readouterr().out
+    assert person.rules == []
+    summary = out[out.index("04  Install") : out.index("Install and enable?")]
+    for line in (
+        "\n    Configuration\n      Bundle          tooled · already the default\n",
+        "      Avatar ID       tooled-id\n",
+        "      Conversation    Your server  gpt-5.6-luna · https://gpu.invalid:8000/v1\n",
+        "      Vectors         Memory: Qdrant · https://qdrant.invalid:6333\n"
+        "                      Persona: LanceDB · Avatar workspace\n",
+        "      Tools           DeepResearch (default) · MCP (default, 1 server)\n",
+    ):
+        assert line in summary, line
+    assert "hidden" not in out and "None enabled" not in summary
 
 
 def test_voice_off_asks_nothing_of_speech_and_vectors_in_qdrant_read_its_url(
@@ -857,6 +911,24 @@ def test_voice_off_asks_nothing_of_speech_and_vectors_in_qdrant_read_its_url(
 
     # Asked with the other credentials, before anything resolves the bundle that reads it.
     person = setup("vectors", ("QDRANT_URL, for", url))
+    out = capsys.readouterr().out
+    # Step 01's note of the tools: none on, how to switch one on; no fault.
+    assert (
+        "    Tools  None enabled (default)\n"
+        "           Enable DeepResearch or MCP in the tools profile,\n"
+        "           then run: alphaavatar setup <bundle>\n"
+        "           RAG is not available through setup in this release.\n"
+    ) in out
+    # The summary: voice off, so no speech; the vectors in the server the URL names.
+    for line in (
+        "      Voice           Off\n",
+        "      STT             Off\n      TTS             Off\n",
+        "      Vectors         Qdrant · your server, from QDRANT_URL\n",
+        "      Tools           None enabled (default)\n",
+        "                      then run: alphaavatar setup vectors\n",
+    ):
+        assert line in out, line
+    assert "WARN" not in out
     assert person.asked("for speech") == [] and person.asked("Voice ID") == []
     assert "Enter keeps" not in person.asked("QDRANT_URL")[0]
     memory = (profiles / "vectors/plugins/perception/memory.yaml").read_text()

@@ -40,15 +40,19 @@ Checks
 | --- | --- |
 | `AlphaAvatar / …` title | Brand blue, `#60a5fa` |
 | The current setup step, its questions, and commands to copy | Signal cyan, `#22d3ee` |
-| Group headings: `Configuration`, `Scenarios`, `Next`, … | Bold, the terminal's own color |
+| Groups of rows: config check's `Configuration`, `host`, `agent`, `plugins/…`; setup's install summary | Bold signal cyan |
+| Other headings: `Scenarios`, `Next`, … | Bold, the terminal's own color |
+| A state worth noticing that is no fault: a tool not on (`none`, `None enabled (default)`) | Yellow, with the state in words |
 | `OK`, `PASS` | Green |
 | `WARN` | Yellow |
 | `FAIL`, `ERROR` | Red |
 | `SKIP` | Gray |
 | Everything else: labels, values, paths, figures | The terminal's own color |
 
-- Values share a column. On a narrow terminal, a value too long for its line goes below its
-  label, indented and wrapped at spaces; a path stays whole. Diagnostics and commands print
+- Values share a column. On a narrow terminal, a value too long for its line wraps at spaces,
+  going on under its own start; where there is too little room beside the label, or a word,
+  such as a path or a model ID, would not fit there, it goes below the label. A path, a model
+  ID and a command to copy stay whole. Diagnostics and commands print
   whole too, so they can be searched for and copied. A setting at fault that does not fit its
   line, such as a missing package or a variable holding no value, is split instead: the
   setting, what is wrong, the package and what installs it, a line each.

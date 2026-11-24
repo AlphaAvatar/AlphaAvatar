@@ -41,16 +41,17 @@ from alphaavatar.host.configs.template import SECTIONS, render_bundle
 from alphaavatar.host.tools.setup.choices import (
     OPENAI_KEY,
     Model,
+    Part,
     Selection,
     Synthesis,
     Transcription,
     bundle_requirements,
-    capabilities,
     credentials,
     requirements,
     sections,
     server_key,
     server_problem,
+    shown,
 )
 from alphaavatar.host.tools.setup.plan import plan_install
 from alphaavatar.host.workspace import ApplicationPaths
@@ -1038,20 +1039,18 @@ def test_voice_off_runs_no_speech_whatever_was_chosen_for_it_and_keeps_the_choic
     assert found == list(requirements(off)) == list(requirements(Selection(voice=False)))
     asked = {credential.name: credential.purpose for credential in credentials(off)}
     assert "VOICEAI_API_KEY" not in asked and not [p for p in asked.values() if "speech" in p]
-    summary = capabilities(off)
-    assert summary[0].startswith("voice off") and not [line for line in summary if "speech" in line]
+    summary = shown(off)
+    assert not summary.voice and (summary.transcription, summary.synthesis) == (None, None)
     # The same choices with voice on run as chosen.
     runs = compose(on, tmp_path / "on")
     assert (runs.avatar.voice.stt.plugin, runs.avatar.voice.tts.plugin) == (stt.plugin, tts.plugin)
     found = sorted({need.requirement for need in resolve_capabilities(runs).needs})
     assert found == list(requirements(on)) == list(requirements(Selection()))
     assert ("VOICEAI_API_KEY" in {c.name for c in credentials(on)}) == (tts.plugin == "voiceai")
-    assert [line for line in capabilities(on) if line.startswith("speech out")] == [
-        f"speech out: {tts.plugin} {tts.model}"
-        + (f", voice {tts.speaker}" if tts.speaker else "")
-        + f", speed {on.speed:g}"
-        + ("" if TTSConfig.takes_instructions(tts.plugin, tts.model) else ", no instructions")
-    ]
+    summary = shown(on)
+    assert summary.synthesis == Part(tts.plugin, tts.model)
+    assert (summary.speaker, summary.speed) == (tts.speaker, on.speed)
+    assert summary.instructions == TTSConfig.takes_instructions(tts.plugin, tts.model)
 
 
 def test_a_part_offers_the_reference_s_model_from_its_own_provider_alone() -> None:

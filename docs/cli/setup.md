@@ -27,9 +27,10 @@ keeps each of its answers. In a terminal, it asks step by step:
    speaker recognition), ENV memory (memories drawn from the session's audio and video by
    Google's Gemini), and where memory and persona keep vectors (LanceDB in the Avatar
    workspace, or your Qdrant). A part switched off keeps its settings, to switch it on later,
-   and asks nothing more: no model, no credential. No tool is on: switch DeepResearch or MCP on
-   in the bundle's tools profile, then run `alphaavatar setup <bundle>`; this release's setup
-   does not install RAG. Then the bundle name, asked again if a bundle has it, and the Avatar ID.
+   and asks nothing more: no model, no credential. No tool is on, the default, and it says how
+   to switch one on: DeepResearch or MCP in the bundle's tools profile, then
+   `alphaavatar setup <bundle>`; this release's setup does not install RAG. Then the bundle name,
+   asked again if a bundle has it, and the Avatar ID.
 2. **Models**: each running part's provider, then its model.
 
    | Part | Providers |
@@ -50,8 +51,11 @@ keeps each of its answers. In a terminal, it asks step by step:
    (`tts-1`, `tts-1-hd`, Voice.ai) is written with `instructions: null`.
 3. **Credentials**: each variable the choice reads, once, with the parts that read it; then
    whether to store them.
-4. **Install**: what the bundle runs with, the plan and its download, then whether to install
-   and enable it.
+4. **Install**: what the bundle runs with and the plan, in groups (the bundle, its
+   capabilities, each part's model, speech, where vectors are kept and the tools, then the
+   installation), then whether to install and enable it. An existing bundle's come from its
+   settings: its tools on, its stores where they are, a server of its own by its address alone,
+   without credential, query or fragment.
 
 On a terminal, a provider is chosen from a list: the arrow keys move, typing narrows it to the
 options holding what is typed, Escape clears that, Enter takes the marked one. With `TERM=dumb`
@@ -164,6 +168,11 @@ AlphaAvatar / Setup
     Voice: speech in and out, voice activity detected on this machine? [Y/n]:
     Models on this machine: turn taking, addressing, face and speaker recognition? [Y/n]: n
     …
+    Tools  None enabled (default)
+           Enable DeepResearch or MCP in the tools profile,
+           then run: alphaavatar setup <bundle>
+           RAG is not available through setup in this release.
+    …
 01  Capabilities   Bundle first · Voice on · Vision on · Local models off · ENV memory on
 02  Models
     Provider for the conversation: OpenAI
@@ -176,12 +185,35 @@ AlphaAvatar / Setup
 02  Models         OpenAI · Google
 03  Credentials    Ready
 04  Install
-    AlphaAvatar 0.6.9 (linux-x86_64), plan 97138f31be7bfc50
-    voice on · vision on · models on this machine off · ENV memory on
-    conversation: OpenAI gpt-5.6-luna
-    …
-    85 packages · 212 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/97138f31be7bfc50; bundle first, made the default
+
+    Configuration
+      Bundle          first · will become the default
+      Avatar ID       first
+      Version         0.6.9 · linux-x86_64
+
+    Capabilities
+      Voice           On
+      Vision          On
+      Local models    Off
+      ENV memory      On
+
+    Models
+      Conversation    OpenAI       gpt-5.6-luna
+      …
+
+    Storage & Tools
+      Vectors         LanceDB · Avatar workspace
+      Tools           None enabled (default)
+                      Enable DeepResearch or MCP in the tools profile,
+                      then run: alphaavatar setup first
+                      RAG is not available through setup in this release.
+
+    Installation
+      Packages        85
+      Download        212 MB
+      Plan            97138f31be7bfc50
+      Environment     ~/.local/lib/alphaavatar/envs/97138f31be7bfc50
+
     Install and enable? [Y/n]: y
 04  Install        85 packages · 212 MB
 05  Validate       PASS · 3 runners

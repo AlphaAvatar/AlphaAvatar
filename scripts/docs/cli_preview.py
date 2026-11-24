@@ -206,7 +206,12 @@ recording with the escape codes kept as colors (scripts/docs/cli_preview.py). Th
 and Setup ran on 2026-11-23 in an empty home on Alibaba Cloud Linux 3 (glibc 2.32), with the
 Linux package CI built for 3e5b8e2d (0.6.8-3e5b8e2d9b2a), its own wheels given with --artifacts,
 and fictional credentials; install.sh is the one this change brings, and Setup installed and
-validated for real. Config, and Doctor declined or with --no-metrics, ran earlier on a clean
+validated for real. The panels Setup's grouped install summary and config check's colored
+groups change were recorded again on 2026-11-24 with a package built from that change's
+source (0.6.8-a6e75ba8fb56-dirty.20261124093551), installed and set up for real: Setup's
+(setup-first, setup-bundle, setup-cancel, setup-interrupt, setup-nocolor) the same way, config
+check after setup (check) in the clean Ubuntu 24.04 root.
+Config, and Doctor declined or with --no-metrics, ran earlier on a clean
 Ubuntu 24.04 root with the Linux package of their build. Doctor's measured runs used the offline test doubles of its tests,
 marked 离线测试替身: their services and model files are stand-ins and their timings are the
 doubles', in rounds of their own. No panel here holds a real service's figures: those are

@@ -22,6 +22,7 @@
 | 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
 | 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 已提交（`01200003`），通过审查 |
 | 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 已提交（`e300619e`）；第一轮审查的四处修复已提交（`a9b2081a`，§7）；第二轮修复已提交（`37bd78b5`，§8）；第三轮复核的 KD-61 确定请求之后的窗口已修复，候选包已重建并复验，待审查（§9） |
+| 展示 | Setup 的 Tools 提示和分组的 04 Install 摘要，config check 的分组颜色和续行 | 完成，待审查（§10） |
 
 ## 1. 批次 0：demo.yaml
 
@@ -1146,3 +1147,111 @@ alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-37bd78b55e7b-dirty.202
 - 真实 Qdrant 服务端、多副本集群、网络文件系统：同 §9.6。
 - 确定请求结果未知时留下的待定记录不会自动删除；Host 被强制终止时同样如此（§8.4）。
 - O-35 继续延期。
+
+## 10. CLI 展示优化：Tools 提示、04 Install 摘要、config check 分组颜色（基线 `a6e75ba8`）
+
+用户实际用过安装、Setup 和 config check，整体没有问题；这一轮只做三处展示优化。配置生成、凭据处理、安装、升级、清理和运行时行为都不变，JSON 的内容、字段和退出码也不变。
+
+### 10.1 基线
+
+`a6e75ba8`（第五批第三轮修复）的 Quality（45341622203）和 Linux package（45341622214）都是 success。
+
+### 10.2 共用的渲染能力（`cli/render.py`）
+
+- 按用途命名的外观：`GROUP`（粗体信号青，分组标题）、`ATTENTION`（黄色，值得注意但不是故障的状态，例如默认未开启的部分）、`COMMAND`（信号青，可复制的命令）。命令里只引用这些名字，不出现 ANSI 转义码。
+- `Span`：一行中的一段文字及其外观；`Span.command()` 表示能放下时保持在同一行的命令。
+- `Report.group()`：分组标题。
+- `Report.field()`：标签和值。
+  - 值的每一行按终端宽度在空格处换行，续行对齐到值的起始列；
+  - 有三种情况，值会放到标签下方：旁边放不下整行，且换行空间不足 20 列；或者某个词（路径、模型 ID）在旁边放不下；
+  - 词不会被切断，所以完整的模型名和路径都保留；
+  - 只在启用颜色的终端上着色。`NO_COLOR`（包括空值）、`TERM=dumb`、管道和文件得到同样的纯文本。
+
+### 10.3 Setup 的 Tools 提示与 04 Install 摘要
+
+- Tools 提示（01 Capabilities 中，向量库问题之后）：
+  - 格式按用户给出的样式；
+  - `None enabled (default)` 为黄色，`alphaavatar setup <bundle>` 为青色，正文为普通色；
+  - 不标 `WARN`；按宽度换行，续行对齐。
+- 04 Install 摘要：
+  - 分为 Configuration、Capabilities、Models、Speech、Storage & Tools、Installation 六组，组间空一行，所有组共用一个值列；
+  - 摘要仍在问答和凭据之后、安装依赖之前，最后才问 `Install and enable?`。
+- 数据来源：
+  - 新 Bundle 的值来自本次最终的 `Selection`（`choices.shown()`）；
+  - 已有 Bundle 的值来自它的设置和安装计划所需的依赖（`choices.bundle_shown()`）；
+  - 安装部分来自实际的安装计划：包数、下载量、计划 ID，以及环境路径和是否复用。
+
+  不解析任何摘要文字。
+- 为了不复制配置规则，`_reference()`、`_changes()` 和 `bundle_shown()` 共用一张表 `MODEL_SETTINGS`/`EMBEDDINGS`，记录每个部分的模型写在哪个设置下。`_changes()` 写出的 profile 与之前完全一致（choices 的测试全部通过）。
+- 各项按实际展示：
+  - 关闭的能力为 `Off`；关闭语音时 STT、TTS 为 `Off`；
+  - 不同 Provider 用各自的名称；
+  - 自建服务器显示为 `Your server`，地址经 `public_address()` 处理，只留协议、主机、端口和路径，不含凭据、查询和片段；
+  - 新 Bundle 选 Qdrant 时为 `Qdrant · your server, from QDRANT_URL`；已有 Bundle 显示实际地址；Memory 与 Persona 的存储不同时分行列出；
+  - Voice.ai 为 `the model's own · 1.0 (fixed)`；不读 instructions 的模型标注 `no instructions`；
+  - 已有 Bundle 显示实际启用的工具（例如 `DeepResearch (default) · MCP (default, 1 server)`），没有工具时显示 `None enabled` 和开启方法；
+  - 新 Bundle 写 `will become the default`，已是默认的已有 Bundle 写 `already the default`；
+  - 复用环境时写 `None · installed already`，环境后标 `reused`。
+- 旧的 `choices.capabilities()`、`TOOLS` 常量和平铺的计划行已删除；已有 Bundle 的 01 行改由 `Shown` 生成。
+
+### 10.4 config check
+
+- `Configuration`、`host`、`agent`、`plugins/foundation`、`plugins/perception`、`plugins/tools` 改为 `GROUP`；蓝色标题和绿色 `OK` 不变。
+- 工具未开启时为黄色 `none`，文字保留。
+- 每一行改用 `field()`：Router、Memory、Persona 的长状态在空格处换行，续行对齐到值列，信息全部保留。
+- JSON 的生成路径没有改动；测试核对 JSON 在终端上同样不含转义字符。
+
+### 10.5 文档
+
+- `docs/cli/setup.md`：步骤说明和示例输出改为新的 Tools 提示和分组摘要。
+- `docs/cli/README.md`：颜色表加上分组和 `ATTENTION`，换行规则改为新的说明。
+- `docs/cli/config.md`：示例中 router 的续行和颜色说明。
+- `docs/cli/cli.html` 和 `scripts/docs/cli_preview.py` 的页面说明：见 §10.7。
+
+### 10.6 测试
+
+- `test_render.py`：
+  - 字段在 100、60、36 列下的布局：续行对齐；空间不足或某个词放不下时放到标签下方；路径和命令保持完整；
+  - 能放下的短值留在标签旁边；
+  - 颜色只出现在启用颜色的终端上（终端、`NO_COLOR` 空值、`TERM=dumb`），去掉转义后文字与管道输出相同。
+- `test_setup.py`：
+  - 01 的 Tools 提示文字；
+  - 关闭语音、使用 Qdrant 的新 Bundle 的摘要行，不出现 `WARN`；
+  - 已有 Bundle 的摘要：启用 DeepResearch 和 MCP，对话用带凭据、查询和片段的自建服务器 URL，Memory 用 Qdrant。摘要显示实际工具、只含地址的服务器、分行的存储和 `already the default`，输出中没有任何凭据片段；
+  - 原有的两条断言改为新布局。
+- `test_check.py`：分组的外观和工具 `none` 的黄色；60 列下 Router、Memory、Persona 的续行；JSON 依旧纯文本。
+- `test_choices.py`：语音关闭和开启时 `shown()` 的内容。
+- 结果：CLI 与 setup 的测试 348 passed；离线全量 1178 passed，241 warnings，385 s，运行前后未跟踪和被忽略的文件一致。仓库规范检查（`ruff check .`、`ruff format --check .`、`uv lock --check`、`check_workspace.py`、`git diff --check`、对改动文件的 pre-commit）都通过。
+
+### 10.7 `docs/cli/cli.html`
+
+- 为录制构建了一个包：HEAD `a6e75ba8` 加本轮改动，Build ID `0.6.8-a6e75ba8fb56-dirty.20261124093551`，构建方式同 §6.5。包内 Host 的 `render.py`、`setup.py`、`config.py`、`choices.py` 与工作区逐字节相同。这个包只用于录制，没有放进 `~/alphaavatar-candidates/`。
+- 重录六个受影响的面板，安装、Setup、校验都是真实执行，凭据都是虚构的：
+  - Setup 的五个面板（setup-first、setup-bundle、setup-cancel、setup-interrupt、setup-nocolor）：在空 HOME 中，用包自带的 `install.sh` 和 `--artifacts`；
+  - config check（check）：在干净的 Ubuntu 24.04 root 中（home 为 `/home/tester`），安装、`config init`、`setup` 之后录制，72 列。
+- 结果：
+  - `setup reference` 为 105 个包 / 514 MB，`PASS · 8 runners`；
+  - 新 Bundle（本机模型关闭）的摘要、拒绝计划、Ctrl+C 中断（01 的 Tools 提示）和 `NO_COLOR` 都已重录。
+- 拼接脚本只替换这六个 section 及其目录项；页面说明和 `cli_preview.py` 模板中的同一段同步修改。页面里没有本机路径、凭据值或转义字符，标签都配对。
+
+### 10.8 PTY 验证
+
+都在真实 PTY 中进行，使用假包（只执行 enable，不下载）：
+
+- 默认回答：在 100、60、40 列下检查摘要。没有超出宽度的行（单个完整词除外）；40 列时短值留在标签旁边，长值放到下方。
+- `NO_COLOR`（空值）、`TERM=dumb`、stdout 重定向到文件（终端仍在提问）三种模式：摘要文字与彩色终端完全相同，并且没有转义字符。
+- 彩色终端：分组标题为粗体青色；`None enabled (default)` 为黄色；01 与摘要里的命令为青色。
+- 一个组合选择：关闭语音、本机模型和 ENV memory，Qdrant，对话用自建服务器，Memory 用 Anthropic，Tool memory 沿用 Memory，Persona 用 OpenRouter，Embedding 用 Google。摘要按实际选择展示，完成安装。
+- 已有 Bundle（同 §10.6 的设置）：摘要正确，输出中没有任何凭据片段。
+- config check，分别对默认 Bundle 和启用工具的 Bundle，在 100 列、60 列、`NO_COLOR`、`TERM=dumb`、重定向下运行：
+  - 彩色时标题为蓝色、`OK` 为绿色，六个分组都为 `GROUP`，工具 `none` 为黄色（分别 3 个和 1 个）；
+  - 其余模式没有转义字符；
+  - 终端上的 `--json` 也没有转义字符，可以解析。
+- 每次运行结束后终端设置都恢复，光标显示。
+- 另用上一个构建的真实 catalog（假安装）走了一遍默认流程：摘要显示 105 个包 / 514 MB，与真实安装一致。
+
+### 10.9 验证范围与剩余
+
+- 没有调用付费模型，没有通话和压力测试（用户说明本轮不需要）。录制时的安装和校验是真实执行，没有调用远程模型服务。
+- 已有但不在本轮范围的展示问题，没有修改：窄终端（60、40 列）下，列表选择后回显所选答案的那一行（例如 `Provider for speech recognition: OpenAI, segment by segment (openai_segment)`），以及凭据步骤的 `Not stored: …` 说明，都会超出宽度，由终端折行。
+- 本轮改动尚未提交，没有对应的 CI。

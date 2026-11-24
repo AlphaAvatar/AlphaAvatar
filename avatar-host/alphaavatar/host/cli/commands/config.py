@@ -27,15 +27,15 @@ from pathlib import Path
 from typing import Any
 
 from alphaavatar.core.log.records import clean
-from alphaavatar.host.cli.render import Report, home_relative
+from alphaavatar.host.cli.render import ATTENTION, Report, Span, home_relative
 
 SCOPE = "Configuration and read-only path checks"
 
 
-def _lines(summary: dict[str, Any]) -> dict[str, dict[str, str]]:
+def _lines(summary: dict[str, Any]) -> dict[str, dict[str, str | Span]]:
     """Aligned facts by layer, as bundles lay out their profiles; "" holds the selection.
 
-    Plugins, tools and health are summarized, not listed raw.
+    Plugins, tools and health are summarized, not listed raw; a tool not on is marked so.
     """
     from alphaavatar.host.configs import LAYERS
 
@@ -82,12 +82,12 @@ def _lines(summary: dict[str, Any]) -> dict[str, dict[str, str]]:
         "memory": {"memory": stores["memory"]},
         "persona": {"persona": stores["persona"]},
         "tools": {
-            "deepresearch": _name(tools["deepresearch"]),
-            "rag": _name(tools["rag"]),
-            "mcp": _name(mcp),
+            "deepresearch": _tool(tools["deepresearch"]),
+            "rag": _tool(tools["rag"]),
+            "mcp": _tool(mcp),
         },
     }
-    layers: dict[str, dict[str, str]] = {
+    layers: dict[str, dict[str, str | Span]] = {
         "": {
             "config": config,
             "avatar_id": summary["avatar_id"],
@@ -102,6 +102,11 @@ def _lines(summary: dict[str, Any]) -> dict[str, dict[str, str]]:
 
 def _name(plugin: str | None) -> str:
     return plugin if plugin is not None else "none"
+
+
+def _tool(plugin: str | None) -> str | Span:
+    """A tool's plugin; not on, ``none``, worth noticing though no fault."""
+    return plugin if plugin is not None else Span("none", ATTENTION)
 
 
 def _switch(enabled: bool) -> str:
@@ -167,12 +172,13 @@ def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int
     report = Report()
     report.title("Config check")
     report.status("OK", f"{SCOPE} passed")
-    # Values share one column; the selection, then the facts of each profile layer.
+    # Values share one column; the selection, then the facts of each profile layer. A long
+    # value goes on under its start, as the router's switches do.
     column = report.column([key for facts in layers.values() for key in facts])
     for layer, facts in layers.items():
-        report.heading(layer or "Configuration")
+        report.group(layer or "Configuration")
         for key, value in facts.items():
-            report.row(key, value, column=column)
+            report.field(key, value, column=column)
     report.write()
     return 0
 

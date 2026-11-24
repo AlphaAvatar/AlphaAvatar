@@ -31,7 +31,8 @@ from config_samples import CONFIG, LOOP, SECRETS, files, write
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.host.cli.app import main
-from alphaavatar.host.log.format import BOLD, BRAND_BLUE, GREEN, RESET
+from alphaavatar.host.cli.render import ATTENTION, GROUP
+from alphaavatar.host.log.format import BRAND_BLUE, GREEN, RESET
 
 
 @pytest.fixture
@@ -421,6 +422,33 @@ def test_check_summary_passes_the_same_output_boundary(
         assert SECRETS["MCP_DOCS_TOKEN"] not in output
 
 
+def test_a_narrow_terminal_keeps_every_switch_going_on_under_its_value(
+    tmp_path: Path, sandbox: list[str], credentials: object, capsys: pytest.CaptureFixture
+) -> None:
+    """Router's, memory's and persona's switches, too long for 60 columns: wrapped at spaces,
+    each line going on under the value's start, nothing left out."""
+    config = write(tmp_path / "avatar.json", CONFIG)
+    with mock.patch.dict(os.environ, {"COLUMNS": "60"}):
+        assert main(["config", "check", str(config)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    start = lines.index("plugins/perception")
+    hang = " " * 17
+    assert lines[start + 1 : start + 10] == [
+        "  status         default",
+        "  router         default  (audio activity on, semantic",
+        f"{hang}addressing on, visual addressing on, turn",
+        f"{hang}taking on, interruption on)",
+        "  character      none",
+        "  memory         default  (vdb: qdrant; retrieval on,",
+        f"{hang}conversation on, tool on, environment off)",
+        "  persona        default  (vdb: lancedb; profiler on,",
+        f"{hang}speaker on, face on)",
+    ]
+    # Only a path, one word below its label, goes past the edge: never cut.
+    assert all(len(line) <= 60 or len(line.split()) == 1 for line in lines)
+    assert "  config" in lines and f"    {tmp_path / 'avatar.json'}" in lines
+
+
 @pytest.mark.parametrize(
     ("terminal", "environment"),
     [(True, {}), (False, {}), (True, {"NO_COLOR": ""}), (True, {"TERM": "dumb"})],
@@ -447,8 +475,10 @@ def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
     assert checked.getvalue().startswith(f"\n{title}\n{ok}Configuration and read-only")
     assert checked.getvalue().endswith("\n\n")
     lines = checked.getvalue().splitlines()
-    # Group headings are bold; labels and values are not styled at all.
-    assert (f"{BOLD}plugins/tools{RESET}" if styled else "plugins/tools") in lines
+    # Group headings in their own look, a tool not on marked; labels and values not styled.
+    assert (f"{GROUP}plugins/tools{RESET}" if styled else "plugins/tools") in lines
+    none = f"{ATTENTION}none{RESET}" if styled else "none"
+    assert f"  {'mcp'.ljust(len('deepresearch') + 3)}{none}" in lines
     assert f"  {'avatar_id'.ljust(len('deepresearch') + 3)}assistant" in lines
     assert ("\x1b" in checked.getvalue()) == styled
     # JSON never carries terminal styling, even on a terminal.

@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from alphaavatar.core.log.records import clean
-from alphaavatar.host.cli.render import STATUS, Report, home_relative
+from alphaavatar.host.cli.render import ATTENTION, STATUS, Line, Report, Span, home_relative
 
 LOCAL_SERVER = "http://localhost:8000/v1"
 # How the speech implementations are offered.
@@ -55,6 +55,16 @@ PARTS = {
     "transcription": "speech recognition",
     "synthesis": "speech synthesis",
 }
+# What the install summary calls each part running a model.
+LABELS = {
+    "loop": "Conversation",
+    "conversation": "Memory",
+    "tool": "Tool memory",
+    "environment": "ENV memory",
+    "profiler": "Persona",
+    "embedding": "Embedding",
+}
+PROVIDER = 13  # A model row's provider column: "Your server" and its gap.
 
 
 def _ask(out: Report, question: str, default: str) -> str:
@@ -92,7 +102,6 @@ def _yes(out: Report, question: str, default: bool = True) -> bool:
 def _switches(out: Report) -> dict[str, Any]:
     """The capabilities on or off, and where vectors are kept."""
     from alphaavatar.host.cli.render import Option
-    from alphaavatar.host.tools.setup.choices import TOOLS
 
     out.wrapped(
         "Each question starts from the reference configuration: Enter keeps its answer.", indent=4
@@ -109,7 +118,7 @@ def _switches(out: Report) -> dict[str, Any]:
     )
     stores = [Option("LanceDB in the Avatar workspace", "lancedb"), Option("Your Qdrant", "qdrant")]
     store = out.choose("Vectors for memory and persona", stores)
-    out.wrapped(TOOLS[0].upper() + TOOLS[1:] + ".", indent=4)
+    out.field("Tools", *_tools((), "<bundle>", new=True), indent=4, column=len("Tools") + 2)
     return {
         "voice": voice,
         "vision": vision,
@@ -286,22 +295,117 @@ def _models_line(selection) -> str:
     return " · ".join(dict.fromkeys(found))
 
 
-def _bundle_line(avatar, needs: dict[str, str]) -> str:
+def _bundle_line(shown) -> str:
     """An existing bundle's switches, as its settings and its plan have them."""
-    from alphaavatar.agents.runtime.plugin import plugin_requirement
-    from alphaavatar.agents.utils.vdb.config import vdb_requirement
-
-    local = ("router", "semantic"), ("router", "turn-taking"), ("persona", "speaker")
-    local += (("persona", "face"),)
-    environment = avatar.memory.init_config.get("environment")
     return _described(
-        voice=avatar.voice.stt.plugin is not None or avatar.voice.tts.plugin is not None,
-        vision=bool(avatar.vision.enabled),
-        local=any(plugin_requirement(*part) in needs for part in local),
-        # ENV memory runs only where its settings switch it on.
-        env=isinstance(environment, dict) and environment.get("enabled") is True,
-        qdrant=vdb_requirement("qdrant") in needs,
+        voice=shown.voice,
+        vision=shown.vision,
+        local=shown.local_models,
+        env=shown.env_memory,
+        qdrant=any(backend == "qdrant" for backend, _ in shown.vectors.values()),
     )
+
+
+def _tools(tools: tuple[str, ...], bundle: str, *, new: bool) -> tuple[Line, ...]:
+    """The tools on; none, how to switch one on: no fault, as none is the default."""
+    if tools:
+        return (" · ".join(tools),)
+    return (
+        Span("None enabled (default)" if new else "None enabled", ATTENTION),
+        "Enable DeepResearch or MCP in the tools profile,",
+        [Span("then run: "), Span.command(f"alphaavatar setup {bundle}")],
+        "RAG is not available through setup in this release.",
+    )
+
+
+def _summary(
+    out: Report,
+    shown,
+    *,
+    bundle: str,
+    avatar_id: str,
+    default: bool,
+    new: bool,
+    plan,
+    target: Path,
+    reused: bool,
+    kept: list[str],
+) -> None:
+    """What will be installed and enabled, in groups: the bundle, its switches, each part's
+    model, speech, where vectors are kept and the tools, then the plan."""
+    from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
+    from alphaavatar.host.tools.setup.choices import NAMES
+    from alphaavatar.host.tools.setup.environment import megabytes
+
+    on = {True: "On", False: "Off"}
+
+    def model(part) -> list[Span]:
+        provider = "Your server" if part.server else NAMES.get(part.provider, part.provider)
+        found = [Span(provider.ljust(PROVIDER)), Span(part.model)]
+        return found + ([Span(f" · {part.server}")] if part.server else [])
+
+    def speech(part, *more: str) -> str:
+        if part is None:
+            return "Off"
+        return " · ".join(
+            [part.provider, part.model, *([part.server] if part.server else []), *more]
+        )
+
+    def store(backend: str, where: str | None) -> str:
+        if backend == "qdrant":
+            return f"Qdrant · {where or 'your server, from QDRANT_URL'}"
+        return f"LanceDB · {home_relative(where) if where else 'Avatar workspace'}"
+
+    tts = shown.synthesis
+    speaking = [
+        ("STT", speech(shown.transcription)),
+        ("TTS", speech(tts, *([] if shown.instructions or tts is None else ["no instructions"]))),
+    ]
+    if tts is not None and shown.speed is not None:
+        fixed = "" if TTSConfig.takes_speed(tts.provider) else " (fixed)"
+        voice = shown.speaker or "the model's own"
+        speaking.append(("Voice / Speed", f"{voice} · {float(shown.speed)}{fixed}"))
+    # Memory's and persona's stores, once where they are one.
+    stores = {store(*found) for found in shown.vectors.values()}
+    vectors: tuple[Line, ...] = (stores.pop(),) if len(stores) == 1 else ("None",)
+    if len(stores) > 1:
+        vectors = tuple(f"{name.capitalize()}: {store(*at)}" for name, at in shown.vectors.items())
+    becomes = "already the default" if default else "will become the default"
+    size = "None · installed already" if reused else megabytes(plan.download_bytes)
+
+    groups: dict[str, list[tuple[str, tuple[Line, ...]]]] = {
+        "Configuration": [
+            ("Bundle", (f"{bundle} · {becomes}",)),
+            ("Avatar ID", (avatar_id,)),
+            ("Version", (f"{plan.version} · {plan.platform}",)),
+        ],
+        "Capabilities": [
+            ("Voice", (on[shown.voice],)),
+            ("Vision", (on[shown.vision],)),
+            ("Local models", (on[shown.local_models],)),
+            ("ENV memory", (on[shown.env_memory],)),
+        ],
+        "Models": [(LABELS[name], (model(part),)) for name, part in shown.models.items()],
+        "Speech": [(label, (value,)) for label, value in speaking],
+        "Storage & Tools": [("Vectors", vectors), ("Tools", _tools(shown.tools, bundle, new=new))],
+        "Installation": [
+            ("Packages", (str(len(plan.artifacts)),)),
+            *([("Kept", (f"{', '.join(kept)} · from the current environment",))] if kept else []),
+            ("Download", (size,)),
+            ("Plan", (plan.id[:16],)),
+            ("Environment", (home_relative(target) + (" · reused" if reused else ""),)),
+        ],
+    }
+    # One column whatever is shown: as wide with voice off as on.
+    column = out.column(
+        ["Voice / Speed", *(label for rows in groups.values() for label, _ in rows)]
+    )
+    for title, rows in groups.items():
+        if rows:
+            out.group(title, indent=4)
+        for label, lines in rows:
+            out.field(label, *lines, indent=6, column=column)
+    out.write()
 
 
 def _session_credentials(rtc, env, *, typed: bool = False) -> None:
@@ -524,6 +628,7 @@ def _setup(args: argparse.Namespace) -> int:
             out.begin(2, "Models")
             selection = choices.Selection(**switches, **_models(out, switches))
             out.step(2, "Models", _models_line(selection))
+            shown = choices.shown(selection)
             sections = choices.sections(selection)
             environment = [(c.name, c.purpose) for c in choices.credentials(selection)]
             texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
@@ -543,7 +648,8 @@ def _setup(args: argparse.Namespace) -> int:
                 raise SetupError(
                     "This release's setup installs nothing for: " + "; ".join(unserved)
                 )
-            out.step(1, "Capabilities", f"Bundle {name} · {_bundle_line(avatar, found)}")
+            shown = choices.bundle_shown(avatar, found)
+            out.step(1, "Capabilities", f"Bundle {name} · {_bundle_line(shown)}")
             out.step(2, "Models", "As the bundle's settings choose them")
             workspace_root = avatar.avatar.workspace_root
             _vectors(paths, catalog, avatar.avatar.id, workspace_root, avatar.model_dump())
@@ -576,18 +682,23 @@ def _setup(args: argparse.Namespace) -> int:
         size = "installed already" if reused else megabytes(plan.download_bytes)
         planned = f"{len(plan.artifacts)} packages · {size}"
         out.begin(4, "Install")
-        if extra := sorted(set(kept) - set(needed)):
+        extra = sorted(set(kept) - set(needed))
+        if extra and not terminal:
             out.wrapped(f"Kept from the current environment: {', '.join(extra)}", indent=4)
         if terminal:
-            # The plan, and what it downloads, before anything is installed.
-            plan_lines = [
-                f"AlphaAvatar {plan.version} ({plan.platform}), plan {plan.id[:16]}",
-                *(choices.capabilities(selection) if existing is None else ()),
-                f"{planned}{'' if reused else ' to download'}",
-                f"Environment {home_relative(target)}; bundle {name}, made the default",
-            ]
-            for line in plan_lines:
-                out.wrapped(line, indent=4)
+            # What is chosen and the plan, before anything is installed.
+            _summary(
+                out,
+                shown,
+                bundle=name,
+                avatar_id=avatar_id if existing is None else avatar.avatar.id,
+                default=existing is not None and read_settings(paths).get("default_bundle") == name,
+                new=existing is None,
+                plan=plan,
+                target=target,
+                reused=reused,
+                kept=extra,
+            )
             if not _yes(out, "Install and enable?"):
                 out.write()
                 errors.status("WARN", "Cancelled; nothing was enabled")

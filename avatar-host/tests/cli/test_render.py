@@ -32,7 +32,7 @@ from unittest import mock
 import pytest
 
 from alphaavatar.host.cli.commands import doctor as doctor_command
-from alphaavatar.host.cli.render import Option, Report
+from alphaavatar.host.cli.render import ATTENTION, COMMAND, GROUP, Option, Report, Span
 from alphaavatar.host.log.format import BRAND_BLUE, GREEN, RESET, SIGNAL_CYAN
 from alphaavatar.host.tools.doctor import (
     CHECKS,
@@ -154,6 +154,104 @@ def test_styles_are_a_terminals_alone_and_the_structure_is_the_same_without(
         assert f"  {SIGNAL_CYAN}alphaavatar doctor my-avatar{RESET}" in lines
         # Values, paths and labels keep the default foreground.
         assert "  Default      my-avatar" in lines
+
+
+def fields(out: Report) -> None:
+    out.group("Storage & Tools", indent=4)
+    column = out.column(["Voice / Speed"])
+    out.field("Vectors", "LanceDB · Avatar workspace", indent=6, column=column)
+    out.field(
+        "Tools",
+        Span("None enabled (default)", ATTENTION),
+        "Enable DeepResearch or MCP in the tools profile,",
+        [Span("then run: "), Span.command("alphaavatar setup <bundle>")],
+        indent=6,
+        column=column,
+    )
+    path = "~/.local/lib/alphaavatar/envs/9958276f7cc47431"
+    out.field("Environment", path, indent=6, column=column)
+    states = "audio activity on, semantic addressing on, visual addressing on, turn taking on"
+    out.field("router", f"default  ({states})", indent=6, column=column)
+
+
+def test_a_field_goes_on_under_its_value_and_below_its_label_only_without_room(
+    color_capable: object,
+) -> None:
+    """Each of a field's lines wrapped at spaces, going on under the value's start; below the
+    label where there is too little room to wrap it or a word would not fit, unless it fits
+    whole. A path and a command stay whole."""
+    wide, narrow, narrowest = io.StringIO(), io.StringIO(), io.StringIO()
+    fields(Report(wide, width=100))
+    fields(Report(narrow, width=60))
+    fields(Report(narrowest, width=36))
+    hang = " " * 22
+    assert wide.getvalue().splitlines() == [
+        "",
+        "    Storage & Tools",
+        "      Vectors         LanceDB · Avatar workspace",
+        "      Tools           None enabled (default)",
+        f"{hang}Enable DeepResearch or MCP in the tools profile,",
+        f"{hang}then run: alphaavatar setup <bundle>",
+        "      Environment     ~/.local/lib/alphaavatar/envs/9958276f7cc47431",
+        "      router          default  (audio activity on, semantic addressing on, visual "
+        "addressing on,",
+        f"{hang}turn taking on)",
+    ]
+    assert narrow.getvalue().splitlines()[3:] == [
+        "      Tools           None enabled (default)",
+        f"{hang}Enable DeepResearch or MCP in the",
+        f"{hang}tools profile,",
+        f"{hang}then run: alphaavatar setup <bundle>",
+        # Longer than the room beside its label, the path goes below it, whole.
+        "      Environment",
+        "        ~/.local/lib/alphaavatar/envs/9958276f7cc47431",
+        "      router          default  (audio activity on, semantic",
+        f"{hang}addressing on, visual addressing on,",
+        f"{hang}turn taking on)",
+    ]
+    assert all(len(line) <= 60 for line in narrow.getvalue().splitlines())
+    assert narrowest.getvalue().splitlines()[2:] == [
+        "      Vectors",
+        "        LanceDB · Avatar workspace",
+        "      Tools",
+        "        None enabled (default)",
+        "        Enable DeepResearch or MCP",
+        "        in the tools profile,",
+        "        then run:",
+        "        alphaavatar setup <bundle>",
+        "      Environment",
+        "        ~/.local/lib/alphaavatar/envs/9958276f7cc47431",
+        "      router",
+        "        default  (audio activity on,",
+        "        semantic addressing on,",
+        "        visual addressing on, turn",
+        "        taking on)",
+    ]
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [{}, {"NO_COLOR": ""}, {"TERM": "dumb"}],
+    ids=["terminal", "no-color", "dumb-terminal"],
+)
+def test_a_field_s_parts_are_styled_on_a_terminal_alone(
+    environment: dict[str, str], color_capable: object
+) -> None:
+    pipe, terminal = io.StringIO(), Terminal()
+    with mock.patch.dict(os.environ, environment):
+        fields(Report(pipe, width=60))
+        fields(Report(terminal, width=60))
+    styled = not environment
+    shown = terminal.getvalue()
+    assert ("\x1b" in shown) == styled and "\x1b" not in pipe.getvalue()
+    assert ANSI.sub("", shown) == pipe.getvalue()  # The same lines, only undecorated.
+    if styled:
+        lines = shown.splitlines()
+        assert lines[1] == f"    {GROUP}Storage & Tools{RESET}"
+        assert lines[3] == f"      Tools           {ATTENTION}None enabled (default){RESET}"
+        assert f"{' ' * 22}then run: {COMMAND}alphaavatar setup <bundle>{RESET}" in lines
+        # Labels, values and paths keep the default foreground.
+        assert "      Vectors         LanceDB · Avatar workspace" in lines
 
 
 def test_a_step_in_progress_takes_one_terminal_line_and_a_pipe_gets_what_goes_below(
@@ -676,3 +774,18 @@ def ended(point: str, signum: int) -> tuple[int, bool, int]:
         os.close(master)
         os.close(slave)
     return code, after == before, after[3]
+
+
+def test_a_short_value_stays_beside_its_label_where_longer_ones_go_below(
+    color_capable: object,
+) -> None:
+    out = io.StringIO()
+    report = Report(out, width=40)
+    column = report.column(["Voice / Speed"])
+    report.field("Voice", "On", indent=6, column=column)
+    report.field("Bundle", "avatar · will become the default", indent=6, column=column)
+    assert out.getvalue().splitlines() == [
+        "      Voice           On",
+        "      Bundle",
+        "        avatar · will become the default",
+    ]

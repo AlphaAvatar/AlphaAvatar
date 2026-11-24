@@ -248,9 +248,8 @@ plugins/foundation
 
 plugins/perception
   status         default
-  router
-    default  (audio activity on, semantic addressing on, visual addressing on, turn taking on,
-    interruption on)
+  router         default  (audio activity on, semantic addressing on, visual addressing on, turn
+                 taking on, interruption on)
   character      none
   memory         default  (vdb: lancedb; retrieval on, conversation on, tool on, environment off)
   persona        default  (vdb: lancedb; profiler on, speaker on, face off)
@@ -326,8 +325,9 @@ it says `setup installs it for a bundle, not a file`, and gives no command.
   the next step, as [`doctor`](doctor.md)'s `config.load` gives it; credentials and control
   characters removed.
 - The text follows the [commands' shared layout](README.md#output): a value too long for the
-  terminal goes below its label, as `router` does above at 100 columns. Colors appear only on
-  a terminal; pipes, `NO_COLOR` and `TERM=dumb` get the same text, plain.
+  terminal goes on under its own start, as `router` does above at 100 columns. On a terminal,
+  the groups are bold signal cyan and a tool not on, `none`, is yellow; pipes, `NO_COLOR` and
+  `TERM=dumb` get the same text, plain.
 
 ## Exit codes
 

@@ -43,7 +43,12 @@ recording with the escape codes kept as colors (scripts/docs/cli_preview.py). Th
 and Setup ran on 2026-11-23 in an empty home on Alibaba Cloud Linux 3 (glibc 2.32), with the
 Linux package CI built for 3e5b8e2d (0.6.8-3e5b8e2d9b2a), its own wheels given with --artifacts,
 and fictional credentials; install.sh is the one this change brings, and Setup installed and
-validated for real. Config, and Doctor declined or with --no-metrics, ran earlier on a clean
+validated for real. The panels Setup's grouped install summary and config check's colored
+groups change were recorded again on 2026-11-24 with a package built from that change's
+source (0.6.8-a6e75ba8fb56-dirty.20261124093551), installed and set up for real: Setup's
+(setup-first, setup-bundle, setup-cancel, setup-interrupt, setup-nocolor) the same way, config
+check after setup (check) in the clean Ubuntu 24.04 root.
+Config, and Doctor declined or with --no-metrics, ran earlier on a clean
 Ubuntu 24.04 root with the Linux package of their build. Doctor's measured runs used the offline test doubles of its tests,
 marked 离线测试替身: their services and model files are stand-ins and their timings are the
 doubles', in rounds of their own. No panel here holds a real service's figures: those are
@@ -120,8 +125,10 @@ Next
     <span style="color:rgb(34,211,238)">ENV memory: memories drawn from the session&#x27;s audio and video by Google&#x27;s Gemini, an external</span>
     <span style="color:rgb(34,211,238)">model? [Y/n]: </span>
     <span style="color:rgb(34,211,238)">Vectors for memory and persona:</span> LanceDB in the Avatar workspace
-    Tools: none on; to use DeepResearch or MCP, switch it on in the bundle&#x27;s tools profile, then run
-    `alphaavatar setup &lt;bundle&gt;`; this release&#x27;s setup does not install RAG.
+    Tools  <span style="color:#facc15">None enabled (default)</span>
+           Enable DeepResearch or MCP in the tools profile,
+           then run: <span style="color:rgb(34,211,238)">alphaavatar setup &lt;bundle&gt;</span>
+           RAG is not available through setup in this release.
     <span style="color:rgb(34,211,238)">Bundle name [avatar]: </span>first
     <span style="color:rgb(34,211,238)">Avatar ID [first]: </span>
 01  Capabilities   Bundle first · Voice on · Vision on · Local models off · ENV memory on
@@ -158,28 +165,51 @@ Next
     Not stored: start reads them from the environment or .env
 03  Credentials    Ready
 <span style="color:rgb(34,211,238)">04  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan 25a33dcc177809c5
-    voice on · vision on · models on this machine off · ENV memory on
-    sessions through LiveKit
-    conversation: OpenAI gpt-5.6-luna
-    memory: OpenAI gpt-4o; tool memory OpenAI gpt-4o
-    ENV memory: Google gemini-2.5-flash, from audio and video
-    persona profiles: OpenAI gpt-4o
-    embeddings: OpenAI text-embedding-3-small
-    speech in: openai_segment gpt-4o-transcribe
-    speech out: openai gpt-4o-mini-tts, voice ash, speed 1.15
-    memory and persona: vectors in LanceDB in the Avatar workspace
-    tools: none on; to use DeepResearch or MCP, switch it on in the bundle&#x27;s tools profile, then run
-    `alphaavatar setup &lt;bundle&gt;`; this release&#x27;s setup does not install RAG
-    85 packages · 212 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/25a33dcc177809c5; bundle first, made the default
+
+    <span style="color:rgb(34,211,238);font-weight:700">Configuration</span>
+      Bundle          first · will become the default
+      Avatar ID       first
+      Version         0.6.8 · linux-x86_64
+
+    <span style="color:rgb(34,211,238);font-weight:700">Capabilities</span>
+      Voice           On
+      Vision          On
+      Local models    Off
+      ENV memory      On
+
+    <span style="color:rgb(34,211,238);font-weight:700">Models</span>
+      Conversation    OpenAI       gpt-5.6-luna
+      Memory          OpenAI       gpt-4o
+      Tool memory     OpenAI       gpt-4o
+      ENV memory      Google       gemini-2.5-flash
+      Persona         OpenAI       gpt-4o
+      Embedding       OpenAI       text-embedding-3-small
+
+    <span style="color:rgb(34,211,238);font-weight:700">Speech</span>
+      STT             openai_segment · gpt-4o-transcribe
+      TTS             openai · gpt-4o-mini-tts
+      Voice / Speed   ash · 1.15
+
+    <span style="color:rgb(34,211,238);font-weight:700">Storage &amp; Tools</span>
+      Vectors         LanceDB · Avatar workspace
+      Tools           <span style="color:#facc15">None enabled (default)</span>
+                      Enable DeepResearch or MCP in the tools profile,
+                      then run: <span style="color:rgb(34,211,238)">alphaavatar setup first</span>
+                      RAG is not available through setup in this release.
+
+    <span style="color:rgb(34,211,238);font-weight:700">Installation</span>
+      Packages        85
+      Download        212 MB
+      Plan            993ef4cfdb9932b4
+      Environment     ~/.local/lib/alphaavatar/envs/993ef4cfdb9932b4
+
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
 04  Install        85 packages · 212 MB
 05  Validate       PASS · 3 runners
 
 <span style="color:#4ade80">OK</span>    Bundle enabled
       Default       first
-      Environment   ~/.local/lib/alphaavatar/envs/25a33dcc177809c5
+      Environment   ~/.local/lib/alphaavatar/envs/993ef4cfdb9932b4
       <span style="color:#9ca3af">Start reads OPENAI_API_KEY, GOOGLE_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET</span>
       <span style="color:#9ca3af">from the environment or .env.</span>
 
@@ -247,57 +277,90 @@ Next
 02  Models         As the bundle&#x27;s settings choose them
 03  Credentials    From the environment, .env or those stored
 <span style="color:rgb(34,211,238)">04  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan e029a153eb3a73a7
-    105 packages · 515 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7; bundle reference, made the default
+
+    <span style="color:rgb(34,211,238);font-weight:700">Configuration</span>
+      Bundle          reference · will become the default
+      Avatar ID       reference
+      Version         0.6.8 · linux-x86_64
+
+    <span style="color:rgb(34,211,238);font-weight:700">Capabilities</span>
+      Voice           On
+      Vision          On
+      Local models    On
+      ENV memory      On
+
+    <span style="color:rgb(34,211,238);font-weight:700">Models</span>
+      Conversation    OpenAI       gpt-5.6-luna
+      Memory          OpenAI       gpt-4o
+      Tool memory     OpenAI       gpt-4o
+      ENV memory      Google       gemini-2.5-flash
+      Persona         OpenAI       gpt-4o
+      Embedding       OpenAI       text-embedding-3-small
+
+    <span style="color:rgb(34,211,238);font-weight:700">Speech</span>
+      STT             openai_segment · gpt-4o-transcribe
+      TTS             openai · gpt-4o-mini-tts
+      Voice / Speed   ash · 1.15
+
+    <span style="color:rgb(34,211,238);font-weight:700">Storage &amp; Tools</span>
+      Vectors         LanceDB · Avatar workspace
+      Tools           <span style="color:#facc15">None enabled</span>
+                      Enable DeepResearch or MCP in the tools profile,
+                      then run: <span style="color:rgb(34,211,238)">alphaavatar setup reference</span>
+                      RAG is not available through setup in this release.
+
+    <span style="color:rgb(34,211,238);font-weight:700">Installation</span>
+      Packages        105
+      Download        514 MB
+      Plan            35d6e65d4c99785a
+      Environment     ~/.local/lib/alphaavatar/envs/35d6e65d4c99785a
+
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
-04  Install        105 packages · 515 MB
+04  Install        105 packages · 514 MB
 05  Validate       PASS · 8 runners
 
 <span style="color:#4ade80">OK</span>    Bundle enabled
       Default       reference
-      Environment   ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7
+      Environment   ~/.local/lib/alphaavatar/envs/35d6e65d4c99785a
 
 <span style="font-weight:700">Next</span>
   <span style="color:rgb(34,211,238)">alphaavatar doctor reference</span></pre></div></section>
 <section id="check"><h2>alphaavatar config check reference — after setup</h2><p class="meta"><span>72 columns</span><span>exit 0</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Config check</span>
 <span style="color:#4ade80">OK</span>    Configuration and read-only path checks passed
 
-<span style="font-weight:700">Configuration</span>
+<span style="color:rgb(34,211,238);font-weight:700">Configuration</span>
   config         bundle reference
   avatar_id      reference
   home           /home/tester/.local/share/alphaavatar
   workspace      /home/tester/.local/share/alphaavatar/avatars/reference
 
-<span style="font-weight:700">host</span>
+<span style="color:rgb(34,211,238);font-weight:700">host</span>
   rtc            livekit
   health         127.0.0.1:8081 (dev: free port)
 
-<span style="font-weight:700">agent</span>
+<span style="color:rgb(34,211,238);font-weight:700">agent</span>
   inference      8 runners, 1 worker each
 
-<span style="font-weight:700">plugins/foundation</span>
+<span style="color:rgb(34,211,238);font-weight:700">plugins/foundation</span>
   context        default
   loop           realtime
   voice          vad=silero  stt=openai_segment  tts=openai
   vision         on  (input: vlm)
 
-<span style="font-weight:700">plugins/perception</span>
+<span style="color:rgb(34,211,238);font-weight:700">plugins/perception</span>
   status         default
-  router
-    default  (audio activity on, semantic addressing on, visual
-    addressing on, turn taking on, interruption on)
+  router         default  (audio activity on, semantic addressing on,
+                 visual addressing on, turn taking on, interruption on)
   character      none
-  memory
-    default  (vdb: lancedb; retrieval on, conversation on, tool on,
-    environment off)
-  persona
-    default  (vdb: lancedb; profiler on, speaker on, face on)
+  memory         default  (vdb: lancedb; retrieval on, conversation on,
+                 tool on, environment on)
+  persona        default  (vdb: lancedb; profiler on, speaker on, face
+                 on)
 
-<span style="font-weight:700">plugins/tools</span>
-  deepresearch   none
-  rag            none
-  mcp            none</pre></div></section>
+<span style="color:rgb(34,211,238);font-weight:700">plugins/tools</span>
+  deepresearch   <span style="color:#facc15">none</span>
+  rag            <span style="color:#facc15">none</span>
+  mcp            <span style="color:#facc15">none</span></pre></div></section>
 <section id="setup-unserved"><h2>alphaavatar setup ragged — a selection this release does not install</h2><p class="meta"><span>72 columns</span><span>exit 1</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
 
 <span style="color:#f87171">FAIL</span>  Setup failed; nothing was enabled
@@ -309,10 +372,45 @@ Next
 02  Models         As the bundle&#x27;s settings choose them
 03  Credentials    From the environment, .env or those stored
 <span style="color:rgb(34,211,238)">04  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan e029a153eb3a73a7
-    105 packages · 515 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7; bundle
-    reference, made the default
+
+    <span style="color:rgb(34,211,238);font-weight:700">Configuration</span>
+      Bundle          reference · will become the default
+      Avatar ID       reference
+      Version         0.6.8 · linux-x86_64
+
+    <span style="color:rgb(34,211,238);font-weight:700">Capabilities</span>
+      Voice           On
+      Vision          On
+      Local models    On
+      ENV memory      On
+
+    <span style="color:rgb(34,211,238);font-weight:700">Models</span>
+      Conversation    OpenAI       gpt-5.6-luna
+      Memory          OpenAI       gpt-4o
+      Tool memory     OpenAI       gpt-4o
+      ENV memory      Google       gemini-2.5-flash
+      Persona         OpenAI       gpt-4o
+      Embedding       OpenAI       text-embedding-3-small
+
+    <span style="color:rgb(34,211,238);font-weight:700">Speech</span>
+      STT             openai_segment · gpt-4o-transcribe
+      TTS             openai · gpt-4o-mini-tts
+      Voice / Speed   ash · 1.15
+
+    <span style="color:rgb(34,211,238);font-weight:700">Storage &amp; Tools</span>
+      Vectors         LanceDB · Avatar workspace
+      Tools           <span style="color:#facc15">None enabled</span>
+                      Enable DeepResearch or MCP in the tools profile,
+                      then run: <span style="color:rgb(34,211,238)">alphaavatar setup reference</span>
+                      RAG is not available through setup in this
+                      release.
+
+    <span style="color:rgb(34,211,238);font-weight:700">Installation</span>
+      Packages        105
+      Download        514 MB
+      Plan            35d6e65d4c99785a
+      Environment     ~/.local/lib/alphaavatar/envs/35d6e65d4c99785a
+
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>n
 
 <span style="color:#facc15">WARN</span>  Cancelled; nothing was enabled</pre></div></section>
@@ -329,9 +427,10 @@ Next
     <span style="color:rgb(34,211,238)">ENV memory: memories drawn from the session&#x27;s audio and video by</span>
     <span style="color:rgb(34,211,238)">Google&#x27;s Gemini, an external model? [Y/n]: </span>
     <span style="color:rgb(34,211,238)">Vectors for memory and persona:</span> LanceDB in the Avatar workspace
-    Tools: none on; to use DeepResearch or MCP, switch it on in the
-    bundle&#x27;s tools profile, then run `alphaavatar setup &lt;bundle&gt;`; this
-    release&#x27;s setup does not install RAG.
+    Tools  <span style="color:#facc15">None enabled (default)</span>
+           Enable DeepResearch or MCP in the tools profile,
+           then run: <span style="color:rgb(34,211,238)">alphaavatar setup &lt;bundle&gt;</span>
+           RAG is not available through setup in this release.
     <span style="color:rgb(34,211,238)">Bundle name [avatar]: </span>second
     <span style="color:rgb(34,211,238)">Avatar ID [second]: </span>
 01  Capabilities   Bundle second · Voice on · Vision on
@@ -348,20 +447,55 @@ Next
 02  Models         As the bundle&#x27;s settings choose them
 03  Credentials    From the environment, .env or those stored
 04  Install
-    AlphaAvatar 0.6.8 (linux-x86_64), plan e029a153eb3a73a7
-    105 packages · installed already
-    Environment ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7; bundle reference, made the default
+
+    Configuration
+      Bundle          reference · already the default
+      Avatar ID       reference
+      Version         0.6.8 · linux-x86_64
+
+    Capabilities
+      Voice           On
+      Vision          On
+      Local models    On
+      ENV memory      On
+
+    Models
+      Conversation    OpenAI       gpt-5.6-luna
+      Memory          OpenAI       gpt-4o
+      Tool memory     OpenAI       gpt-4o
+      ENV memory      Google       gemini-2.5-flash
+      Persona         OpenAI       gpt-4o
+      Embedding       OpenAI       text-embedding-3-small
+
+    Speech
+      STT             openai_segment · gpt-4o-transcribe
+      TTS             openai · gpt-4o-mini-tts
+      Voice / Speed   ash · 1.15
+
+    Storage &amp; Tools
+      Vectors         LanceDB · Avatar workspace
+      Tools           None enabled
+                      Enable DeepResearch or MCP in the tools profile,
+                      then run: alphaavatar setup reference
+                      RAG is not available through setup in this release.
+
+    Installation
+      Packages        105
+      Download        None · installed already
+      Plan            35d6e65d4c99785a
+      Environment     ~/.local/lib/alphaavatar/envs/35d6e65d4c99785a · reused
+
     Install and enable? [Y/n]: y
 04  Install
     Environment
-    /home/tester/.local/lib/alphaavatar/envs/e029a153eb3a73a7
+    /home/tester/.local/lib/alphaavatar/envs/35d6e65d4c99785a
     is already installed; checking it
 04  Install        105 packages · installed already
 05  Validate       PASS · 8 runners
 
 OK    Bundle enabled
       Default       reference
-      Environment   ~/.local/lib/alphaavatar/envs/e029a153eb3a73a7
+      Environment   ~/.local/lib/alphaavatar/envs/35d6e65d4c99785a
 
 Next
   alphaavatar doctor reference</pre></div></section>

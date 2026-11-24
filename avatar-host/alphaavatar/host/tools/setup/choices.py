@@ -212,10 +212,32 @@ class Synthesis:
         return server_key(self.server) if self.server else KEYS[self.plugin]
 
 
-TOOLS = (
-    "tools: none on; to use DeepResearch or MCP, switch it on in the bundle's tools profile, "
-    "then run `alphaavatar setup <bundle>`; this release's setup does not install RAG"
+def _task(part: str, name: str) -> tuple[str, ...]:
+    return ("init_config", part, "provider", "gateway", "tasks", name)
+
+
+# Where each part's model is set, by section and path: the reference's read there, a
+# selection's written there, an existing bundle's read there to be shown.
+MODEL_SETTINGS = {
+    "loop": ("loop", ("init_config", "model")),
+    "conversation": ("memory", _task("conversation", "memory.conversation_delta")),
+    "tool": ("memory", _task("tool", "memory.tool_delta")),
+    "environment": ("memory", _task("environment", "memory.env_delta")),
+    "profiler": ("persona", _task("profiler", "persona.profile_delta")),
+    "embedding": ("memory", ("vdb_config", "embedding")),
+}
+# Each store's embedding: one chosen for all.
+EMBEDDINGS = (
+    ("memory", ("vdb_config", "embedding")),
+    ("persona", ("vdb_config", "embedding")),
+    ("tools", ("mcp", "vdb_config", "embedding")),
 )
+
+
+def _at(settings: Any, *path: str) -> Any:
+    for key in path:
+        settings = settings.get(key) if isinstance(settings, Mapping) else None
+    return settings
 
 
 def _reference() -> dict[str, Any]:
@@ -227,19 +249,14 @@ def _reference() -> dict[str, Any]:
     profile = {section: yaml.safe_load(SECTIONS[section]) for section in ("loop", "voice")}
     profile |= {section: yaml.safe_load(SECTIONS[section]) for section in ("memory", "persona")}
 
-    def task(section: str, part: str, name: str) -> Model:
-        found = profile[section]["init_config"][part]["provider"]["gateway"]["tasks"][name]
+    def model(part: str) -> Model:
+        section, path = MODEL_SETTINGS[part]
+        found = _at(profile[section], *path)
         return Model(found["provider"], found["model"])
 
-    loop, voice = profile["loop"]["init_config"]["model"], profile["voice"]
-    embedding = profile["memory"]["vdb_config"]["embedding"]
+    voice = profile["voice"]
     return {
-        "loop": Model(loop["provider"], loop["model"]),
-        "conversation": task("memory", "conversation", "memory.conversation_delta"),
-        "tool": task("memory", "tool", "memory.tool_delta"),
-        "environment": task("memory", "environment", "memory.env_delta"),
-        "profiler": task("persona", "profiler", "persona.profile_delta"),
-        "embedding": Model(embedding["provider"], embedding["model"]),
+        **{part: model(part) for part in MODEL_SETTINGS},
         "transcription": Transcription(voice["stt"]["plugin"], voice["stt"]["model"]),
         "synthesis": Synthesis(
             voice["tts"]["plugin"], voice["tts"]["model"], voice["tts"]["speaker"]
@@ -526,39 +543,139 @@ def _takes_instructions(synthesis: Synthesis) -> bool:
     return TTSConfig.takes_instructions(synthesis.plugin, synthesis.model)
 
 
-def capabilities(selection: Selection) -> tuple[str, ...]:
-    """What the selection runs with, in words, as shown before anything is installed."""
-    on = {True: "on", False: "off"}
-    store = {"lancedb": "LanceDB in the Avatar workspace", "qdrant": "your Qdrant server"}
-    found = [
-        f"voice {on[selection.voice]} · vision {on[selection.vision]} · models on this machine "
-        f"{on[selection.local_models]} · ENV memory {on[selection.env_memory]}",
-        "sessions through LiveKit",
-        f"conversation: {selection.loop.describe()}",
-        f"memory: {selection.conversation.describe()}; tool memory {selection.tool.describe()}",
-    ]
-    if selection.env_memory:
-        found.append(f"ENV memory: {selection.environment.describe()}, from audio and video")
-    found += [
-        f"persona profiles: {selection.profiler.describe()}",
-        f"embeddings: {selection.embedding.describe()}",
-    ]
-    if speech := selection.speech():
-        stt, tts = speech
-        found.append(
-            f"speech in: {stt.plugin} {stt.model}" + (f" on {stt.server}" * bool(stt.server))
-        )
-        voice = f", voice {tts.speaker}" if tts.speaker else ""
-        found.append(
-            f"speech out: {tts.plugin} {tts.model}{voice}, speed {selection.speed:g}"
-            + (f" on {tts.server}" * bool(tts.server))
-            + ("" if _takes_instructions(tts) else ", no instructions")
-        )
-    if selection.local_models:
-        local = "turn taking, addressing, speaker and face recognition"
-        found.append(f"models on this machine: {local if selection.voice else 'face recognition'}")
-    found += [f"memory and persona: vectors in {store[selection.vector_store]}", TOOLS]
-    return tuple(found)
+def public_address(url: str) -> str:
+    """A server's address as it may be shown: its scheme, host, port and path, never a
+    credential, query or fragment."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    try:
+        port = f":{parts.port}" if parts.port else ""
+    except ValueError:
+        port = ""
+    if not parts.scheme or not host:
+        return "a server of your own"
+    return f"{parts.scheme}://{f'[{host}]' if ':' in host else host}{port}{parts.path}"
+
+
+@dataclass(frozen=True, slots=True)
+class Part:
+    """A part as setup shows it: who runs it (its provider, or for speech its
+    implementation), its model, and where a server of one's own is, as ``public_address``."""
+
+    provider: str
+    model: str
+    server: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Shown:
+    """What a bundle runs with, as shown before installing: a new bundle's selection, or an
+    existing bundle's settings, in the same terms."""
+
+    voice: bool
+    vision: bool
+    local_models: bool
+    env_memory: bool
+    models: dict[str, Part]  # Each part running a model, by its name in ``MODEL_SETTINGS``.
+    transcription: Part | None  # None: no speech in.
+    synthesis: Part | None
+    speaker: str | None  # The voice; None, the model's own.
+    speed: float | None
+    instructions: bool  # Whether the speech model reads instructions.
+    # By store: its backend, and where it is (a directory, a server; None, the workspace's).
+    vectors: dict[str, tuple[str, str | None]]
+    tools: tuple[str, ...]  # Each tool on, described.
+
+
+def shown(selection: Selection) -> Shown:
+    """A new bundle's selection as shown: its stores where it keeps vectors, no tool on."""
+
+    def part(chosen: Model | Transcription | Synthesis, provider: str) -> Part:
+        return Part(provider, chosen.model, chosen.server and public_address(chosen.server))
+
+    speech = selection.speech()
+    store = (selection.vector_store, None)
+    return Shown(
+        voice=selection.voice,
+        vision=selection.vision,
+        local_models=selection.local_models,
+        env_memory=selection.env_memory,
+        models={name: part(m, m.provider) for name, m in selection.models().items()},
+        transcription=speech and part(speech[0], speech[0].plugin),
+        synthesis=speech and part(speech[1], speech[1].plugin),
+        speaker=selection.synthesis.speaker,
+        speed=selection.speed,
+        instructions=_takes_instructions(selection.synthesis),
+        vectors={"memory": store, "persona": store},
+        tools=(),
+    )
+
+
+def bundle_shown(avatar: Any, needs: Mapping[str, str]) -> Shown:
+    """An existing bundle as shown, from its settings and what its plan installs (``needs``,
+    from ``bundle_requirements``): each part as set, each store where it is, each tool on."""
+    from alphaavatar.agents.configs.plugins.foundation.voice_config import TTSConfig
+    from alphaavatar.agents.utils.vdb.config import vdb_backend
+
+    settings = avatar.model_dump()
+    local = ("router", "semantic"), ("router", "turn-taking"), ("persona", "speaker")
+    local += (("persona", "face"),)
+    environment = _at(settings, "memory", "init_config", "environment")
+    # ENV memory runs only where its settings switch it on.
+    env = isinstance(environment, dict) and environment.get("enabled") is True
+
+    def part(found: Any, provider: str | None = None) -> Part | None:
+        if not isinstance(found, Mapping) or not found.get("model"):
+            return None
+        server = found.get("base_url") or _at(found, "extra", "base_url")
+        name = provider or str(found.get("provider") or "openai")
+        return Part(name, str(found["model"]), server and public_address(str(server)))
+
+    models = {}
+    for name, (section, path) in MODEL_SETTINGS.items():
+        runs = _at(settings, section, "plugin") is not None and (name != "environment" or env)
+        if runs and (found := part(_at(settings, section, *path))) is not None:
+            models[name] = found
+    stt, tts = settings["voice"]["stt"], settings["voice"]["tts"]
+    transcription = part(stt, stt["plugin"]) if stt.get("plugin") else None
+    synthesis = part(tts, tts["plugin"]) if tts.get("plugin") else None
+
+    vectors = {}
+    for section in ("memory", "persona"):
+        vdb = _at(settings, section, "vdb_config")
+        if _at(settings, section, "plugin") is None or not isinstance(vdb, Mapping):
+            continue
+        backend = vdb_backend(dict(vdb))
+        if backend == "qdrant":
+            where = public_address(vdb["url"]) if vdb.get("url") else f"{vdb['host']}:{vdb['port']}"
+        else:
+            where = str(vdb["client_path"]) if vdb.get("client_path") else None
+        vectors[section] = (backend, where)
+
+    tools = []
+    for name, shown_as in (("deepresearch", "DeepResearch"), ("rag", "RAG")):
+        if plugin := _at(settings, "tools", name, "plugin"):
+            tools.append(f"{shown_as} ({plugin})")
+    mcp = settings["tools"]["mcp"]
+    if mcp.get("enabled") and mcp.get("plugin"):
+        servers = len(mcp.get("servers") or {})
+        tools.append(f"MCP ({mcp['plugin']}, {servers} server{'' if servers == 1 else 's'})")
+
+    plugin = tts.get("plugin")
+    return Shown(
+        voice=stt.get("plugin") is not None or plugin is not None,
+        vision=bool(avatar.vision.enabled),
+        local_models=any(plugin_requirement(*part) in needs for part in local),
+        env_memory=env,
+        models=models,
+        transcription=transcription,
+        synthesis=synthesis,
+        speaker=tts.get("speaker"),
+        speed=(tts.get("speed") if TTSConfig.takes_speed(plugin) else 1.0) if plugin else None,
+        instructions=bool(plugin) and TTSConfig.takes_instructions(plugin, tts.get("model")),
+        vectors=vectors,
+        tools=tuple(tools),
+    )
 
 
 def _changes(selection: Selection) -> dict[str, list[Change]]:
@@ -599,20 +716,10 @@ def _changes(selection: Selection) -> dict[str, list[Change]]:
     if not selection.env_memory:
         put("memory", "init_config", "environment", "enabled", value=False)
 
-    model("loop", ("init_config", "model"), selection.loop, REFERENCE["loop"])
-    for section, part, task in (
-        ("memory", "conversation", "memory.conversation_delta"),
-        ("memory", "tool", "memory.tool_delta"),
-        ("memory", "environment", "memory.env_delta"),
-        ("persona", "profiler", "persona.profile_delta"),
-    ):
-        path = ("init_config", part, "provider", "gateway", "tasks", task)
-        model(section, path, getattr(selection, part), REFERENCE[part])
-    for section, path in (
-        ("memory", ("vdb_config", "embedding")),
-        ("persona", ("vdb_config", "embedding")),
-        ("tools", ("mcp", "vdb_config", "embedding")),
-    ):
+    for part, (section, path) in MODEL_SETTINGS.items():
+        if part != "embedding":
+            model(section, path, getattr(selection, part), REFERENCE[part])
+    for section, path in EMBEDDINGS:
         model(section, path, selection.embedding, REFERENCE["embedding"])
 
     # Voice decides whether each part runs: off, none does, what was chosen kept beside it.

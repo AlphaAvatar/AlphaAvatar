@@ -16,16 +16,18 @@ setup asks its questions.
 
 A report is a title, a status, then groups of rows: labels in one column, values aligned in
 the next. A value too long for the terminal goes below its label, indented and wrapped at
-spaces; diagnostics print as they are, so their lines stay whole. Colors decorate text on a
-terminal only: pipes, ``NO_COLOR`` and ``TERM=dumb`` get the same structure in plain text,
-and JSON never comes here. Callers pass text already redacted; it is control-character
-cleaned before it is styled.
+spaces, or, in a field, on under its own start; diagnostics print as they are, so their lines
+stay whole. Colors decorate text on a terminal only: pipes, ``NO_COLOR`` and ``TERM=dumb`` get
+the same structure in plain text, and JSON never comes here. Commands name a part's look by
+its use (``ATTENTION``, ``COMMAND``), never by its codes. Callers pass text already redacted;
+it is control-character cleaned before it is styled.
 """
 
 from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sys
 import textwrap
 from collections.abc import Sequence
@@ -47,11 +49,15 @@ from alphaavatar.host.log.format import (
 )
 
 STATUSES = {"OK": GREEN, "PASS": GREEN, "WARN": YELLOW, "FAIL": RED, "ERROR": RED, "SKIP": DIM}
+GROUP = BOLD + SIGNAL_CYAN  # A group of rows' title.
+ATTENTION = YELLOW  # A state worth noticing that is no fault, as a part off by default.
+COMMAND = SIGNAL_CYAN  # A command to copy.
 STATUS = 6  # A status and its gap: "ERROR " and the rest, padded alike.
 GAP = 3  # Between a label and its value.
 LABEL = 10  # The narrowest label column, before its gap.
 STEP = 15  # A setup step's name and its gap.
 VISIBLE = 8  # The options a list shows at once; it scrolls past them.
+ROOM = 20  # The narrowest a field's value goes beside its label; narrower, it goes below.
 HINTS = ("↑↓ to move, type to narrow, Enter to choose", "↑↓, type, Enter")  # Beside its question.
 # Where a stream cannot encode them, as an ASCII terminal.
 _ASCII = str.maketrans({"·": "-", "→": "->", "—": "-", "…": "...", "›": ">", "↑": "^", "↓": "v"})
@@ -91,6 +97,52 @@ def home_relative(path: str | Path) -> str:
         return "~/" + str(Path(path).relative_to(Path.home()))
     except ValueError:
         return str(path)
+
+
+@dataclass(frozen=True, slots=True)
+class Span:
+    """Part of a line, in one of the report's looks (``ATTENTION``, ``COMMAND``) or plain;
+    ``whole``, kept on one line wherever a line holds it, as a command to copy."""
+
+    text: str
+    style: str | None = None
+    whole: bool = False
+
+    @classmethod
+    def command(cls, text: str) -> Span:
+        return cls(text, COMMAND, whole=True)
+
+
+Line = str | Span | Sequence[Span]  # A field's line: plain text, or its parts.
+
+
+def _spans(line: Line) -> list[Span]:
+    if isinstance(line, str):
+        return [Span(line)]
+    return [line] if isinstance(line, Span) else list(line)
+
+
+def _wrap(spans: Sequence[Span], width: int) -> list[list[Span]]:
+    """Spans wrapped at spaces to ``width``, each word in its span's style and the spaces
+    between words kept; a word longer than a line, such as a path, stays whole."""
+    lines: list[list[Span]] = [[]]
+    used = 0
+    for span in spans:
+        text = clean(span.text)
+        pieces = [text] if span.whole and len(text) <= width else re.split(r"( +)", text)
+        for piece in pieces:
+            if not piece or (piece.isspace() and not lines[-1]):
+                continue
+            if not piece.isspace() and lines[-1] and used + len(piece) > width:
+                while lines[-1] and lines[-1][-1].text.isspace():
+                    used -= len(lines[-1].pop().text)  # No space left at a line's end.
+                lines.append([])
+                used = 0
+            lines[-1].append(Span(piece, span.style))
+            used += len(piece)
+    while lines[-1] and lines[-1][-1].text.isspace():
+        lines[-1].pop()
+    return lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +212,16 @@ class Report:
     def paint(self, text: str, style: str) -> str:
         return f"{style}{text}{RESET}" if self.color and text else text
 
+    def _painted(self, spans: Sequence[Span]) -> str:
+        """Spans as one line, each run of one style painted once."""
+        runs: list[Span] = []
+        for span in spans:
+            if runs and runs[-1].style == span.style:
+                runs[-1] = Span(runs[-1].text + span.text, span.style)
+            else:
+                runs.append(span)
+        return "".join(self.paint(run.text, run.style) if run.style else run.text for run in runs)
+
     # Parts
 
     def title(self, name: str) -> None:
@@ -176,6 +238,11 @@ class Report:
     def heading(self, text: str) -> None:
         self.write()
         self.write(self.paint(text, BOLD))
+
+    def group(self, title: str, *, indent: int = 0) -> None:
+        """A group of rows' title, apart from what is above it."""
+        self.write()
+        self.write(" " * indent + self.paint(clean(title), GROUP))
 
     @staticmethod
     def column(labels: Sequence[str]) -> int:
@@ -205,6 +272,26 @@ class Report:
             self.write(lead + label)
             # Below a status row, under its label; below a plain one, further in.
             self.wrapped(value, indent=start if status else indent + 2)
+
+    def field(self, label: str, *lines: Line, indent: int = 2, column: int | None = None) -> None:
+        """A label and its value in the column, each of the value's lines wrapped at spaces to
+        the terminal and going on under the value's start. The value goes below the label
+        where beside it a line would not fit whole and there is too little room to wrap, or a
+        word would not fit: words stay whole, so a model ID or a path is never cut."""
+        label = clean(label)
+        column = column or self.column([label])
+        start, room = indent + column, self.width - indent - column
+        texts = [clean("".join(span.text for span in _spans(line))) for line in lines]
+        longest = max((len(word) for text in texts for word in text.split()), default=0)
+        below = not all(len(text) <= room for text in texts) and (room < ROOM or longest > room)
+        if below:
+            self.write(" " * indent + label)
+            start = indent + 2
+        room = max(self.width - start, 1)
+        wrapped = [part for line in lines for part in _wrap(_spans(line), room)]
+        for index, part in enumerate(wrapped or [[]]):
+            lead = " " * start if below or index else " " * indent + label.ljust(column)
+            self.write((lead + self._painted(part)).rstrip())
 
     def wrapped(self, text: str, *, indent: int, style: str | None = None) -> None:
         """Text wrapped at spaces to the terminal; a word longer than a line, such as a
