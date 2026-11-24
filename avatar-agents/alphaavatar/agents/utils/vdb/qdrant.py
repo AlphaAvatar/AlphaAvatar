@@ -61,6 +61,7 @@ def get_client(
 
 
 LAYOUT = "alphaavatar_embedding_space"  # The record collection's one vector, named as its mark.
+PAGE = 256  # Records read at a time.
 
 
 def claim_space(client, collection: str, space, *, setting: str, ensure) -> None:
@@ -68,16 +69,16 @@ def claim_space(client, collection: str, space, *, setting: str, ensure) -> None
 
     The record is a collection beside it, ``<collection>__embedding``, as a collection keeps no
     metadata of its own: created with one vector named ``LAYOUT``, a mark it has from its
-    creation on, and a point per recording, its ID this opening's own, so a Host never
-    overwrites another's record, nor takes one back but its own. One made before marks, its
-    single record at point 0, is read and never written; anything else of the name is refused,
-    and nothing is written to it or beside it.
+    creation on, and a point per Host recording, its ID this opening's own, so a Host never
+    overwrites another's record, nor takes one back but its own; every page of it is read. One
+    made before marks, its single record at point 0, is read as decided and never written;
+    anything else of the name is refused, and nothing is written to it or beside it.
     """
     from uuid import uuid4
 
     from qdrant_client.models import Distance, PointIdsList, PointStruct, VectorParams
 
-    from .space import EmbeddingSpaceError, claim, is_record, not_a_record
+    from .space import PENDING, EmbeddingSpaceError, claim, is_record, not_a_record
 
     record = f"{collection}__embedding"
     label = f"Qdrant collection {collection!r}"
@@ -96,11 +97,17 @@ def claim_space(client, collection: str, space, *, setting: str, ensure) -> None
         if not client.collection_exists(record):
             return []
         kind = layout()
-        points, more = client.scroll(record, limit=64, with_payload=True)
+        points, offset = [], None
+        while True:  # To the last page: however many Hosts recorded, none is left unread.
+            page, offset = client.scroll(record, limit=PAGE, offset=offset, with_payload=True)
+            points += page
+            if offset is None:
+                break
+
         found = [dict(point.payload or {}) for point in points]
-        if kind == "marked" and more is None:
+        if kind == "marked":
             ours = all(is_record(item, store=collection, marked=True) for item in found)
-        elif kind == "earlier" and more is None:
+        elif kind == "earlier":
             ours = [point.id for point in points] == [0]
             ours = ours and is_record(found[0], store=collection, marked=False)
         else:
@@ -108,6 +115,10 @@ def claim_space(client, collection: str, space, *, setting: str, ensure) -> None
         if not ours:
             raise EmbeddingSpaceError(not_a_record(f"Qdrant collection {record!r}", label))
         return found
+
+    def write(found: dict) -> None:
+        point = PointStruct(id=own, vector={LAYOUT: [1.0]}, payload=found)
+        client.upsert(record, points=[point], wait=True)
 
     def register(found: dict) -> None:
         if not client.collection_exists(record):
@@ -119,8 +130,7 @@ def claim_space(client, collection: str, space, *, setting: str, ensure) -> None
                     raise  # Not made meanwhile by another Host: a failure of its own.
         if layout() != "marked":
             raise EmbeddingSpaceError(not_a_record(f"Qdrant collection {record!r}", label))
-        point = PointStruct(id=own, vector={LAYOUT: [1.0]}, payload=found)
-        client.upsert(record, points=[point], wait=True)
+        write(found | {PENDING: True})
 
     def withdraw(found: dict) -> None:
         client.delete(record, points_selector=PointIdsList(points=[own]), wait=True)
@@ -139,6 +149,7 @@ def claim_space(client, collection: str, space, *, setting: str, ensure) -> None
         count=lambda: client.count(collection, exact=True).count,
         records=records,
         register=register,
+        confirm=write,
         withdraw=withdraw,
         ensure=ensure,
     )

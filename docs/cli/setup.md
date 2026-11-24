@@ -68,9 +68,11 @@ included, as `start` would resolve them: the plugins of each part, the providers
 the vector stores, and the local models the switches leave on. A model task that names its
 model alone takes its kind and backend from the provider schema's defaults, as `start` does.
 It imports no plugin to plan.
-A vector index the Avatar's workspace keeps, made with another embedding model than the bundle
+A LanceDB index the bundle's plugins open, made with another embedding model than the bundle
 names for it, fails the same way, before anything is installed: give the store another name, or
-configure the model it was made with. A selection this release's setup installs nothing for, such
+configure the model it was made with. The index is looked for where `start` opens it, in the
+directory its `client_path` names or else the Avatar's own for that plugin; a Qdrant index is
+checked as `start` opens it. A selection this release's setup installs nothing for, such
 as a plugin that is not in the catalog, fails before anything is installed and is named by its
 setting:
 

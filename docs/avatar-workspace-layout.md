@@ -139,8 +139,10 @@ For the default local storage, a feature index can live at
 model that made them (a Qdrant collection's, in `<collection>__embedding`, marked as
 AlphaAvatar's by its one named vector): an index of another model, or of another vector size, is
 refused rather than mixed, and a file or collection of the record's name that is not one is left
-as it is. Back the record up with its table. A custom database path or an external database can store the corresponding
-data elsewhere. The layout is a guide to locations, not a list of identical folders
+as it is. Back the record up with its table. A Host stopped while recording a new Qdrant
+collection can leave a pending record there: no Host relies on it, another model is refused
+beside it, and nothing removes it automatically. A custom database path or an external
+database can store the corresponding data elsewhere. The layout is a guide to locations, not a list of identical folders
 that every installation must have.
 
 ### Find your memories

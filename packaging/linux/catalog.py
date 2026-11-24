@@ -21,7 +21,9 @@ a wheel), with its SHA-256 and size. torch and torchaudio come from torch-cpu.tx
 GUI OpenCV and the CUDA libraries are left out (see build.sh). The roots are pyproject.toml's
 setup-catalog group; the base is what base.txt and the Host's wheels install. The plugins are
 the implementations these wheels declare, by capability type and name, with the requirement
-that installs each: what config check and Doctor tell a person setup can install.
+that installs each: what config check and Doctor tell a person setup can install; and the
+module each one's entry point names, by which setup finds the data it keeps before it is
+installed.
 
     python catalog.py base ROOT       base.txt pinned to uv.lock with its hashes; needs only the
                                       standard library, so it runs before anything is installed
@@ -242,9 +244,10 @@ def base_requirements(root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def plugins(path: Path, name: str, keys: dict) -> dict[str, dict[str, str]]:
+def plugins(path: Path, name: str, keys: dict) -> dict[str, dict[str, tuple[str, str]]]:
     """The implementations a wheel declares (entry points ``alphaavatar.<type>``), each with
-    the requirement installing it: its distribution, with the extra named after it if any."""
+    the requirement installing it (its distribution, with the extra named after it if any) and
+    the module its entry point names."""
     with zipfile.ZipFile(path) as archive:
         found = [
             item for item in archive.namelist() if item.endswith(".dist-info/entry_points.txt")
@@ -253,13 +256,17 @@ def plugins(path: Path, name: str, keys: dict) -> dict[str, dict[str, str]]:
         parser.optionxform = str  # Names are case-sensitive.
         for item in found:
             parser.read_string(archive.read(item).decode("utf-8"))
-    declared: dict[str, dict[str, str]] = {}
+    declared: dict[str, dict[str, tuple[str, str]]] = {}
     for group in parser.sections():
         if group.startswith("alphaavatar."):
-            for implementation in parser[group]:
+            for implementation, value in parser[group].items():
                 extra = f"{name}[{canonicalize_name(implementation)}]"
                 needed = extra if extra in keys else name
-                declared.setdefault(group.removeprefix("alphaavatar."), {})[implementation] = needed
+                module = value.partition(":")[0].strip()
+                declared.setdefault(group.removeprefix("alphaavatar."), {})[implementation] = (
+                    needed,
+                    module,
+                )
     return declared
 
 
@@ -269,14 +276,14 @@ def write(root: Path, wheels: Path, args: argparse.Namespace) -> dict:
     lock = Lock(root)
     keys = requirement_keys(lock, root)
     built = {}
-    declared: dict[str, dict[str, str]] = {}
+    declared: dict[str, dict[str, tuple[str, str]]] = {}
     for path in sorted(wheels.glob("*.whl")):
         name, version, *_ = parse_wheel_filename(path.name)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if canonicalize_name(name) in keys:
             for group, names in plugins(path, canonicalize_name(name), keys).items():
-                for implementation, needed in names.items():
-                    if declared.setdefault(group, {}).setdefault(implementation, needed) != needed:
+                for implementation, found in names.items():
+                    if declared.setdefault(group, {}).setdefault(implementation, found) != found:
                         sys.exit(f"Two wheels declare {group} {implementation!r}")
         built[canonicalize_name(name)] = {
             "version": str(version),
@@ -327,7 +334,12 @@ def write(root: Path, wheels: Path, args: argparse.Namespace) -> dict:
         "requirements": {key: sorted(closure) for key, closure in keys.items()},
         "distributions": dict(sorted(distributions.items())),
         "plugins": {
-            group: dict(sorted(names.items())) for group, names in sorted(declared.items())
+            group: {implementation: found[0] for implementation, found in sorted(names.items())}
+            for group, names in sorted(declared.items())
+        },
+        "modules": {
+            group: {implementation: found[1] for implementation, found in sorted(names.items())}
+            for group, names in sorted(declared.items())
         },
     }
 

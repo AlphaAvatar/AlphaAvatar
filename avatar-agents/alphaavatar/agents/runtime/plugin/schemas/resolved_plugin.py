@@ -29,7 +29,13 @@ class ResolvedPlugin:
 
     @property
     def namespace(self) -> str:
-        """Its package's name, which its storage and runner settings use: ``memory`` for
-        ``alphaavatar.plugins.memory``."""
-        parts = type(self.factory).__module__.split(".")
+        """Its package's name, which its storage and runner settings use."""
+        return self.namespace_of(type(self.factory).__module__)
+
+    @staticmethod
+    def namespace_of(module: str) -> str:
+        """The storage name of a plugin whose code is ``module``: its package's name, ``memory``
+        for ``alphaavatar.plugins.memory.factory``. Setup finds stored data with it from the
+        module a catalog records, before the plugin is installed."""
+        parts = module.split(".")
         return parts[2] if parts[:2] == ["alphaavatar", "plugins"] else parts[0]

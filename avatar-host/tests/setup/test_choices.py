@@ -460,6 +460,41 @@ def test_the_reference_keeps_vision_and_plans_its_runners_with_or_without_local_
     ]
 
 
+def test_the_catalog_gives_setup_each_plugin_s_storage_namespace(tmp_path: Path) -> None:
+    """The module the Linux build records for each implementation, from its wheel's entry
+    point, gives the storage namespace its runner keeps data under, for every plugin installed
+    here: setup finds the data before the plugin is installed."""
+    import zipfile
+    from importlib import metadata
+
+    from alphaavatar.agents.runtime.plugin import AvatarModule, resolve_plugin
+    from alphaavatar.agents.runtime.plugin.schemas.resolved_plugin import ResolvedPlugin
+
+    spec = importlib.util.spec_from_file_location("catalog", ROOT / "packaging/linux/catalog.py")
+    assert spec is not None and spec.loader is not None
+    catalog = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(catalog)
+
+    wheel = tmp_path / "alpha_avatar_plugins_memory-1-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            "alpha_avatar_plugins_memory-1.dist-info/entry_points.txt",
+            "[alphaavatar.memory]\ndefault = alphaavatar.plugins.memory.factory:MemoryPlugin\n",
+        )
+    declared = catalog.plugins(wheel, "alpha-avatar-plugins-memory", {})
+    assert declared == {
+        "memory": {"default": ("alpha-avatar-plugins-memory", "alphaavatar.plugins.memory.factory")}
+    }
+
+    seen = 0
+    for module in AvatarModule:
+        for entry in metadata.entry_points(group=module.group):
+            namespace = resolve_plugin(module, entry.name).namespace
+            assert ResolvedPlugin.namespace_of(entry.module) == namespace, entry
+            seen += 1
+    assert seen > 10
+
+
 def test_remote_inference_plans_no_local_model_nor_its_accelerators() -> None:
     """From uv.lock through the Linux build's own catalog logic to setup's plan."""
     spec = importlib.util.spec_from_file_location("catalog", ROOT / "packaging/linux/catalog.py")

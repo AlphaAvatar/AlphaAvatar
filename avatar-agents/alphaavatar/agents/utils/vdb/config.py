@@ -13,13 +13,16 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.utils.env_utils import check_server_key, credential
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime.plugin import AvatarModule
+    from alphaavatar.agents.workspace import WorkspacePaths
 
 
 def snapshot_vdb_config(value: dict[str, Any]) -> dict[str, Any]:
@@ -62,3 +65,12 @@ def vdb_backend(config: dict[str, Any]) -> str:
             raise ValueError("A Qdrant host requires an explicit port")
         return "qdrant"
     return "lancedb"
+
+
+def lancedb_directory(config: Mapping[str, Any], workspace: WorkspacePaths, namespace: str) -> Path:
+    """The directory a LanceDB store is in, as its runner opens it and setup looks for it: the
+    one ``client_path`` names, else the Avatar ``workspace``'s own for the plugin's storage
+    ``namespace``."""
+    if named := config.get("client_path"):
+        return Path(str(named)).expanduser()
+    return workspace.data.indexes.namespace(namespace).backend("lancedb").root

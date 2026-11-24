@@ -392,15 +392,20 @@ def _host(texts: dict[str, str], name: str):
     return HostConfig.model_validate(yaml.safe_load(texts[f"profiles/{profile}.yaml"]))
 
 
-def _vectors(paths, avatar_id: str, root: str | None, settings: dict[str, Any]) -> None:
-    """The vector stores the Avatar's workspace keeps: one the bundle names another embedding
-    for than made it is refused before anything is installed, as start would refuse it."""
+def _vectors(
+    paths, catalog: dict[str, Any], avatar_id: str, root: str | None, settings: dict[str, Any]
+) -> None:
+    """The vector stores the Avatar keeps where the bundle's plugins open them: one the bundle
+    names another embedding for than made it is refused before anything is installed, as start
+    would refuse it. The plugins are found by the modules the catalog records, uninstalled."""
     from alphaavatar.agents.utils.vdb.space import recorded_conflicts
     from alphaavatar.agents.workspace import WorkspacePaths
     from alphaavatar.host.tools.setup.environment import SetupError
 
+    if not isinstance(modules := catalog.get("modules"), dict):
+        raise SetupError("This build's catalog does not name its plugins' modules")
     workspace = WorkspacePaths.from_root(root) if root else paths.workspace(avatar_id)
-    if found := recorded_conflicts(settings, [workspace.data.indexes.root]):
+    if found := recorded_conflicts(settings, workspace, modules):
         raise SetupError("\n".join(found))
 
 
@@ -527,7 +532,7 @@ def _setup(args: argparse.Namespace) -> int:
                 section: yaml.safe_load(texts[f"profiles/{profiles[section]}.yaml"])
                 for section in ("memory", "persona", "tools")
             }
-            _vectors(paths, avatar_id, None, chosen)
+            _vectors(paths, catalog, avatar_id, None, chosen)
             needed = choices.requirements(selection)
         else:
             name = check_bundle_name(existing)
@@ -540,7 +545,8 @@ def _setup(args: argparse.Namespace) -> int:
                 )
             out.step(1, "Capabilities", f"Bundle {name} · {_bundle_line(avatar, found)}")
             out.step(2, "Models", "As the bundle's settings choose them")
-            _vectors(paths, avatar.avatar.id, avatar.avatar.workspace_root, avatar.model_dump())
+            workspace_root = avatar.avatar.workspace_root
+            _vectors(paths, catalog, avatar.avatar.id, workspace_root, avatar.model_dump())
             needed = tuple(sorted(found))
         # Installing for this bundle never takes from another: what the current environment
         # holds stays planned, and the same plan reuses it.

@@ -46,19 +46,11 @@ class LanceDBClient:
             return self.open_table(table_name)
         return self._db.create_table(table_name, data=data)
 
-    def claim_space(
-        self,
-        table_name: str,
-        space: EmbeddingSpace,
-        *,
-        setting: str,
-        ensure,
-        client_path: str | None = None,
-    ) -> None:
+    def claim_space(self, table_name: str, space: EmbeddingSpace, *, setting: str, ensure) -> None:
         """Open ``table_name`` for vectors of ``space``, as ``space.claim`` checks and records
         it: the record a JSON file beside the table, read without LanceDB, made whole beside it
-        and linked into place, so of two Hosts recording at once only the first does.
-        ``client_path`` is the directory the settings named, if they named one."""
+        and linked into place, so of Hosts recording at once only the first does. Placed once
+        and never taken back, it is decided as placed."""
         record = self.path / f"{table_name}.embedding.json"
         label = f"LanceDB table {table_name!r} in {self.path}"
 
@@ -106,9 +98,9 @@ class LanceDBClient:
             count=lambda: self.open_table(table_name).count_rows(),
             records=records,
             register=register,
-            withdraw=lambda found: None,  # Linked only where none was: never another's.
+            confirm=lambda found: None,  # Decided as placed.
+            withdraw=lambda found: None,  # Placed only where none was: kept, never another's.
             ensure=ensure,
-            client_path=client_path,
         )
 
     def drop_table(self, table_name: str) -> None:

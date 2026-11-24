@@ -27,7 +27,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
-from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.config import lancedb_directory, vdb_embeddings, vdb_requirement
 from alphaavatar.agents.utils.vdb.probe import probe_dimension
 from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
 from alphaavatar.agents.workspace import WorkspacePaths
@@ -557,14 +557,8 @@ class LanceDBRunner(InferenceRunner):
             raise ValueError("MCP embedding.provider and embedding.model are required")
 
         vdb_config = {key: value for key, value in config.items() if key != "embedding"}
-        named = vdb_config.get("client_path") or None  # As the settings name it, if they do.
-        if not vdb_config.get("client_path"):
-            vdb_config["client_path"] = str(
-                WorkspacePaths.from_root(self.launch.workspace_root)
-                .data.indexes.namespace(NAMESPACE)
-                .backend("lancedb")
-                .root
-            )
+        workspace = WorkspacePaths.from_root(self.launch.workspace_root)
+        vdb_config["client_path"] = str(lancedb_directory(vdb_config, workspace, NAMESPACE))
 
         self._client = lancedb.get_client(**vdb_config)
         self._embeddings = create_embedding_model(
@@ -582,7 +576,6 @@ class LanceDBRunner(InferenceRunner):
             EmbeddingSpace.configured(embedding, dimension),
             setting="tools.mcp.vdb_config.collection_name",
             ensure=lambda: self._ensure_collection(self._collection_name, dimension),
-            client_path=named,
         )
         self._loop_thread = AsyncLoopThread(name="mcp-loop")
         try:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -29,6 +30,12 @@ from alphaavatar.agents.utils.vdb import lancedb, qdrant
 from alphaavatar.agents.utils.vdb.space import EmbeddingSpace, EmbeddingSpaceError
 
 SETTING = "memory.vdb_config.collection_name"
+# The module each plugin's entry point names, as a build's catalog records them.
+MODULES = {
+    "memory": {"default": "alphaavatar.plugins.memory.factory"},
+    "persona": {"default": "alphaavatar.plugins.persona.factory"},
+    "tools.mcp": {"default": "alphaavatar.plugins.mcp"},
+}
 SMALL = {"provider": "openai", "model": "text-embedding-3-small"}
 OTHER = {"provider": "google", "model": "text-embedding-004"}  # Another model, also 4-wide here.
 ROWS = [
@@ -78,7 +85,6 @@ def test_a_store_is_reopened_by_its_model_whatever_its_credentials_or_server(
         "size": 4,
         "store": "memories",
         "setting": SETTING,
-        "client_path": None,
     }
     # Another key, another variable holding it, another server with the same model: the same
     # vectors, as before.
@@ -204,11 +210,18 @@ def test_qdrant_records_its_space_beside_the_collection_and_refuses_another() ->
 
 def test_recorded_stores_are_told_from_their_records_alone(tmp_path: Path) -> None:
     from alphaavatar.agents.utils.vdb.space import recorded_conflicts
+    from alphaavatar.agents.workspace import WorkspacePaths
 
-    indexes, elsewhere = tmp_path / "indexes", tmp_path / "elsewhere"
+    workspace, elsewhere = WorkspacePaths.from_root(tmp_path / "avatar"), tmp_path / "elsewhere"
+    indexes = workspace.data.indexes
+    memory = indexes.namespace("memory").backend("lancedb").root
     for directory, name, setting in (
-        (indexes / "memory/lancedb", "memories", "memory.vdb_config.collection_name"),
-        (indexes / "persona/lancedb", "profiles", "persona.vdb_config.profiler_collection_name"),
+        (memory, "memories", "memory.vdb_config.collection_name"),
+        (
+            indexes.namespace("persona").backend("lancedb").root,
+            "profiles",
+            "persona.vdb_config.profiler_collection_name",
+        ),
         (elsewhere, "mcp", "tools.mcp.vdb_config.collection_name"),
     ):
         directory.mkdir(parents=True)
@@ -224,7 +237,7 @@ def test_recorded_stores_are_told_from_their_records_alone(tmp_path: Path) -> No
             | changes.get("memory", {}),
             "persona": {
                 "plugin": "default",
-                "vdb_config": {"profiler_collection_name": "profiles", "embedding": SMALL},
+                "vdb_config": {"profiler_collection_name": "profiles", "embedding": embedding},
             },
             "tools": {
                 "mcp": {
@@ -239,10 +252,11 @@ def test_recorded_stores_are_told_from_their_records_alone(tmp_path: Path) -> No
             },
         }
 
-    # MCP's store, named by its own directory: another model there too.
-    found = recorded_conflicts(settings(OTHER), [indexes])
+    # Persona's in its own namespace's directory; MCP's named by its own: another model too.
+    found = recorded_conflicts(settings(OTHER), workspace, MODULES)
     assert [line.split(" holds ")[0] for line in found] == [
-        f"LanceDB table 'memories' in {indexes / 'memory/lancedb'}",
+        f"LanceDB table 'memories' in {memory}",
+        f"LanceDB table 'profiles' in {indexes.namespace('persona').backend('lancedb').root}",
         f"LanceDB table 'mcp' in {elsewhere}",
     ]
     assert "give memory.vdb_config.collection_name another name" in found[0]
@@ -257,7 +271,7 @@ def test_recorded_stores_are_told_from_their_records_alone(tmp_path: Path) -> No
     ):
         assert [
             f
-            for f in recorded_conflicts(settings(embedding, **changes), [indexes])
+            for f in recorded_conflicts(settings(embedding, **changes), workspace, MODULES)
             if "memories" in f
         ] == []
 
@@ -395,12 +409,14 @@ def test_setup_checks_the_store_the_settings_open_not_one_of_the_same_name(tmp_p
     Google's for a Qdrant store or a directory of its own opens another store, and is fine;
     for that same table, wherever its settings name it, it is refused."""
     from alphaavatar.agents.utils.vdb.space import recorded_conflicts
+    from alphaavatar.agents.workspace import WorkspacePaths
 
-    indexes = tmp_path / "indexes"
-    default = indexes / "memory/lancedb"
+    workspace = WorkspacePaths.from_root(tmp_path / "avatar")
+    default = workspace.data.indexes.namespace("memory").backend("lancedb").root
+    # Recorded while the settings named the default directory.
     Lance(default).open(SMALL)
 
-    def found(**vdb_config) -> list[str]:
+    def found(modules=MODULES, **vdb_config) -> list[str]:
         settings = {
             "memory": {
                 "plugin": "default",
@@ -408,12 +424,72 @@ def test_setup_checks_the_store_the_settings_open_not_one_of_the_same_name(tmp_p
                 | vdb_config,
             }
         }
-        return recorded_conflicts(settings, [indexes])
+        return recorded_conflicts(settings, workspace, modules)
 
     assert found(url="https://vectors.invalid:6333") == []  # Qdrant: not the LanceDB table.
     assert found(client_path=str(tmp_path / "own")) == []  # A directory of its own.
-    assert len(found()) == 1  # The workspace's table.
+    assert len(found()) == 1  # The workspace's table, the settings naming no directory.
     assert len(found(client_path=str(default))) == 1  # The same table, named by its directory.
+    assert found(modules={}) == []  # No plugin the build installs: start checks what it opens.
+
+    # Moved aside: the default directory holds no table, and the one moved is no store.
+    default.rename(default.with_name("lancedb-backup"))
+    assert found() == []
+
+
+def test_setup_tells_each_table_once_and_for_the_section_naming_it(tmp_path: Path) -> None:
+    """Memory, Persona and MCP sharing a directory: each record is the table of the setting
+    that recorded it, told once, for that section."""
+    from alphaavatar.agents.utils.vdb.space import recorded_conflicts
+    from alphaavatar.agents.workspace import WorkspacePaths
+
+    shared = tmp_path / "shared"
+    Lance(shared).open(SMALL, name="memories")
+    profiles = Lance(shared)
+    space = EmbeddingSpace.configured(SMALL, 4)
+    setting = "persona.vdb_config.profiler_collection_name"
+    profiles.client.claim_space("profiles", space, setting=setting, ensure=lambda: None)
+    settings = {
+        "memory": {
+            "plugin": "default",
+            "vdb_config": {
+                "collection_name": "memories",
+                "client_path": str(shared),
+                "embedding": OTHER,
+            },
+        },
+        "persona": {
+            "plugin": "default",
+            "vdb_config": {
+                "profiler_collection_name": "profiles",
+                "client_path": str(shared),
+                "embedding": OTHER,
+            },
+        },
+        "tools": {
+            "mcp": {
+                "plugin": "default",
+                "enabled": True,
+                # Memory's table, named by a setting of the same name: memory's still.
+                "vdb_config": {
+                    "collection_name": "memories",
+                    "client_path": str(shared),
+                    "embedding": OTHER,
+                },
+            }
+        },
+    }
+    found = recorded_conflicts(settings, WorkspacePaths.from_root(tmp_path / "avatar"), MODULES)
+    assert [line.split(" holds ")[0] for line in found] == [
+        f"LanceDB table 'memories' in {shared}",
+        f"LanceDB table 'profiles' in {shared}",
+    ]
+    assert "give memory.vdb_config.collection_name" in found[0]
+    assert "give persona.vdb_config.profiler_collection_name" in found[1]
+    # Persona naming memory's table for its own: not the table its runner recorded.
+    settings["persona"]["vdb_config"]["profiler_collection_name"] = "memories"
+    found = recorded_conflicts(settings, WorkspacePaths.from_root(tmp_path / "avatar"), MODULES)
+    assert len(found) == 1 and "give memory.vdb_config.collection_name" in found[0]
 
 
 @pytest.mark.parametrize("models", ["same", "different"])
@@ -522,14 +598,16 @@ def test_records_an_earlier_version_wrote_are_kept_to_and_never_written(tmp_path
     from qdrant_client.models import Distance, PointStruct, VectorParams
 
     from alphaavatar.agents.utils.vdb.space import recorded_conflicts
+    from alphaavatar.agents.workspace import WorkspacePaths
 
+    workspace = WorkspacePaths.from_root(tmp_path / "avatar")
     earlier = {
         "provider": "openai",
         "model": "text-embedding-3-small",
         "dimensions": None,
         "size": 4,
     }
-    store = Lance(tmp_path / "indexes/memory/lancedb")
+    store = Lance(workspace.data.indexes.namespace("memory").backend("lancedb").root)
     store.client.create_table("memories", ROWS)
     record = store.client.path / "memories.embedding.json"
     record.write_text(json.dumps(earlier | {"store": "memories", "setting": SETTING}))
@@ -543,7 +621,7 @@ def test_records_an_earlier_version_wrote_are_kept_to_and_never_written(tmp_path
             "vdb_config": {"collection_name": "memories", "embedding": OTHER, "url": None},
         }
     }
-    assert len(recorded_conflicts(settings, [tmp_path / "indexes"])) == 1
+    assert len(recorded_conflicts(settings, workspace, MODULES)) == 1
     assert record.read_bytes() == written
 
     client = QdrantClient(location=":memory:")
@@ -659,3 +737,288 @@ def test_a_host_taking_its_record_back_never_takes_another_s_of_its_model() -> N
     assert a.id in [p.id for p in points]  # A's record, which A opened the store by, stays.
     with pytest.raises(EmbeddingSpaceError):
         qdrant_open(shared, OTHER)  # Host C, and any after it, finds A's record.
+
+
+"""Review of 2026-11-25: three Hosts, and what a Host may rely on"""
+
+
+class Hosts:
+    """Hosts sharing one store, each on a thread of its own, held at the points the test names
+    — before or after a call of its client, ``"before upsert memories__embedding 1"`` its first
+    upsert there — until the test lets it on: the test orders what each has done when another
+    goes on, whatever the threads' timing."""
+
+    def __init__(self) -> None:
+        self._changed = threading.Condition()
+        self._stops: dict[str, set[str]] = {}
+        self._held: dict[str, str | None] = {}
+        self._free: set[str] = set()
+        self._threads: dict[str, threading.Thread] = {}
+        self._counts = threading.local()
+        self.ended: dict[str, BaseException | None] = {}
+
+    def at(self, point: str) -> None:
+        """In a Host's thread: held at ``point`` if it is one of its stops."""
+        name = threading.current_thread().name
+        if point not in self._stops.get(name, ()) or name in self._free:
+            return
+        with self._changed:
+            self._held[name] = point
+            self._changed.notify_all()
+            self._changed.wait_for(lambda: self._held[name] is None, timeout=20)
+
+    def wrap(self, function, name: str):
+        """``function`` as the Hosts call it: each call a point before it and after it,
+        ``"before <name> <n>"``, numbered by the Host's calls of it."""
+
+        def call(*args, **kwargs):
+            counts = self._counts.__dict__.setdefault("counts", {})
+            counts[name] = n = counts.get(name, 0) + 1
+            self.at(f"before {name} {n}")
+            try:
+                return function(*args, **kwargs)
+            finally:
+                self.at(f"after {name} {n}")
+
+        return call
+
+    def client(self, client):
+        """``client`` as the Hosts call it, each method on each collection named
+        ``"<method> <collection>"``."""
+        hosts = self
+
+        class Held:
+            def __getattr__(self, method: str):
+                found = getattr(client, method)
+                if not callable(found):
+                    return found
+
+                def call(*args, **kwargs):
+                    on = args[0] if args else kwargs.get("collection_name")
+                    return hosts.wrap(found, f"{method} {on}")(*args, **kwargs)
+
+                return call
+
+        return Held()
+
+    def start(self, name: str, opening, *stops: str) -> None:
+        def run() -> None:
+            try:
+                opening()
+                self.ended[name] = None
+            except BaseException as error:
+                self.ended[name] = error
+
+        self._stops[name], self._held[name] = set(stops), None
+        self._threads[name] = threading.Thread(target=run, name=name)
+        self._threads[name].start()
+
+    def until(self, name: str, point: str) -> None:
+        """Wait until ``name`` is held at ``point``."""
+        with self._changed:
+            reached = self._changed.wait_for(lambda: self._held[name] == point, timeout=20)
+        assert reached, f"{name} never reached {point!r}; it ended with {self.ended.get(name)!r}"
+
+    def go(self, name: str) -> None:
+        with self._changed:
+            self._held[name] = None
+            self._changed.notify_all()
+
+    def finish(self, name: str) -> BaseException | None:
+        """Let ``name`` on past every stop, to its end: how it ended, None for opened."""
+        self._free.add(name)
+        self.go(name)
+        self._threads[name].join(timeout=60)
+        assert not self._threads[name].is_alive(), f"{name} did not end"
+        return self.ended[name]
+
+
+READ = "before upsert memories__embedding 1"  # Has read what is recorded, recorded nothing.
+WROTE = "after upsert memories__embedding 1"  # Has recorded, not read again.
+
+
+def qdrant_records(client, *, with_vectors: bool = False) -> list:
+    points, offset = [], None
+    while True:
+        page, offset = client.scroll(
+            "memories__embedding", limit=100, offset=offset, with_vectors=with_vectors
+        )
+        points += page
+        if offset is None:
+            return sorted(points, key=lambda point: str(point.id))
+
+
+def test_a_host_never_relies_on_a_record_its_host_may_still_take_back() -> None:
+    """C, of another model, has read that nothing is recorded. A records, not yet reading it
+    again; B, of A's model, opens beside A's record. C records; A, reading again, finds C's.
+    Whatever A then does, B's model and C's never both have the store: C is refused, B's
+    record stays as it was."""
+    from qdrant_client import QdrantClient
+
+    shared = QdrantClient(location=":memory:")
+    hosts = Hosts()
+    held = hosts.client(shared)
+    hosts.start("C", lambda: qdrant_open(held, OTHER), READ, WROTE)
+    hosts.until("C", READ)
+    hosts.start("A", lambda: qdrant_open(held, SMALL), WROTE)
+    hosts.until("A", WROTE)
+    hosts.start("B", lambda: qdrant_open(held, SMALL))
+    assert hosts.finish("B") is None
+    decided = [(p.id, p.payload) for p in qdrant_records(shared) if not p.payload.get("pending")]
+    hosts.go("C")
+    hosts.until("C", WROTE)
+    a, c = hosts.finish("A"), hosts.finish("C")
+
+    assert isinstance(c, EmbeddingSpaceError), c
+    assert a is None or isinstance(a, EmbeddingSpaceError), a
+    left = [(p.id, p.payload) for p in qdrant_records(shared)]
+    assert {payload["model"] for _, payload in left} == {"text-embedding-3-small"}
+    assert decided and left == decided  # B's own record as it was; A's and C's taken back.
+
+
+@pytest.mark.parametrize("kind", ["failed", "interrupted", "killed"])
+def test_a_host_stopped_while_recording_takes_its_record_back_or_leaves_it_untrusted(
+    kind: str,
+) -> None:
+    """A Host whose second read fails, or is interrupted, takes its record back; one killed
+    then leaves it pending. Either way it opened nothing, and on retry it opens the store;
+    another model is refused."""
+    from qdrant_client import QdrantClient
+
+    shared = QdrantClient(location=":memory:")
+
+    class Failing:
+        def __init__(self) -> None:
+            self.recorded = False
+
+        def __getattr__(self, name: str):
+            if name == "upsert":
+                self.recorded = True
+            if name == "scroll" and self.recorded:  # Reading again, after recording.
+                raise KeyboardInterrupt if kind == "interrupted" else ConnectionError("gone")
+            if name == "delete" and kind == "killed":
+                raise ConnectionError("the server went away")
+            return getattr(shared, name)
+
+    with pytest.raises(KeyboardInterrupt if kind == "interrupted" else ConnectionError):
+        qdrant_open(Failing(), SMALL)
+    left = qdrant_records(shared)
+    assert (len(left), shared.collection_exists("memories")) == ((kind == "killed") * 1, False)
+
+    qdrant_open(shared, SMALL)  # On retry.
+    with pytest.raises(EmbeddingSpaceError):
+        qdrant_open(shared, OTHER)
+    assert {p.payload["model"] for p in qdrant_records(shared)} == {"text-embedding-3-small"}
+
+
+def test_records_of_many_hosts_are_read_to_the_last() -> None:
+    """More records than a page holds, the last of another model: never left unread, and the
+    store's own model reopens it however many there are."""
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct
+
+    from alphaavatar.agents.utils.vdb.qdrant import LAYOUT
+
+    client = QdrantClient(location=":memory:")
+    qdrant_open(client, SMALL, name="warmup")  # The record collection's own layout, to copy.
+    params = client.get_collection("warmup__embedding").config.params.vectors
+    client.create_collection("memories__embedding", vectors_config=params)
+    small = EmbeddingSpace.configured(SMALL, 4).record(store="memories", setting=SETTING)
+    other = EmbeddingSpace.configured(OTHER, 4).record(store="memories", setting=SETTING)
+    many = [
+        PointStruct(id=str(uuid.UUID(int=n + 1)), vector={LAYOUT: [1.0]}, payload=small)
+        for n in range(600)
+    ]
+    client.upsert("memories__embedding", points=many)
+    last = PointStruct(id=str(uuid.UUID(int=2**128 - 1)), vector={LAYOUT: [1.0]}, payload=other)
+    client.upsert("memories__embedding", points=[last])
+    with pytest.raises(EmbeddingSpaceError, match="google text-embedding-004"):
+        qdrant_open(client, SMALL)
+
+    client.delete("memories__embedding", points_selector=[last.id])
+    for _ in range(3):
+        qdrant_open(client, SMALL)  # Reopened: nothing more recorded.
+    assert len(qdrant_records(client)) == 600
+
+
+@pytest.mark.parametrize("models", ["same", "different"])
+def test_three_hosts_recording_at_once_open_the_store_for_one_model_only(models: str) -> None:
+    """Three Hosts, each having read that nothing is recorded, all recording before any reads
+    again, then reading again one by one: of one model, all open it, and a fourth records
+    nothing more. With another model among them, A and B find it recorded and take theirs back;
+    C, reading last, finds only its own: one model has the store, never two."""
+    from qdrant_client import QdrantClient
+
+    shared = QdrantClient(location=":memory:")
+    hosts = Hosts()
+    held = hosts.client(shared)
+    third = SMALL if models == "same" else OTHER
+    for name, embedding in (("A", SMALL), ("B", SMALL), ("C", third)):
+        hosts.start(name, lambda embedding=embedding: qdrant_open(held, embedding), READ, WROTE)
+        hosts.until(name, READ)
+    for name in "ABC":
+        hosts.go(name)
+        hosts.until(name, WROTE)
+    ended = {name: hosts.finish(name) for name in "ABC"}
+
+    if models == "same":
+        assert ended == {"A": None, "B": None, "C": None}
+        records = [point.payload for point in qdrant_records(shared)]
+        assert {r["model"] for r in records} == {"text-embedding-3-small"}
+        assert not [r for r in records if r.get("pending")]
+        qdrant_open(shared, SMALL)  # A fourth Host.
+        assert [point.payload for point in qdrant_records(shared)] == records
+    else:
+        assert isinstance(ended["A"], EmbeddingSpaceError), ended
+        assert isinstance(ended["B"], EmbeddingSpaceError) and ended["C"] is None, ended
+        records = [point.payload for point in qdrant_records(shared)]
+        assert [(r["model"], r.get("pending")) for r in records] == [("text-embedding-004", None)]
+        with pytest.raises(EmbeddingSpaceError):
+            qdrant_open(shared, SMALL)  # A retry of A's model.
+        qdrant_open(shared, OTHER)
+
+
+def test_a_lancedb_host_never_relies_on_a_record_it_did_not_see_placed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The three Hosts of the Qdrant case on one LanceDB table: its one record, placed once and
+    never taken back, decides; C is refused, and the record is A's, as placed."""
+    store = Lance(tmp_path)
+    hosts = Hosts()
+    monkeypatch.setattr(os, "link", hosts.wrap(os.link, "link"))
+    hosts.start("C", lambda: store.open(OTHER), "before link 1", "after link 1")
+    hosts.until("C", "before link 1")
+    hosts.start("A", lambda: store.open(SMALL), "after link 1")
+    hosts.until("A", "after link 1")
+    placed = store.record()
+    hosts.start("B", lambda: store.open(SMALL))
+    assert hosts.finish("B") is None
+    hosts.go("C")
+    hosts.until("C", "after link 1")
+    assert hosts.finish("A") is None
+    assert isinstance(hosts.finish("C"), EmbeddingSpaceError)
+    assert placed["model"] == "text-embedding-3-small" and store.record() == placed
+
+
+def test_three_hosts_reading_one_another_s_records_at_once_all_refuse_then_one_reopens() -> None:
+    """Three Hosts of two models, each having recorded, all reading again before any takes its
+    own back: each finds another model's, so none opens the store; all their records taken
+    back, a retry opens it."""
+    from qdrant_client import QdrantClient
+
+    shared = QdrantClient(location=":memory:")
+    hosts = Hosts()
+    held = hosts.client(shared)
+    again = "before delete memories__embedding 1"  # Has read again, taken nothing back yet.
+    for name, embedding in (("A", SMALL), ("B", SMALL), ("C", OTHER)):
+        hosts.start(name, lambda embedding=embedding: qdrant_open(held, embedding), WROTE, again)
+        hosts.until(name, WROTE)
+    for name in "ABC":
+        hosts.go(name)
+        hosts.until(name, again)
+    ended = {name: hosts.finish(name) for name in "ABC"}
+    assert all(isinstance(end, EmbeddingSpaceError) for end in ended.values()), ended
+    assert qdrant_records(shared) == [] and not shared.collection_exists("memories")
+    qdrant_open(shared, SMALL)  # A retry.
+    with pytest.raises(EmbeddingSpaceError):
+        qdrant_open(shared, OTHER)

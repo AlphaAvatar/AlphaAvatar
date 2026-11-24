@@ -65,6 +65,20 @@ def installed_plugins() -> dict[str, dict[str, str]]:
     return found
 
 
+def installed_modules() -> dict[str, dict[str, str]]:
+    """The module each implementation's entry point names, as the Linux build's catalog records
+    it."""
+    from importlib import metadata
+
+    from alphaavatar.agents.runtime.plugin import AvatarModule
+
+    return {
+        module.value: {entry.name: entry.module for entry in found}
+        for module in AvatarModule
+        if (found := metadata.entry_points(group=module.group))
+    }
+
+
 @pytest.fixture
 def package(tmp_path: Path) -> environment.Installation:
     """An installed base whose catalog holds what any selection setup offers needs."""
@@ -85,6 +99,7 @@ def package(tmp_path: Path) -> environment.Installation:
             module: {name: need for name, need in names.items() if need in keys}
             for module, names in installed_plugins().items()
         },
+        "modules": installed_modules(),
         "distributions": {
             name: {
                 "version": "1",
@@ -1012,6 +1027,82 @@ def test_an_existing_bundle_set_up_again_keeps_every_file_as_a_person_left_it(
     assert avatar.voice.tts.speed == 1.3
     assert avatar.memory.init_config["environment"]["enabled"] is False
     capsys.readouterr()
+
+
+def _recorded_default(paths, *, named: bool) -> tuple[Path, dict]:
+    """The bundle mine, its Avatar's memory table recorded for OpenAI's embedding at the default
+    directory, as the version before wrote it, with the settings naming that directory as
+    client_path or (``named`` false) naming none; the bundle now naming Google's, and no
+    directory."""
+    from alphaavatar.host.configs.template import create_bundle
+
+    create_bundle(paths, "mine", avatar_id="mine")
+    default = paths.workspace("mine").data.indexes.namespace("memory").backend("lancedb").root
+    default.mkdir(parents=True)
+    record = {
+        "alphaavatar.embedding_space": 1,
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "dimensions": None,
+        "size": 1536,
+        "store": "memory",
+        "setting": "memory.vdb_config.collection_name",
+        "client_path": str(default) if named else None,
+    }
+    (default / "memory.embedding.json").write_text(json.dumps(record))
+    memory = paths.configs.root / "profiles/mine/plugins/perception/memory.yaml"
+    google = "    provider: google\n    model: text-embedding-004"
+    memory.write_text(
+        memory.read_text().replace(
+            "    provider: openai\n    model: text-embedding-3-small", google
+        )
+    )
+    return default, record
+
+
+def _set_up(package: environment.Installation) -> tuple[int, mock.Mock]:
+    def installed(installation, plan, sources, *, check, enable, **kwargs):
+        enable()
+        return installation.environment(plan)
+
+    install = mock.Mock(side_effect=installed)
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", install),
+        mock.patch("sys.stdin.isatty", return_value=False),
+        mock.patch.dict(os.environ, CREDENTIALS),
+    ):
+        return main(["setup", "mine"]), install
+
+
+def test_setup_reads_the_record_where_start_opens_the_store(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    """The settings no longer name the directory: the runner opens the table there still, so
+    its record counts, however it was named when made."""
+    from alphaavatar.host.configs import application_paths
+
+    paths = application_paths()
+    default, record = _recorded_default(paths, named=True)
+    kept = {p: p.read_bytes() for p in paths.root.rglob("*") if p.is_file()}
+    code, install = _set_up(package)
+    assert code == 1 and not install.called
+    assert f"LanceDB table 'memory' in {default} holds vectors of openai" in capsys.readouterr().err
+    assert {p: p.read_bytes() for p in paths.root.rglob("*") if p.is_file()} == kept
+
+
+def test_setup_leaves_a_store_moved_aside_to_itself(package: environment.Installation) -> None:
+    """Moved aside by hand: the default directory holds no store, and gets a new one; the one
+    moved aside is no store the settings open, and stays as it is."""
+    from alphaavatar.host.configs import application_paths
+
+    paths = application_paths()
+    default, record = _recorded_default(paths, named=False)
+    backup = default.with_name("lancedb-backup")
+    default.rename(backup)
+    code, install = _set_up(package)
+    assert code == 0 and install.called
+    assert json.loads((backup / "memory.embedding.json").read_text()) == record
 
 
 def test_a_bundle_naming_another_embedding_for_the_vectors_its_avatar_keeps_is_refused_first(
