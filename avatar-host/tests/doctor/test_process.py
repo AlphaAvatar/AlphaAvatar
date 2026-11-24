@@ -62,6 +62,34 @@ def killed_after(problems: list[str]) -> float:
     return waited
 
 
+SHOWN = 0.05  # Half the 0.1 s the message shows a wait to: the most its rounding moves it.
+
+
+def killed_in_time(problems: list[str], took: float, budget: float) -> float:
+    """The one kill, at its deadline or after, and no later than the supervisor took once its
+    budget was spent, as far as the message's rounding tells."""
+    waited = killed_after(problems)
+    assert waited <= took - budget + SHOWN, (waited, took)
+    return waited
+
+
+def test_a_kill_s_wait_is_compared_as_far_as_its_message_rounds_it() -> None:
+    """A wait the message rounds up, 1.060 to 1.068 s shown as 1.1 s, is no later than the
+    supervisor took; a wait shown later than its rounding allows, or before the deadline, is
+    still refused."""
+    shown = [
+        "the diagnostic process had not exited 1.1 s after it was asked to stop, its 1 s to "
+        "close: killed"
+    ]
+    for took in (1.560, 1.564, 1.567, 1.568):
+        assert killed_in_time(shown, took, 0.5) == 1.1
+    with pytest.raises(AssertionError):
+        killed_in_time(shown, 1.54, 0.5)  # 1.04 s shows as 1.0 s, never 1.1 s.
+    early = [shown[0].replace("1.1 s after", "0.9 s after")]
+    with pytest.raises(AssertionError):
+        killed_in_time(early, 1.4, 0.5)  # Before its 1 s to close.
+
+
 def gone(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -128,7 +156,7 @@ def test_a_process_that_does_not_stop_is_killed_at_its_close_deadline_said_as_it
     found, problems, took = supervise(tmp_path, limit=0.5)
     assert 1.5 <= took < 10
     assert found == (None, "the diagnostic process exited with code -9")
-    assert killed_after(problems) <= took - 0.5  # Its budget, then its time to close.
+    killed_in_time(problems, took, 0.5)  # Its budget, then its time to close.
     assert gone(int((tmp_path / "started").read_text()))
 
 
