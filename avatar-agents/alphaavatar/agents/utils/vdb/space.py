@@ -23,8 +23,9 @@ A record is only what holds a record's fields for its store: anything else of it
 refused and left as it is.
 
 Hosts sharing a store record it at once safely. A record is decided or pending: a Host relies
-only on a decided one, which is never taken back, and opens the store beside one of its model
-without recording anything. Finding none, it records its own pending and reads again: finding a
+only on a decided one, which is never taken back, nor is one whose deciding its Host has asked
+for, whatever answer came back; beside one of its model a Host opens the store without
+recording anything. Finding none, it records its own pending and reads again: finding a
 decided one now, it takes its own back and goes on as beside that one; finding none, it decides
 its own only if nothing of another model, pending or decided, is recorded, else takes it back
 and refuses. A Host deciding its own wrote it before reading, and keeps it: of two Hosts
@@ -206,7 +207,8 @@ def claim(
     is named as a record and is not one; ``register`` records ``mine`` without overwriting
     another's, pending unless the store records one record only, placed once (then decided as
     placed, or not at all where another's is); ``confirm`` decides a pending one, and
-    ``withdraw`` takes back one ``register`` made while it is pending.
+    ``withdraw`` takes back one ``register`` made, only before ``confirm`` is called for it: a
+    record whose deciding was asked is never taken back, whatever answer comes back.
     """
 
     def check(found: list[Mapping[str, Any]]) -> None:
@@ -233,12 +235,13 @@ def claim(
         raise EmbeddingSpaceError(refusal(label, setting, made, configured))
 
     # Nothing decided: its own recorded, read again, then decided only if nothing of another
-    # model is recorded; taken back on refusal or on any failure before it is decided.
+    # model is recorded; taken back on refusal or on any failure before deciding it is asked.
     assumed = False
     if not _decided(found):
         assumed = held is not None and count() > 0
         mine = configured.record(store=store, setting=setting, assumed=assumed)
         register(mine)
+        deciding = False
         try:
             found = records()
             if _decided(found):
@@ -246,9 +249,13 @@ def claim(
                 withdraw(mine)  # A decided record of its model holds the store: its own not needed.
             else:
                 check(found)
+                # Asked, it may be decided whatever answer comes back, and another Host may
+                # rely on it: from here on it is kept, decided or still pending.
+                deciding = True
                 confirm(mine)
         except BaseException:
-            _withdraw(withdraw, mine, label)
+            if not deciding:
+                _withdraw(withdraw, mine, label)
             raise
 
     # Made, or readied, as it is now: another Host of this model may have made it meanwhile.

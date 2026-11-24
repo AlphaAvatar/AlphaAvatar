@@ -133,6 +133,7 @@ def claim_space(client, collection: str, space, *, setting: str, ensure) -> None
         write(found | {PENDING: True})
 
     def withdraw(found: dict) -> None:
+        # Called only before its deciding is asked (``space.claim``): its own, still pending.
         client.delete(record, points_selector=PointIdsList(points=[own]), wait=True)
 
     def size() -> int | None:

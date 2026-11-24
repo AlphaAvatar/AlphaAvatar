@@ -1022,3 +1022,65 @@ def test_three_hosts_reading_one_another_s_records_at_once_all_refuse_then_one_r
     qdrant_open(shared, SMALL)  # A retry.
     with pytest.raises(EmbeddingSpaceError):
         qdrant_open(shared, OTHER)
+
+
+"""Review of 2026-11-26: a record whose deciding may have been done"""
+
+
+@pytest.mark.parametrize("lost", ["connection", "interrupt", "unsent"])
+def test_a_record_whose_deciding_may_be_done_is_never_taken_back(lost: str) -> None:
+    """A decides its record, held before the answer comes back; B opens the store beside it.
+    Then A's answer is lost, or A is interrupted: its record stays decided, so C, of another
+    model, is refused, and B's record and data stay as they were. Had A's deciding write never
+    reached the store, its record would stay pending: no Host relies on it, C is refused all
+    the same, and A, retrying, opens the store."""
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct
+
+    shared = QdrantClient(location=":memory:")
+    hosts = Hosts()
+    held = hosts.client(shared)
+    deciding = "before upsert memories__embedding 2"  # Its first write recorded it pending.
+
+    class Lost:
+        """A's client: its deciding write done, or not, and its answer lost."""
+
+        def __getattr__(self, name: str):
+            found = getattr(held, name)
+            if name != "upsert":
+                return found
+
+            def upsert(*args, **kwargs):
+                pending = any(p.payload.get("pending") for p in kwargs["points"])
+                if not pending and lost == "unsent":
+                    hosts.at(deciding)
+                    raise ConnectionError("never sent")
+                result = found(*args, **kwargs)
+                if not pending:
+                    raise KeyboardInterrupt if lost == "interrupt" else ConnectionError("lost")
+                return result
+
+            return upsert
+
+    stop = deciding if lost == "unsent" else "after upsert memories__embedding 2"
+    hosts.start("A", lambda: qdrant_open(Lost(), SMALL), stop)
+    hosts.until("A", stop)
+    if lost != "unsent":
+        hosts.start("B", lambda: qdrant_open(held, SMALL))
+        assert hosts.finish("B") is None
+        point = PointStruct(id=1, vector=[1.0, 0.0, 0.0, 0.0], payload={"text": "B's"})
+        shared.upsert("memories", points=[point])
+    kept = [(p.id, p.payload) for p in qdrant_records(shared)]
+    ended = hosts.finish("A")
+
+    assert isinstance(ended, KeyboardInterrupt if lost == "interrupt" else ConnectionError)
+    assert [(p.id, p.payload) for p in qdrant_records(shared)] == kept
+    assert [payload.get("pending") for _, payload in kept] == [True if lost == "unsent" else None]
+    with pytest.raises(EmbeddingSpaceError):
+        qdrant_open(shared, OTHER)  # C.
+    assert [(p.id, p.payload) for p in qdrant_records(shared)] == kept
+    if lost == "unsent":
+        qdrant_open(shared, SMALL)  # A, retrying.
+    else:
+        (data,) = shared.scroll("memories", with_payload=True, with_vectors=True)[0]
+        assert (data.id, data.payload, data.vector) == (1, {"text": "B's"}, [1.0, 0.0, 0.0, 0.0])

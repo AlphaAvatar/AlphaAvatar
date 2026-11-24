@@ -21,7 +21,7 @@
 | 2 | 统一的配置决策：能力开关、按组件选 Provider 和模型、TTS 兼容性、依赖、凭据、摘要；保留注释的写入 | 已提交（`b14b5894`）；审查发现的两处已修复（§4.1、§4.2） |
 | 3 | 交互流程：能力 → Provider 和模型 → 凭据 → 摘要 → 安装；方向键列表和编号回退；PTY 验证 | 已提交（`3e5b8e2d`）；审查发现的两处已修复（§5.1、§5.2） |
 | 4 | 安装器输出的颜色和分组；`cli.html` 的 Setup 画面 | 已提交（`01200003`），通过审查 |
-| 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 已提交（`e300619e`）；第一轮审查的四处修复已提交（`a9b2081a`，§7）；第二轮复核的 KD-60、KD-61 已修复，候选包已重建并复验，待审查（§8） |
+| 5 | 已有配置的保护、Embedding 变更检查、文档、新候选包的真实验证 | 已提交（`e300619e`）；第一轮审查的四处修复已提交（`a9b2081a`，§7）；第二轮修复已提交（`37bd78b5`，§8）；第三轮复核的 KD-61 确定请求之后的窗口已修复，候选包已重建并复验，待审查（§9） |
 
 ## 1. 批次 0：demo.yaml
 
@@ -1050,3 +1050,99 @@ alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-a9b2081a3f8a-dirty.202
 - 真实 Qdrant 服务端（单节点）和多副本集群、网络文件系统上的 LanceDB：没有验证（§8.4）。
 - 强制终止留下的待定记录不会自动删除（§8.4）。
 - O-35 延期；§6.10 列出的其他限制不变。
+
+## 9. 第五批第三轮审查修复：确定请求之后的异常窗口（基线 `37bd78b5`）
+
+`37bd78b5` 的复核：KD-60 通过，不再改动；KD-61 还剩确定请求之后的异常窗口，本轮只做最小修复。O-35 继续延期。VAD、寻址策略、默认 Embedding、配置模板和 KD-60 的行为不变。
+
+### 9.1 基线
+
+`37bd78b5` 的 Quality（45338204047）和 Linux package（45338204071）都是 success。
+
+### 9.2 问题与修复
+
+- 问题（`space.py` 的 `claim()`）：`confirm(mine)` 仍在"出现异常就撤回"的范围内。确定请求报错，不代表服务端没有完成写入。
+- 用户的复现（真实内存 Qdrant）：
+  1. A 的确定写入在服务端已完成，但响应还没回到客户端；
+  2. B 读到这条已确定记录，打开了存储；
+  3. A 收到"响应丢失"的异常，或被 Ctrl+C 中断，清理时删掉了这条已确定记录；
+  4. C 用另一个模型也能打开，而 B 仍在用原来的模型。
+- 修复：在调用 `confirm()` 之前设置 `deciding = True`。之后出现任何异常都不再撤回，记录保留，不论它在服务端是已确定还是仍为待定。不能等 `confirm()` 成功返回再设置，因为响应丢失时服务端可能已经提交。
+- 结果未知而留下的待定记录：没有 Host 依赖它，其他模型照样被拒绝，同一模型重试可以打开。
+- 请求确定之前的拒绝、重读失败、中断，仍按原规则撤回自己的待定记录，不涉及其他 Host 的记录。
+- Qdrant 的 `withdraw` 没有改：它只会在请求确定之前被调用，那时删除的只能是自己的待定记录；`qdrant.py` 只加了一行注释说明这一点。
+
+### 9.3 测试
+
+- 新增 `test_a_record_whose_deciding_may_be_done_is_never_taken_back`，用 `Hosts` 做确定性交错，三种情形：
+  - `connection`：确定写入实际完成，返回前抛出连接异常；
+  - `interrupt`：确定写入实际完成，返回前收到 `KeyboardInterrupt`；
+  - `unsent`：确定写入根本没有发出就失败，记录保留为待定。
+
+  前两种情形都让 B 在 A 的异常发生之前读到已确定记录并打开，再写入一行 B 的数据。之后核对：A 的清理没有删除这条记录；C 用另一个模型被拒绝；B 依赖的记录和 B 的数据都不变。第三种情形核对：C 被拒绝；A 重试可以打开。
+- 在 `37bd78b5` 的 `space.py` 上（从仓库外替换导入），三种情形都失败：前两种是已确定的记录被删除；第三种是待定记录被撤回。旧代码撤回一条没发出确定请求的待定记录本身并不危险，这一项只是固定新的保守规则。其余 32 个用例照常通过。
+- 变异 3 个，全部被发现：
+  - 确定成功返回后才设置标记：`connection`、`interrupt` 失败；
+  - 异常时总是撤回：同上；
+  - 从不撤回：请求确定之前的撤回测试失败。
+- 保留的回归都通过：三 Host、分页、旧记录兼容、空表维度、未知集合。
+- 相关测试组 795 passed；离线全量 1171 passed，241 warnings，385 s，运行前后未跟踪和被忽略的文件一致。仓库规范检查（`uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`、`bash -n`、`git diff --check`、对改动文件的 pre-commit）都通过，pre-commit 没有改动文件。
+
+### 9.4 新候选包
+
+| 项 | 内容 |
+|---|---|
+| 源码 | HEAD `37bd78b55e7b75e7e13afdb0f29a22205b1047ff` 加本轮未提交的改动：4 个跟踪文件，没有未跟踪文件，`git diff` 的 sha256 前缀 `90b59b11c696bc7f`。构建前后核对过，diff 与构建时一致 |
+| 构建 | `packaging/linux/build.sh --allow-dirty --max-glibc 2.32`；uv 0.10.0、Python 3.13.12；构建机 Alibaba Cloud Linux 3（glibc 2.32） |
+| Build ID | `0.6.8-37bd78b55e7b-dirty.20261124062715`；manifest 中 `release` 为 null |
+| 内容核对 | 基础环境里的 `space.py`（含 `deciding` 保护）、`qdrant.py`、`lancedb.py`、`config.py`、`resolved_plugin.py`、Setup 的 `setup.py`，以及三个 LanceDB runner，都与工作区逐字节相同 |
+| 位置 | `~/alphaavatar-candidates/0.6.8-37bd78b55e7b-dirty.20261124062715/`；§8.6 的候选包不再作为验收包 |
+| SHA-256 | 包 `722ce2b98b7df9cfe2afda0c0ce01f597921dc433871e8d9d5c51343142dfe3b`；manifest `db0faccd…c6cd`；install.sh `02ff07ac…98`；SHA256SUMS `be806a2a…cf20` |
+
+### 9.5 候选包验证（干净环境）
+
+环境与 §6.6 相同，每个场景用新的 rootfs 副本。
+
+- 包内的这处保护：用包内的代码在单线程里复现用户的步骤。B 在 A 的确定写入完成之后、A 收到结果之前打开存储，并写入一行数据；随后 A 收到 `ConnectionError` 或 `KeyboardInterrupt`。
+  - 两种情形下，A 的记录都保持已确定且不变，C 用另一个模型被拒绝，B 的数据不变。
+  - 同一段脚本换成 `37bd78b5` 的 `space.py` 运行，两种情形下 C 都能打开。
+  - 集合归属、空表维度、读到"未登记"之后另一个 Host 才登记三项防护照常有效。
+- 基础包预检（场景 6）：§8.7 的七种情形结果相同，没有安装或写入任何东西。
+- 真实 Setup：
+  - 场景 1：安装器接续 Setup，Ctrl+C 后安装保留；完整走一遍 105 个包 / 514 MB，`PASS · 8 runners`；终端恢复，没有残留进程；`config check`、`doctor --no-metrics`、`config init` 通过；
+  - 场景 2：own、mixed、speech、voiceai 都通过；
+  - 7 个 Bundle 的 YAML 检查没有问题，也没有任何凭据值。
+- 已有配置保护（场景 5）：再运行 Setup，文件哈希不变；手改内容保留；换 Embedding 被拒绝，文件不变；同名集合改用 Qdrant 后照常安装。
+- 升级与 cleanup（场景 4），从 CI 为 `37bd78b5` 构建的包（`0.6.8-37bd78b55e7b`，Linux package 运行 45338204071，artifact 14894942177，`SHA256SUMS` 全部 OK）升级：
+  - 旧版写下带标记、没有 `client_path` 的记录；
+  - SHA-256 错误、候选包首次安装前的准备失败：都拒绝，状态不变；
+  - 升级：77 个包 / 188 MB，`PASS · 2 runners`；
+  - 升级后，同一模型照常打开，另一个模型被存储层和 Setup 拒绝；
+  - `cleanup --dry-run` 不写任何东西，预计释放 795 MB；`cleanup` 只删除旧环境和旧基础包；
+  - 应用数据（包括旧版的记录和 LanceDB 表）的哈希不变。
+
+### 9.6 验证范围
+
+- 源码测试：§9.3。
+- 候选包与源码：一致性见 §9.4；构建之后只改了本日志，日志不进包。
+- 真实服务：没有调用任何模型或远程服务，没有产生费用。
+- Qdrant 只在 qdrant-client 的本地内存模式下验证。真实单节点服务端没有运行；多副本集群取决于它的一致性设置，没有验证；网络文件系统上的 LanceDB 也没有验证（§8.4）。
+- CI：`37bd78b5` 都是 success；本轮的改动尚未提交，没有对应的 CI。
+
+### 9.7 给用户的候选包命令
+
+```bash
+cd ~/alphaavatar-candidates/0.6.8-37bd78b55e7b-dirty.20261124062715
+sha256sum -c SHA256SUMS
+bash install.sh --file ./alphaavatar-0.6.8-37bd78b55e7b-dirty.20261124062715-linux-x86_64.tar.gz
+alphaavatar setup --artifacts ~/alphaavatar-candidates/0.6.8-37bd78b55e7b-dirty.20261124062715
+# 已有安装时（先停止 alphaavatar start）：
+alphaavatar upgrade --file ~/alphaavatar-candidates/0.6.8-37bd78b55e7b-dirty.20261124062715/alphaavatar-0.6.8-37bd78b55e7b-dirty.20261124062715-linux-x86_64.tar.gz
+```
+
+### 9.8 未验证与剩余
+
+- 本轮代码对应的 CI：待用户提交推送后核对。
+- 真实 Qdrant 服务端、多副本集群、网络文件系统：同 §9.6。
+- 确定请求结果未知时留下的待定记录不会自动删除；Host 被强制终止时同样如此（§8.4）。
+- O-35 继续延期。
