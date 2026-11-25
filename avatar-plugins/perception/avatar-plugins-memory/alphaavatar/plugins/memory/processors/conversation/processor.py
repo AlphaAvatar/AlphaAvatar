@@ -14,16 +14,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryKind, MemoryType
+from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryKind, MemoryOwnerKind, MemoryType
 from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef, MemoryScope
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.agents.utils.time import application_now
 
-from ...log import logger
 from ...state import MemoryContextState
 from ..base import MemoryProcessor
 from .config import ConversationConfig
@@ -32,6 +33,8 @@ from .provider import ConversationProvider
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
+
+logger = logging.getLogger(__name__)
 
 
 @avatar_capability(
@@ -67,17 +70,18 @@ class ConversationProcessor(MemoryProcessor):
         self._consolidator.record_recall(records)
 
     async def _candidate_search(
-        self, texts: list[str], *, owner_refs, context, timeout: float = 5.0
+        self, texts: list[str], *, owner_refs, scope, participants=(), timeout: float = 5.0
     ):
         try:
             return await self.store.search_similar_batch(
                 texts,
                 owner_refs=owner_refs,
-                context=context,
+                scope=scope,
                 memory_type=MemoryType.CONVERSATION,
                 kind=MemoryKind.CONSOLIDATED,
                 top_k=(self._config.pipeline.consolidation.max_candidates_per_item),
                 timeout=timeout,
+                participants=participants,
             )
 
         except Exception:
@@ -94,7 +98,9 @@ class ConversationProcessor(MemoryProcessor):
             if start == end:
                 return
 
-            content = self.render_context_content(state, messages)
+            self.memory_runtime.sync_session()
+            identity = state.capture_identity(messages, of_turn=self.runtime.participants.of_turn)
+            content = self.render_context_content(state, messages, identity=identity)
 
             delta = await self._provider.extract(
                 context_content=content,
@@ -114,19 +120,21 @@ class ConversationProcessor(MemoryProcessor):
                 memory_type=MemoryType.Avatar,
                 patches=delta.assistant_memory_entries,
                 owner_refs=[MemoryOwnerRef.avatar(self.avatar_id)],
-                participant_refs=state.participant_refs,
+                participant_refs=list(identity.participant_refs),
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
+                identity=identity,
             )
 
             conversation_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.CONVERSATION,
                 patches=delta.user_or_tool_memory_entries,
-                owner_refs=state.owner_refs,
-                participant_refs=state.participant_refs,
+                owner_refs=[ref for ref in identity.owner_refs if ref.kind is MemoryOwnerKind.USER],
+                participant_refs=list(identity.participant_refs),
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
+                identity=identity,
             )
 
             conversation_items = await self._consolidator.consolidate_session(
@@ -141,20 +149,24 @@ class ConversationProcessor(MemoryProcessor):
                         memory_type=MemoryType.CONVERSATION,
                     )
                 ),
+                identity_is_current=lambda: self.memory_runtime.identity_is_current(identity),
+                participants=identity.participants,
             )
 
             await self.commit_items(
-                state=state, start=start, end=end, items=[*avatar_items, *conversation_items]
+                state=state,
+                start=start,
+                end=end,
+                items=[*avatar_items, *conversation_items],
+                identity=identity,
             )
 
     async def _stop(self, *, finalize: bool) -> None:
         if not finalize:
             return
 
-        await asyncio.gather(
-            *(
-                self.update(state)
-                for state in self.memory_runtime.memory_contexts.values()
-                if state.cache_type is MemoryCacheType.SESSION_INTERACTION
-            )
+        await self.finalize_contexts(
+            state
+            for state in self.memory_runtime.memory_contexts.values()
+            if state.cache_type is MemoryCacheType.SESSION_INTERACTION
         )

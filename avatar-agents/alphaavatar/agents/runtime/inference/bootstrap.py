@@ -16,28 +16,18 @@ from __future__ import annotations
 import importlib
 import json
 import os
-from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.log import logger
+from pydantic import SecretStr
+from pydantic_core import PydanticCustomError, ValidationError
 
 from .runner import InferenceRunner
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs.avatar_config import AvatarConfig
+    from alphaavatar.agents.configs.runtime_config import InferenceConfig
 
 INFERENCE_PLAN_ENV = "ALPHAAVATAR_INFERENCE_PLAN"
-RunnerBootstrapFn = Callable[["AvatarConfig"], Iterable[type[InferenceRunner]]]
-_runner_bootstraps: dict[str, RunnerBootstrapFn] = {}
-
-
-def register_inference_runner_bootstrap(
-    name: str, fn: RunnerBootstrapFn, *, override: bool = False
-) -> None:
-    if name in _runner_bootstraps and not override:
-        logger.warning("Inference runner bootstrap already registered: %s, skipped", name)
-        return
-    _runner_bootstraps[name] = fn
 
 
 def _add_runner(runners: dict[str, type[InferenceRunner]], runner: type[InferenceRunner]) -> None:
@@ -54,17 +44,79 @@ def _add_runner(runners: dict[str, type[InferenceRunner]], runner: type[Inferenc
     runners[method] = runner
 
 
+def snapshot_inference_config(config: AvatarConfig) -> str:
+    """Private immutable launch inputs, under the namespace of each selected plugin whose
+    runners read them (``InferenceRunner.config_for``); never expose these credentials in
+    diagnostics.
+    """
+    from alphaavatar.agents.runtime.plugin import resolve_plugins
+
+    def encode(value):
+        if isinstance(value, SecretStr):
+            return value.get_secret_value()
+        raise TypeError("Inference configuration contains a non-JSON value")
+
+    inputs = {}
+    plugins = resolve_plugins(config).plugins
+    for location in config.plugin_factories():
+        section = config.section(location)
+        if location in plugins and hasattr(section, "runner_config"):
+            inputs[plugins[location].namespace] = section.runner_config()
+    return json.dumps(
+        inputs, default=encode, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
+
+
+def check_inference_config(
+    runners: dict[str, type[InferenceRunner]], config: InferenceConfig
+) -> None:
+    """Overrides must name selected runners; only replicable runners take several workers.
+
+    Failures are located at the offending override, since reports show locations only.
+    """
+    location = ("runtime", "inference", "methods")
+    errors = [
+        {
+            "type": PydanticCustomError("unselected_runner", "Not a selected inference runner"),
+            "loc": (*location, method),
+            "input": options.workers,
+        }
+        for method, options in config.methods.items()
+        if method not in runners
+    ]
+    errors += [
+        {
+            "type": PydanticCustomError("single_worker", "This inference runner is not REPLICABLE"),
+            "loc": (*location, method, "workers"),
+            "input": config.workers(method),
+        }
+        for method, runner in runners.items()
+        if config.workers(method) > 1 and not runner.REPLICABLE
+    ]
+    if errors:
+        raise ValidationError.from_exception_data("InferenceConfig", errors)
+
+
+def plan_inference_runners(config: AvatarConfig) -> dict[str, type[InferenceRunner]]:
+    """The runners the selected plugins and their providers use, checked against
+    runtime.inference: what loading accepts, config check reports and start launches.
+
+    Pure: it never writes the environment, spawns a process or loads a model. The selected
+    plugins resolve first, and every one unavailable fails by the setting selecting it.
+    """
+    from alphaavatar.agents.runtime.plugin import resolve_plugins
+
+    selection = resolve_plugins(config)
+    selection.check()
+    runners = {method: runner for method, (_, runner) in selection.runners.items()}
+    check_inference_config(runners, config.runtime.inference)
+    return runners
+
+
 def prepare_inference_runners(config: AvatarConfig) -> tuple[str, ...]:
     """Build a configuration-specific, download-free plan before CLI subprocesses start."""
     os.environ.pop(INFERENCE_PLAN_ENV, None)
-    runners: dict[str, type[InferenceRunner]] = {}
-    for name, bootstrap in tuple(_runner_bootstraps.items()):
-        try:
-            for runner in bootstrap(config):
-                _add_runner(runners, runner)
-        except Exception as exc:
-            raise RuntimeError(f"Failed to prepare inference runners for {name!r}") from exc
-
+    runners = plan_inference_runners(config)
     plan = [
         {"method": method, "module": runner.__module__, "name": runner.__qualname__}
         for method, runner in runners.items()
@@ -80,9 +132,11 @@ def bootstrap_inference_runners() -> dict[str, type[InferenceRunner]]:
         raise RuntimeError(
             "Inference plan is missing; call prepare_inference_runners(config) first"
         )
+
     plan = json.loads(raw)
     if not isinstance(plan, list):
         raise ValueError("Inference plan must be a list")
+
     runners: dict[str, type[InferenceRunner]] = {}
     for item in plan:
         if not isinstance(item, dict) or set(item) != {"method", "module", "name"}:

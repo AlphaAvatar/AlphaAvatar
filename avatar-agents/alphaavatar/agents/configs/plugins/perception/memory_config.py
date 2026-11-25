@@ -11,18 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
-import json
-import os
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-from alphaavatar.agents.utils.vdb import qdrant
-
-importlib.import_module("alphaavatar.plugins.memory")
+from alphaavatar.agents.utils.vdb.config import snapshot_vdb_config
 
 
 class MemoryConfig(BaseModel):
@@ -45,24 +41,16 @@ class MemoryConfig(BaseModel):
     # Memory VDB Config
     vdb_config: dict = Field(
         default_factory=dict,
+        repr=False,
         description="Custom initialization parameters for the memory vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
     )
 
-    def model_post_init(self, __context):
-        # Set MEMORY_VDB_CONFIG
-        os.environ["MEMORY_VDB_CONFIG"] = json.dumps(self.vdb_config)
-        if self.plugin == "default":
-            # Ensure default Memory plugin is registered
-            try:
-                qdrant.get_client(
-                    **self.vdb_config
-                )  # Check if Qdrant client can be initialized with current config
-                os.environ["MEMORY_VDB_TYPE"] = "qdrant"
-            except ValueError:
-                os.environ["MEMORY_VDB_TYPE"] = "lancedb"
-        else:
-            # TODO: Handle other memory plugins and their corresponding VDB types if needed
-            pass
+    def model_post_init(self, __context: Any) -> None:
+        self.vdb_config = snapshot_vdb_config(self.vdb_config)
+
+    def runner_config(self) -> dict[str, Any]:
+        """What the plugin's inference runners read at launch; it holds credentials."""
+        return self.vdb_config
 
     def get_plugin(self, runtime: AvatarRuntime, avatar_id: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
@@ -72,5 +60,6 @@ class MemoryConfig(BaseModel):
             runtime=runtime,
             avatar_id=avatar_id,
             maximum_memory_num=self.maximum_memory_num,
+            vdb_config=self.vdb_config,
             init_config=self.init_config,
         )

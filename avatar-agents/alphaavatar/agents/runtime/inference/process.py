@@ -20,6 +20,7 @@ import multiprocessing as mp
 import socket
 import sys
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
 from multiprocessing.context import BaseContext
@@ -46,7 +47,7 @@ from .protocol import (
     validate_data,
     write_frame,
 )
-from .runner import InferenceRunner
+from .runner import InferenceRunner, RunnerLaunch
 from .signals import configure_runner_signals, start_runner_process
 
 logger = logging.getLogger(__name__)
@@ -59,19 +60,27 @@ def _error() -> bytes:
     return diagnostic.encode("utf-8")[:16384]
 
 
-def _runner_main(runner_spec: tuple[str, str], sock: socket.socket) -> None:
+def _runner_main(
+    runner_spec: tuple[str, str], sock: socket.socket, launch: RunnerLaunch | None = None
+) -> None:
     configure_runner_signals()
     client = None
     try:
         client = configure_from_env()
-        _serve_runner(runner_spec, sock, capture=client is not None)
+        _serve_runner(runner_spec, sock, capture=client is not None, launch=launch)
     finally:
         sock.close()
         if client is not None:
             client.close()
 
 
-def _serve_runner(runner_spec: tuple[str, str], sock: socket.socket, *, capture: bool) -> None:
+def _serve_runner(
+    runner_spec: tuple[str, str],
+    sock: socket.socket,
+    *,
+    capture: bool,
+    launch: RunnerLaunch | None = None,
+) -> None:
     runner = None
     try:
         # Resolve model/plugin imports only after installing the signal and logging policy.
@@ -82,6 +91,8 @@ def _serve_runner(runner_spec: tuple[str, str], sock: socket.socket, *, capture:
             if not isinstance(runner_cls, type) or not issubclass(runner_cls, InferenceRunner):
                 raise TypeError("Inference target must be an InferenceRunner class")
             runner = runner_cls()
+            if launch is not None:
+                runner.configure(launch)
             runner.initialize()
             configure_runner_signals()  # Model initialization does not own terminal shutdown.
     except BaseException:
@@ -148,7 +159,10 @@ class RunnerProcess:
         request_timeout: float,
         close_timeout: float,
         max_pending: int,
+        launch: RunnerLaunch | None = None,
+        on_settled: Callable[[], None] | None = None,
     ) -> None:
+        self._launch, self._on_settled = launch, on_settled
         self.method = runner_cls.INFERENCE_METHOD
         self._runner_cls, self._mp_ctx = runner_cls, mp_ctx
         self._initialize_timeout, self._request_timeout = initialize_timeout, request_timeout
@@ -181,6 +195,11 @@ class RunnerProcess:
         )
 
     @property
+    def busy(self) -> bool:
+        # Includes a dispatched exchange whose caller left: the worker still owns its response.
+        return bool(self._requests)
+
+    @property
     def pid(self) -> int | None:
         return self._process.pid if self._process is not None else None
 
@@ -193,6 +212,11 @@ class RunnerProcess:
         if not task.cancelled():
             task.exception()
 
+    def _settle(self, task: asyncio.Task[bytes | None]) -> None:
+        self._requests.pop(task, None)
+        if self._on_settled is not None:
+            self._on_settled()
+
     async def _connect(self, sock: socket.socket) -> None:
         self._reader, self._writer = await asyncio.open_connection(sock=sock)
 
@@ -201,7 +225,11 @@ class RunnerProcess:
         parent.setblocking(False)
         self._process = self._mp_ctx.Process(
             target=_runner_main,
-            args=((self._runner_cls.__module__, self._runner_cls.__qualname__), child),
+            args=(
+                (self._runner_cls.__module__, self._runner_cls.__qualname__),
+                child,
+                self._launch,
+            ),
             name=f"inference:{self.method}",
         )
 
@@ -347,7 +375,7 @@ class RunnerProcess:
             self._exchange(request, data, timeout), name=f"infer:{self.method}"
         )
         self._requests[task] = request
-        task.add_done_callback(lambda done: self._requests.pop(done, None))
+        task.add_done_callback(self._settle)
         task.add_done_callback(self._observe)
         try:
             return await asyncio.shield(task)
@@ -443,7 +471,8 @@ class RunnerProcess:
             await asyncio.gather(*requests, return_exceptions=True)
 
         self._log_summary(force=True)
-        if self._ready and not self._broken and self._writer is not None:
+        ready = self._ready
+        if ready and not self._broken and self._writer is not None:
             try:
                 async with asyncio.timeout(self._close_timeout):
                     await write_frame(self._writer, CLOSE)
@@ -457,7 +486,8 @@ class RunnerProcess:
                 errors.append(error)
         self._ready = False
         try:
-            await self._retire(force=self._broken)
+            # A runner that never became ready has no exchange to drain: terminate it now.
+            await self._retire(force=self._broken or not ready)
         except Exception as error:
             errors.append(error)
         if errors:

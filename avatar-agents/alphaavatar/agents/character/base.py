@@ -16,6 +16,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from dataclasses import dataclass, field
 
+from alphaavatar.core.env.schemas import DeviceId
 from alphaavatar.core.lifecycle import LifecycleComponent
 
 
@@ -25,12 +26,12 @@ class CharacterConnection:
 
     transport: str
     url: str
-    agent_identity: str
-    participant_identity: str
+    agent_device_id: DeviceId
+    device_id: DeviceId
     token: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        for name in ("transport", "url", "agent_identity", "participant_identity", "token"):
+        for name in ("transport", "url", "agent_device_id", "device_id", "token"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"Character connection requires {name}")

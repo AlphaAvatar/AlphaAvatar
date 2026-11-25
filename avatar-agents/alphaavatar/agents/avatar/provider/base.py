@@ -30,6 +30,11 @@ class LLMBase(ABC):
     def validate_input(self, *, require_input_adapter: bool = False) -> None:
         """Validate configuration without making a model request."""
 
+    def prepare(self) -> None:
+        """Start, off the event loop, what the first request would otherwise build on its
+        path; nothing by default."""
+        return None
+
     @abstractmethod
     async def ainvoke_structured(
         self, model_input: ModelInput, *, output_schema: type[BaseModel], include_raw: bool = False

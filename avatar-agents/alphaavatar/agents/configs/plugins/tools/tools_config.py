@@ -13,9 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import importlib
-import json
-import os
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,7 +41,8 @@ class ToolPluginConfig(BaseModel):
 class MCPConfig(BaseModel):
     """Configuration for MCP tool integration."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Server headers and VDB settings carry credentials; errors report locations only.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     enabled: bool = Field(default=False, description="Whether to enable the MCP plugin.")
     plugin: str | None = Field(
@@ -56,6 +54,7 @@ class MCPConfig(BaseModel):
     )
     vdb_config: dict[str, Any] = Field(
         default_factory=dict,
+        repr=False,
         description=(
             "Custom initialization parameters for the MCP VDB backend "
             "(e.g. host, port, url, api_key, prefer_grpc, embedding)."
@@ -63,8 +62,22 @@ class MCPConfig(BaseModel):
     )
     servers: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
+        repr=False,
         description="Mapping of MCP server identifiers to their configuration objects.",
     )
+
+    @property
+    def creates(self) -> bool:
+        """Whether MCP is created: only then are its servers' credentials read and sent."""
+        return self.enabled and self.plugin is not None
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.creates:
+            self.servers = resolve_env_placeholders(self.servers, ("servers",))
+
+    def runner_config(self) -> dict[str, Any]:
+        """What the plugin's inference runners read at launch; it holds credentials."""
+        return {"vdb_config": self.vdb_config, "servers": self.servers}
 
 
 class ToolsConfig(BaseModel):
@@ -75,15 +88,6 @@ class ToolsConfig(BaseModel):
     deepresearch: ToolPluginConfig = Field(default_factory=ToolPluginConfig)
     rag: ToolPluginConfig = Field(default_factory=ToolPluginConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
-
-    def model_post_init(self, __context: Any) -> None:
-        # Keep worker configuration available before inference-runner preparation.
-        # This remains the existing single worker-configuration scope, not per-call state.
-        if self.mcp.enabled and self.mcp.plugin is not None and self.mcp.servers:
-            os.environ["MCP_VDB_TYPE"] = "lancedb"
-            os.environ["MCP_VDB_CONFIG"] = json.dumps(self.mcp.vdb_config)
-            os.environ["MCP_SERVERS"] = json.dumps(resolve_env_placeholders(self.mcp.servers))
-            importlib.import_module("alphaavatar.plugins.mcp")
 
     def get_tools(self, runtime: AvatarRuntime) -> tuple[ToolBase, ...]:
         tools = []
@@ -96,7 +100,6 @@ class ToolsConfig(BaseModel):
             if config.plugin is None:
                 continue
 
-            importlib.import_module(f"alphaavatar.plugins.{package}")
             tool = AvatarModulePlugin.create(
                 module, config.plugin, runtime=runtime, init_config=config.init_config
             )
@@ -105,17 +108,17 @@ class ToolsConfig(BaseModel):
 
             tools.append(tool)
 
-        if self.mcp.enabled and self.mcp.plugin is not None:
+        if self.mcp.creates:
             if not self.mcp.servers:
                 raise ValueError("Enabled MCP requires at least one configured server")
 
-            importlib.import_module("alphaavatar.plugins.mcp")
             tool = AvatarModulePlugin.create(
                 AvatarModule.MCP,
                 self.mcp.plugin,
                 runtime=runtime,
                 init_config=self.mcp.init_config,
-                servers=resolve_env_placeholders(self.mcp.servers),
+                servers=self.mcp.servers,
+                **({"vdb_config": self.mcp.vdb_config} if self.mcp.plugin == "default" else {}),
             )
             if not isinstance(tool, ToolBase):
                 raise TypeError("MCP plugin must return ToolBase")

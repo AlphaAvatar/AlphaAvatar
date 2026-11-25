@@ -1,0 +1,342 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import replace
+from threading import RLock
+from types import MappingProxyType
+from typing import Protocol
+from uuid import uuid4
+
+from alphaavatar.core.time import RuntimeClock, RuntimeTime
+
+from .enums import IdentityOutcome, IdentitySource, SessionEventKind
+from .schemas import (
+    AssociationRequest,
+    IdentityRequest,
+    Participant,
+    ParticipantId,
+    SessionEvent,
+    SessionSnapshot,
+    validate_identity,
+)
+from .schemas.validation import validate_sequence
+from .stream import SessionStream
+
+
+class IdentityPolicy(Protocol):
+    """Accept a runtime decision without I/O; recognition/model work happens before submission."""
+
+    def allow(
+        self, request: IdentityRequest, *, participant: Participant, snapshot: SessionSnapshot
+    ) -> bool: ...
+
+    def select(self, request: AssociationRequest, *, snapshot: SessionSnapshot) -> str | None: ...
+
+
+class DefaultIdentityPolicy:
+    """Require a reason from the deciding component, without restricting correction sources."""
+
+    def allow(
+        self, request: IdentityRequest, *, participant: Participant, snapshot: SessionSnapshot
+    ) -> bool:
+        return request.reason is not None
+
+    def select(self, request: AssociationRequest, *, snapshot: SessionSnapshot) -> str | None:
+        return None
+
+
+class SessionRuntime:
+    def __init__(
+        self,
+        *,
+        session_id: str | None = None,
+        clock: RuntimeClock | None = None,
+        event_maxlen: int = 256,
+        identity_policy: IdentityPolicy | None = None,
+    ) -> None:
+        self._session_id = validate_identity(
+            uuid4().hex if session_id is None else session_id, name="session_id"
+        )
+
+        self._clock = clock if clock is not None else RuntimeClock()
+        self._created_at = self._clock.now()
+        self._lock = RLock()
+
+        self._events = SessionStream(
+            session_id=self._session_id, maxlen=event_maxlen, _lock=self._lock
+        )
+
+        # participant -> user
+        self._participants: dict[str, Participant] = {}
+        # Keep identity changes independently of the bounded notification stream.
+        self._identity_history: dict[str, list[SessionEvent]] = {}
+
+        self._primary_participant_id: ParticipantId | None = None
+        self._closed = False
+        self._identity_policy = (
+            identity_policy if identity_policy is not None else DefaultIdentityPolicy()
+        )
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def clock(self) -> RuntimeClock:
+        return self._clock
+
+    @property
+    def created_at(self) -> RuntimeTime:
+        return self._created_at
+
+    @property
+    def events(self) -> SessionStream:
+        return self._events
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+    @property
+    def participants(self) -> Mapping[str, Participant]:
+        with self._lock:
+            return MappingProxyType(dict(self._participants))
+
+    @property
+    def primary_participant_id(self) -> str | None:
+        with self._lock:
+            return self._primary_participant_id
+
+    @property
+    def primary_participant(self) -> Participant | None:
+        with self._lock:
+            return self._participants.get(self._primary_participant_id)
+
+    @property
+    def primary_user_id(self) -> str | None:
+        participant = self.primary_participant
+        return None if participant is None else participant.user_id
+
+    def _snapshot(self) -> SessionSnapshot:
+        return SessionSnapshot(
+            session_id=self._session_id,
+            sequence=self._events.latest_sequence,
+            primary_participant_id=self._primary_participant_id,
+            participants=self._participants,
+            closed=self._closed,
+            created_at=self._created_at,
+        )
+
+    def snapshot(self) -> SessionSnapshot:
+        with self._lock:
+            return self._snapshot()
+
+    def select_participant(self, request: AssociationRequest) -> Participant | None:
+        if not isinstance(request, AssociationRequest):
+            raise TypeError("request must be AssociationRequest")
+
+        with self._lock:
+            if self._closed:
+                return None
+            snapshot = self._snapshot()
+
+        selected = self._identity_policy.select(request, snapshot=snapshot)
+        if selected is None:
+            return None
+
+        if not isinstance(selected, str):
+            raise TypeError(
+                "IdentityPolicy.select must return a participant ID or None synchronously"
+            )
+        if selected not in snapshot.participants:
+            raise ValueError(
+                "Association policy selected a participant outside its Session snapshot"
+            )
+
+        with self._lock:
+            if self._closed or self._events.latest_sequence != snapshot.sequence:
+                return None
+            return self._participants[selected]
+
+    def identity_history(self, participant_id: ParticipantId) -> tuple[SessionEvent, ...]:
+        """Accepted identity history for this session lifetime, including initial admission."""
+        with self._lock:
+            return tuple(self._identity_history.get(participant_id, ()))
+
+    def get_identity(
+        self, participant_id: ParticipantId, identity_revision: int | None = None
+    ) -> Participant | None:
+        if identity_revision is not None:
+            validate_sequence(identity_revision, name="identity_revision")
+        with self._lock:
+            if identity_revision is None:
+                return self._participants.get(participant_id)
+            history = self._identity_history.get(participant_id, ())
+            return (
+                history[identity_revision].participant if identity_revision < len(history) else None
+            )
+
+    def join(
+        self,
+        *,
+        user_id: str | None = None,
+        participant_id: ParticipantId | None = None,
+        timezone: str | None = None,
+        primary: bool = False,
+        generated: bool = False,
+    ) -> Participant:
+        if type(generated) is not bool or generated and user_id is None:
+            raise ValueError("Generated identity admission requires a user namespace")
+
+        # A supplied user is an explicit application decision, never transport metadata.
+        participant = Participant(
+            participant_id=uuid4().hex if participant_id is None else participant_id,
+            user_id=user_id,
+            joined_at=self._clock.now(),
+            timezone=timezone,
+        )
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Cannot join a closed session")
+
+            if participant.participant_id in self._participants:
+                raise ValueError(f"Participant already joined: {participant.participant_id}")
+
+            self._participants[participant.participant_id] = participant
+            if primary or self._primary_participant_id is None:
+                self._primary_participant_id = participant.participant_id
+
+            event = SessionEvent(
+                session_id=self._session_id,
+                sequence=self._events.latest_sequence + 1,
+                kind=SessionEventKind.JOINED,
+                at=participant.joined_at,
+                participant=participant,
+                primary_participant_id=self._primary_participant_id,
+                source=IdentitySource.GENERATED
+                if generated
+                else IdentitySource.DECLARED
+                if user_id is not None
+                else None,
+                reason="Session allocated a provisional user identity"
+                if generated
+                else "Application assigned a user identity"
+                if user_id is not None
+                else None,
+            )
+            self._identity_history[participant.participant_id] = [event]
+            waiters = self._events._append(event)
+
+        self._events._wake(waiters)
+        return participant
+
+    def get_participant(
+        self, *, participant_id: ParticipantId | None = None, user_id: str | None = None
+    ) -> Participant | None:
+        with self._lock:
+            if participant_id is not None:
+                participant = self._participants.get(participant_id)
+                if participant is not None and (user_id is None or participant.user_id == user_id):
+                    return participant
+                return None
+
+            if user_id is None:
+                return self._participants.get(self._primary_participant_id)
+
+            matches = [
+                participant
+                for participant in self._participants.values()
+                if participant.user_id == user_id
+            ]
+            return matches[0] if len(matches) == 1 else None
+
+    def request_identity(self, request: IdentityRequest) -> IdentityOutcome:
+        if not isinstance(request, IdentityRequest):
+            raise TypeError("request must be IdentityRequest")
+
+        with self._lock:
+            if self._closed:
+                return IdentityOutcome.CLOSED
+
+            participant = self._participants[request.participant_id]
+            if participant.identity_revision != request.expected_revision:
+                return IdentityOutcome.STALE
+
+            snapshot = self._snapshot()
+
+        # Policies receive immutable values and cannot hold the state lock across arbitrary work.
+        allowed = self._identity_policy.allow(request, participant=participant, snapshot=snapshot)
+        if not isinstance(allowed, bool):
+            raise TypeError("IdentityPolicy.allow must return bool synchronously")
+
+        with self._lock:
+            if self._closed:
+                return IdentityOutcome.CLOSED
+
+            current = self._participants[request.participant_id]
+            if (
+                current.identity_revision != request.expected_revision
+                or self._events.latest_sequence != snapshot.sequence
+            ):
+                return IdentityOutcome.STALE
+
+            if not allowed:
+                return IdentityOutcome.REJECTED
+
+            if current.user_id == request.user_id:
+                return IdentityOutcome.UNCHANGED
+
+            updated = replace(
+                current, user_id=request.user_id, identity_revision=current.identity_revision + 1
+            )
+            event = SessionEvent(
+                session_id=self._session_id,
+                sequence=self._events.latest_sequence + 1,
+                kind=SessionEventKind.IDENTITY,
+                at=self._clock.now(),
+                participant=updated,
+                previous_user_id=current.user_id,
+                source=request.source,
+                primary_participant_id=self._primary_participant_id,
+                reason=request.reason,
+                score=request.score,
+            )
+            self._participants[request.participant_id] = updated
+            self._identity_history[request.participant_id].append(event)
+            waiters = self._events._append(event)
+
+        self._events._wake(waiters)
+        return IdentityOutcome.APPLIED
+
+    def close(self) -> SessionSnapshot:
+        """End this session; this is neither a connection event nor a storage commit."""
+        with self._lock:
+            if self._closed:
+                return self._snapshot()
+            event = SessionEvent(
+                session_id=self._session_id,
+                sequence=self._events.latest_sequence + 1,
+                kind=SessionEventKind.CLOSED,
+                at=self._clock.now(),
+                primary_participant_id=self._primary_participant_id,
+            )
+            self._closed = True
+            waiters = self._events._append(event)
+            snapshot = self._snapshot()
+
+        self._events._wake(waiters)
+        return snapshot

@@ -9,7 +9,7 @@ PersonaRuntime
 ├── ProfilerProcessor  -> profile deltas
 ├── SpeakerProcessor   -> speaker identity and attributes
 ├── FaceProcessor      -> visual identity and annotations
-├── PersonaCache       -> active per-user state
+├── PersonaCache       -> active per-participant state
 └── PersonaStore       -> persistent profile/identity state
 ```
 
@@ -20,10 +20,10 @@ Each processor owns its configuration and lifecycle. Provider configuration and 
 | Processor | Main input | Responsibility |
 | --- | --- | --- |
 | Profiler | Committed conversation/Turn context | Extract persistent profile deltas without regenerating the complete profile. |
-| Speaker | Routed speech observations | Compute speaker embeddings, resolve identity and update voice attributes. |
-| Face | Video/screen observations | Sample frames, recognize identities and publish face/attribute annotations. |
+| Speaker | Routed speech observations | Compute speaker embeddings (CAM++; 3 s windows, and speech shorter than a window once at its own length), resolve identity and update voice attributes, each on its own bounded lane: a Turn's Context waits only for its segments' identities, up to `speaker.identity_wait_sec`; attributes reach later Turns. Vectors are stored per voice model, in `speaker_collection_name` suffixed with it (`_campplus`); another model's vectors are never searched or merged. |
+| Face | Camera video frames; screen-share frames are skipped | Sample frames, recognize identities and publish face/attribute annotations. |
 
-Speaker and Face use bounded inference queues and preserve source identity. Raw audio or video is not persisted as a Persona profile. Face annotations enrich perception evidence without overwriting its raw observation.
+Speaker and Face use bounded inference queues and preserve source identity; Face samples one frame of a source every `face.sample_interval_sec` (0.2 s), and its frame queue holds `face.frame_queue_sec` (0.4 s) of them, the oldest giving way while analysis is behind. Raw audio or video is not persisted as a Persona profile. Face annotations enrich perception evidence without overwriting its raw observation.
 
 Profile loading, identity merging and runtime user metadata remain separate from model-based extraction. Timezone, login time, session ID and login count are system-observed values, not generated profile facts.
 
@@ -31,9 +31,15 @@ Profile loading, identity merging and runtime user metadata remain separate from
 
 PersonaRuntime owns cache/context coordination, source binding, initial profile loading and final saving. It exposes Core lifecycle hooks `on_start()` / `on_stop()`. Processors keep `start()` / `stop(finalize=...)` so normal finalization remains distinct from startup rollback.
 
-Partially started processors are tracked before their startup awaits. Shutdown stops all owned processors before final persistence; cancellation cannot simply abandon owned cleanup. Concurrent close requests share work. Cleanup or save failure remains an error, not a successful close because a log was emitted.
+Partially started processors are tracked before their startup awaits. Shutdown stops all owned processors before final persistence; cancellation cannot simply abandon owned cleanup. A finalizing shutdown then makes the caches one per user: the caches of participants bound to one accepted user merge into the cache of its earliest participant (Turns once each in commit order, observed details merged field by field as a save merges them, speaker and face means together, the completed load and the earliest login). Each processor's `finalize_caches()` runs after that, so Profiler extracts each user's profile once from all of its Turns, and each user is saved once. Concurrent close requests share work. Cleanup or save failure remains an error, not a successful close because a log was emitted.
 
 Profile state is loaded/persisted through PersonaStore, with LanceDB and Qdrant backends accessed through the shared inference runtime rather than synchronous database calls on the realtime loop.
+
+A speaker track is one voice in the session: it is matched on any source and generation, keeps each it was heard on, and lasts until the speaker processor stops; tracks are not limited in number. Speech shorter than `speaker.short_segment_sec` (1 s by its VAD range) is not matched alone and no Turn waits on it: its audio leads the next segment of its source into that segment's vector, a longer one at once and short ones once together they reach `speaker.short_merge_sec` (2 s), and the short segments take the association that vector finds. A speaker track's vector and a participant's speaker vector are each the mean of the segments they took, every segment's vector weighted by the seconds of audio it is from: a 3 s window, or a shorter segment's own length. The participant's vector stays apart from the user's stored speaker vector while the session runs. A save merges it into the one loaded for the same identity, 0.95 stored / 0.05 session; participants bound to one user are saved once, with one vector of all their speech. A user with no stored speaker vector takes it as is, as does a user the session allocated, which has nothing stored; for another user whose load did not complete, the stored speaker vector is left unchanged.
+
+Each associated speech segment, and each associated face of a frame, is searched against the stored vectors: a top-1 at or above `speaker.identity_match_threshold` (0.6, a cosine of CAM++ vectors) or `face.identity_match_threshold` (0.40, a cosine of buffalo_l `w600k_r50` vectors) binds its participant to that user, and a later match can bind it again. Both thresholds belong to their model's vectors and change with the model; 0.40 was chosen from the face evaluation's replay, where it kept people with a stored face vector recognized more often than 0.45 at a small cost in strangers bound.
+
+A frame's faces are taken nearest first, by the area of their box: past `face.max_faces` the farthest are not tracked, the nearest are identified first, and on the primary participant's device the nearest new face is the one the primary participant takes. A face track is one face in the session in the same way: it is matched on any source and generation, keeps each it was seen on, and lasts until the face processor stops; tracks are not limited in number, and `face.max_face_caches` bounds only the participants whose face attributes are kept. A face track's vector is the mean of every frame it took, each counted once. A participant's face vector is the mean of the frames its identity step took, each counted once, and is saved like its speaker vector: merged into the stored face vector loaded for the same identity, 0.95 stored / 0.05 session, taken as is when none is stored or the user is the session's own, left unchanged when the load did not complete, and one vector of all of them for participants bound to one user.
 
 ## Capabilities and context
 
@@ -61,10 +67,10 @@ This fragment illustrates independent enablement. Complete examples also configu
 ## Installation and development
 
 ```bash
-pip install alpha-avatar-plugins-persona
+pip install "alpha-avatar-plugins-persona[face,speaker]"
 ```
 
-The workspace still declares Python 3.11 support; the project-wide Python upgrade is separate work.
+The `face` and `speaker` extras install the face and speaker model runtimes the default configuration selects.
 
 Keep responsibilities local:
 

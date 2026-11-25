@@ -17,6 +17,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
+from alphaavatar.agents.runtime.plugin import AvatarModule
 
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.foundation import ContextConfig, LoopConfig, VisionConfig, VoiceConfig
@@ -33,10 +34,11 @@ from .plugins.tools import ToolsConfig
 class AvatarConfig(BaseModel):
     """Runtime settings and configurable Avatar plugins, not SDK generation settings."""
 
-    model_config = ConfigDict(extra="forbid")
+    # The outer model renders nested errors: plugin sections may carry credentials.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     # Avatar information and runtime configuration.
-    avatar: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
+    avatar: AvatarInfoConfig
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     # Foundation plugins.
@@ -66,3 +68,32 @@ class AvatarConfig(BaseModel):
             raise ValueError("defaults must be a mapping of YAML anchor definitions")
         # YAML aliases are already expanded. This is authoring data, not a runtime section.
         return {key: item for key, item in value.items() if key != "defaults"}
+
+    def plugin_factories(self) -> dict[str, tuple[AvatarModule, str]]:
+        """The capability type and implementation name each setting selects, as start creates
+        them: ``voice.stt.plugin`` selects ``(voice.stt, openai_segment)``. A part switched off
+        selects nothing."""
+        voice, tools = self.voice, self.tools
+        selected = {
+            "loop.plugin": (AvatarModule.LOOP, self.loop.plugin),
+            "context.plugin": (AvatarModule.CONTEXT, self.context.plugin),
+            "voice.vad.plugin": (AvatarModule.VOICE_VAD, voice.vad.plugin),
+            "voice.stt.plugin": (AvatarModule.VOICE_STT, voice.stt.plugin),
+            "voice.tts.plugin": (AvatarModule.VOICE_TTS, voice.tts.plugin),
+            "status.plugin": (AvatarModule.STATUS, self.status.plugin),
+            "router.plugin": (AvatarModule.ROUTER, self.router.plugin),
+            "character.plugin": (AvatarModule.CHARACTER, self.character.plugin),
+            "memory.plugin": (AvatarModule.MEMORY, self.memory.plugin),
+            "persona.plugin": (AvatarModule.PERSONA, self.persona.plugin),
+            "tools.deepresearch.plugin": (AvatarModule.DEEPRESEARCH, tools.deepresearch.plugin),
+            "tools.rag.plugin": (AvatarModule.RAG, tools.rag.plugin),
+            "tools.mcp.plugin": (AvatarModule.MCP, tools.mcp.plugin if tools.mcp.enabled else None),
+        }
+        return {location: factory for location, factory in selected.items() if factory[1]}
+
+    def section(self, location: str) -> BaseModel:
+        """The section a setting belongs to: ``tools.mcp`` for ``tools.mcp.enabled``."""
+        section: BaseModel = self
+        for part in location.split(".")[:-1]:
+            section = getattr(section, part)
+        return section

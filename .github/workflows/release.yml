@@ -19,6 +19,15 @@ jobs:
     permissions:
       contents: read
 
+  linux_package:
+    name: Linux package
+    needs: checks
+    uses: ./.github/workflows/linux-package.yml
+    with:
+      release: ${{ github.ref_name }}
+    permissions:
+      contents: read
+
   notes:
     name: Generate Release Notes
     needs: checks
@@ -87,10 +96,11 @@ jobs:
           path: body.md
           if-no-files-found: error
           retention-days: 7
+          overwrite: true  # A full re-run writes the notes again.
 
   github_release:
     name: Create GitHub Release
-    needs: notes
+    needs: [notes, linux_package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -102,7 +112,13 @@ jobs:
         with:
           name: github-release-notes
 
-      - name: Create release if absent
+      - name: Retrieve the Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: alphaavatar-linux-x86_64-${{ github.sha }}
+          path: package
+
+      - name: Publish the release with exactly this build's files
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -110,12 +126,35 @@ jobs:
           set -euo pipefail
           TAG="$GITHUB_REF_NAME"
           test -s body.md
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists; preserving its current notes."
+          (cd package && sha256sum -c --quiet SHA256SUMS)
+          state="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft \
+            --jq '.isDraft' 2>/dev/null || echo absent)"
+          if [[ "$state" == "false" ]]; then
+            # Published: people may hold its checksums. A retry keeps every file as it is.
+            echo "GitHub Release $TAG is published; keeping its files."
             exit 0
           fi
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "AlphaAvatar $TAG" \
-            --notes-file body.md
+          if [[ "$state" == "absent" ]]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "AlphaAvatar $TAG" --notes-file body.md
+          fi
+          # A draft is not public: its files are this build's, whatever an earlier attempt left.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | while read -r asset; do
+                [[ -f "package/$asset" ]] \
+                  || gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+              done
+          gh release upload "$TAG" package/* --repo "$GITHUB_REPOSITORY" --clobber
+          expected="$(cd package && find . -maxdepth 1 -type f -printf '%f %s\n' | sort)"
+          attached="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.size)"' | sort)"
+          [[ "$attached" == "$expected" ]] || { echo "The draft's files differ" >&2; exit 1; }
+          # The draft's own bytes: its archive matches its .sha256 and every file SHA256SUMS,
+          # this build's, however many attempts uploaded before.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir draft
+          cmp draft/SHA256SUMS package/SHA256SUMS
+          (cd draft && sha256sum -c --quiet SHA256SUMS)
+          for sum in draft/*.tar.gz.sha256; do
+            (cd draft && sha256sum -c --quiet "${sum##*/}")
+          done
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

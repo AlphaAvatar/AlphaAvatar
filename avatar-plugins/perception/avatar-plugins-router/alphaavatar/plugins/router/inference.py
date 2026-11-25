@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 
 def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
     router = config.router
-    if router.plugin != "default":
-        return ()
     options = RouterConfig.model_validate(router.init_config)
 
     runners: list[type[InferenceRunner]] = []

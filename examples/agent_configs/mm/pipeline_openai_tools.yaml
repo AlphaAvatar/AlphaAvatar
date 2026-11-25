@@ -8,7 +8,6 @@
 avatar:
   id: alphaavatar_tools
   name: AlphaAvatar
-  work_dir: .alphaavatar_workspace/
 
   introduction: >
     You are a helpful Tools Assistant. You assist users by effectively utilizing
@@ -60,9 +59,7 @@ loop:
 context:
   plugin: default
   init_config:
-    history_max_turns: 32
-    history_max_items: 4096
-    history_max_bytes: 8388608
+    max_pending_preparations: 16
 
 voice:
   vad:
@@ -76,7 +73,17 @@ voice:
     plugin: openai
     model: gpt-4o-mini-tts
     speaker: ash
-    instructions: Speak in a friendly and conversational tone.
+    speed: 1.15
+    instructions: >
+      Speak naturally, as if having a relaxed, attentive conversation with one person.
+      Use a warm voice, a steady conversational rhythm, and clear articulation.
+      Keep pauses brief and meaningful. Connect phrases smoothly without stretching
+      vowels or lingering at sentence endings. Use subtle, natural intonation;
+      avoid a formal announcer style or exaggerated emotion.
+      Follow the language of the supplied text. Use natural Mandarin for Chinese
+      and clear pronunciation for names, numbers, and English words.
+      Read only the supplied text. Do not add greetings, fillers, reactions,
+      translations, or explanations, and do not rewrite or omit words.
 
 vision:
   enabled: true
@@ -123,16 +130,17 @@ router:
       addressing_wait_sec: 0.5
       transcript_wait_sec: 3.0
       unsegmented_alignment_sec: 0.75
-      max_hold_sec: 1.5
+      speech_completion_wait_sec: 1.5
 
       fusion:
         conflict_margin: 0.1
 
       model:
         name: smart_turn_v3
+        incomplete_threshold: 0.3
+        complete_threshold: 0.7
 
       policy:
-        commit_threshold: 0.5
         respond_to_group: false
 
       interruption:
@@ -160,6 +168,7 @@ memory:
   init_config:
     retrieval:
       enabled: true
+      passive_timeout_sec: 3.0
       search_context: 3
       recall_num: 6
 

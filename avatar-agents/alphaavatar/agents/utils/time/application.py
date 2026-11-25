@@ -13,29 +13,23 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-from alphaavatar.agents.log import logger
 
 
 def resolve_application_timezone(tz: str | None = None) -> str | None:
-    """Resolve the AlphaAvatar application timezone."""
-    tzname = tz or os.getenv("AVATAR_TIMEZONE")
-    if not tzname:
+    """Validate an explicitly supplied timezone without process-wide state."""
+    if tz is None:
         return None
 
     try:
-        ZoneInfo(tzname)
+        ZoneInfo(tz)
     except ZoneInfoNotFoundError:
-        logger.warning("Invalid application timezone=%s, fallback to server local timezone", tzname)
-        return None
-
-    return tzname
+        raise ValueError(f"Unknown application timezone: {tz}") from None
+    return tz
 
 
 def application_now(tz: str | None = None) -> datetime:
-    """Return the current application wall-clock time."""
+    """Persist UTC by default; presentation may request an explicit timezone."""
     tzname = resolve_application_timezone(tz)
-    return datetime.now(ZoneInfo(tzname)) if tzname else datetime.now().astimezone()
+    return datetime.now(ZoneInfo(tzname) if tzname else UTC)

@@ -16,15 +16,42 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
 
 from alphaavatar.agents.avatar.provider.errors import ModelRequestError
+from alphaavatar.agents.utils import credential
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .config import OpenAIClientConfig
+
+# Who hears of each request body as it goes to the transport, in this context: called with
+# the body's size, once per attempt.
+_SENT: ContextVar[Callable[[int | None], None] | None] = ContextVar("responses_sent", default=None)
+
+
+async def _record_sent(request: httpx.Request) -> None:
+    if (sent := _SENT.get()) is not None:
+        try:
+            size = len(request.content)  # The body as the SDK encoded it, sent as is.
+        except httpx.RequestNotRead:
+            size = None  # A streamed body: its size is not known up front.
+        sent(size)
+
+
+@contextmanager
+def sending(sent: Callable[[int | None], None]) -> Iterator[None]:
+    """``sent`` called as each request body within goes to the transport, with its size: once
+    per attempt, the SDK's retries too, before the server sees it."""
+    token = _SENT.set(sent)
+    try:
+        yield
+    finally:
+        _SENT.reset(token)
 
 
 def observe_task(task: asyncio.Task[Any]) -> None:
@@ -58,12 +85,18 @@ class ResponsesClient:
         from openai import AsyncOpenAI
 
         config = self._config
-        key = config.api_key.get_secret_value() if config.api_key else os.getenv(config.api_key_env)
+        key = (
+            config.api_key.get_secret_value() if config.api_key else credential(config.api_key_env)
+        )
         if not key:
-            raise ModelRequestError("OpenAI API key is missing", code="missing_api_key")
+            raise ModelRequestError(
+                f"OpenAI API key is missing: set {config.api_key_env}", code="missing_api_key"
+            )
         identity = [config.base_url, config.organization, config.project, key]
         self._scope = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
-        self._transport = httpx.AsyncClient(proxy=config.proxy, timeout=self._timeout)
+        self._transport = httpx.AsyncClient(
+            proxy=config.proxy, timeout=self._timeout, event_hooks={"request": [_record_sent]}
+        )
         self._client = AsyncOpenAI(
             api_key=key,
             base_url=config.base_url,
@@ -73,6 +106,9 @@ class ResponsesClient:
             timeout=self._timeout,
             http_client=self._transport,
         )
+        # The SDK imports its Responses resource on first use, about 0.1 s (O-15): here, in
+        # this thread, not on the event loop within the first request.
+        _ = self._client.responses
         return self._client
 
     async def _initialize(self) -> Any:
@@ -83,11 +119,16 @@ class ResponsesClient:
                 await self._transport.aclose()
             raise
 
-    async def get(self) -> Any:
+    def prepare(self) -> None:
+        """Start building the client, off the event loop, before a request needs it; a build
+        that fails says so to the request that asks for it."""
         self._ensure_open()
         if self._init_task is None:
             self._init_task = asyncio.create_task(self._initialize(), name="responses_client_init")
             self._init_task.add_done_callback(observe_task)
+
+    async def get(self) -> Any:
+        self.prepare()
         client = await asyncio.shield(self._init_task)
         self._ensure_open()
         return client

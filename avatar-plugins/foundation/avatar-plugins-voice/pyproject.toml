@@ -26,11 +26,25 @@ dependencies = [
     "aiohttp>=3.10",
     "httpx>=0.28,<1",
     "numpy==2.2.6",
-    "onnxruntime==1.23.1",
     "openai>=2.7.2,<3",
     "pydantic>=2,<3",
     "soxr>=0.5",
 ]
+
+[project.optional-dependencies]
+# Local inference, installed for the runner that needs it: voice.vad.plugin silero.
+silero = ["onnxruntime==1.23.1"]
+
+[project.entry-points."alphaavatar.voice.vad"]
+silero = "alphaavatar.plugins.voice.vad:SileroVADPlugin"
+
+[project.entry-points."alphaavatar.voice.stt"]
+openai_realtime = "alphaavatar.plugins.voice.stt:OpenAIRealtimeSTTPlugin"
+openai_segment = "alphaavatar.plugins.voice.stt:OpenAISegmentSTTPlugin"
+
+[project.entry-points."alphaavatar.voice.tts"]
+openai = "alphaavatar.plugins.voice.tts:OpenAITTSPlugin"
+voiceai = "alphaavatar.plugins.voice.tts:VoiceAITTSPlugin"
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"

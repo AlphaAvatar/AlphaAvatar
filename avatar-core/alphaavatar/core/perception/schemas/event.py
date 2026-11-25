@@ -18,7 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import DeviceId, PerceptionSourceRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
 from ..enums import MediaModality, MediaSourceKind, MediaSourceState, PerceptionEventKind
@@ -31,7 +31,8 @@ class MediaSourceStateEvent:
     source_kind: MediaSourceKind
     state: MediaSourceState
 
-    transport_participant_id: str | None = None
+    device_id: DeviceId | None = None
+
     reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -53,7 +54,7 @@ class MediaSourceSnapshot:
     changed_at: RuntimeTime
     changed_sequence: int
 
-    transport_participant_id: str | None = None
+    device_id: DeviceId | None = None
 
     latest_observation_at: RuntimeTime | None = None
     latest_observation_sequence: int | None = None

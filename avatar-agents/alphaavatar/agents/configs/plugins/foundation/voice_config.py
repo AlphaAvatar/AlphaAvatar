@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,18 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 from contextlib import AsyncExitStack
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase, VoiceBundle
 from alphaavatar.agents.runtime.inference import InferenceExecutor
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-
-# AlphaAvatar voice factories; turn interruption policy belongs to Router.
-importlib.import_module("alphaavatar.plugins.voice")
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin, resolve_plugin
+from alphaavatar.agents.utils.env_utils import check_server_key
 
 
 class STTConfig(BaseModel):
@@ -30,30 +27,91 @@ class STTConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: Literal["openai_realtime", "openai_segment"] | None = Field(
-        default=None, description="STT provider implementation used by Interaction Router."
+    plugin: str | None = Field(
+        default=None, min_length=1, description="STT implementation used by Interaction Router."
     )
     model: str | None = Field(
-        default=None, description="Model used by the AlphaAvatar STT provider."
+        default=None,
+        validate_default=True,
+        description="Model used by the AlphaAvatar STT provider; required for an enabled plugin.",
     )
     delay: Literal["minimal", "low", "medium", "high", "xhigh"] = Field(
         default="low", description="Realtime transcription latency/quality preference."
     )
+    language: str | None = Field(
+        default=None,
+        pattern=r"^(auto|[a-z]{2,3})$",
+        description=(
+            "The language the speech is in, as an ISO-639-1 code (zh, en): a hint the model "
+            "takes as given. Unset or auto: the model detects it, as for speech that mixes or "
+            "switches languages."
+        ),
+    )
+    prompt: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1024,
+        description="Text that guides the transcription (its names, its style); none when unset.",
+    )
     base_url: str | None = Field(default=None, description="Optional provider API base URL.")
+    api_key_env: str | None = Field(
+        default=None,
+        pattern=r"^[A-Z][A-Z0-9_]*$",
+        description="The environment variable holding its API key; the plugin's own when unset.",
+    )
+
+    @field_validator("model")
+    @classmethod
+    def check_model(cls, model: str | None, info: ValidationInfo) -> str | None:
+        # The rule TTS keeps, at the field itself: a report names voice.stt.model. The plugin,
+        # declared first, is validated before it.
+        if info.data.get("plugin") is not None and (model is None or not model.strip()):
+            raise ValueError("voice.stt.model is required for an enabled STT plugin")
+        return model
+
+    @model_validator(mode="after")
+    def check_key_server(self) -> "STTConfig":
+        check_server_key(self.api_key_env, self.base_url)
+        return self
+
+    def options(self) -> dict[str, object]:
+        """The settings implementations may or may not take, as the plugin is given them: the
+        ones that ask for something; ``language: auto`` and the default delay ask for nothing,
+        detection being what the model does unasked. An accepted snapshot holds every default."""
+        found: dict[str, object] = {}
+        if self.delay != type(self).model_fields["delay"].default:
+            found["delay"] = self.delay
+        if self.language not in (None, "auto"):
+            found["language"] = self.language
+        if self.prompt is not None:
+            found["prompt"] = self.prompt
+        return found
+
+    def unsupported(self, factory: AvatarModulePlugin) -> list[tuple[str, str]]:
+        """Each setting here its implementation does not take, by field, with why."""
+        return [
+            (name, f"voice.stt.plugin {self.plugin!r} does not take {name}")
+            for name in self.options()
+            if not factory.supports(name)
+        ]
 
     def get_plugin(self) -> STTBase | None:
         if self.plugin is None:
             return None
-        if self.model is None:
-            raise ValueError(f"voice.stt.model is required when voice.stt.plugin={self.plugin!r}")
 
-        kwargs = {"model": self.model}
-        if self.plugin == "openai_realtime":
+        factory = resolve_plugin(AvatarModule.VOICE_STT, self.plugin).factory
+        if problems := self.unsupported(factory):
+            raise ValueError("; ".join(f"voice.stt.{name}: {why}" for name, why in problems))
+
+        kwargs: dict[str, object] = {"model": self.model, **self.options()}
+        if "delay" not in kwargs and factory.supports("delay"):
             kwargs["delay"] = self.delay
-
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url
-        return AvatarModulePlugin.create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
+        if self.api_key_env is not None:
+            kwargs["api_key_env"] = self.api_key_env
+
+        return factory.get_plugin(**kwargs)
 
 
 class TTSConfig(BaseModel):
@@ -61,16 +119,22 @@ class TTSConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: Literal["openai", "voiceai"] | None = Field(
-        default=None, description="TTS plugin to use for text-to-speech."
+    plugin: str | None = Field(
+        default=None, min_length=1, description="TTS implementation to use for text-to-speech."
     )
     model: str | None = Field(default=None, description="Model to use for text-to-speech.")
     speaker: str | None = Field(
         default=None, description="Speaker to use for text-to-speech; voice.ai uses voice_id."
     )
     instructions: str | None = Field(default=None, description="Instructions for the TTS model.")
+    speed: float = Field(default=1.0, ge=0.25, le=4.0, allow_inf_nan=False, strict=True)
 
     base_url: str | None = None
+    api_key_env: str | None = Field(
+        default=None,
+        pattern=r"^[A-Z][A-Z0-9_]*$",
+        description="The environment variable holding its API key; the plugin's own when unset.",
+    )
 
     # HTTP waits and retry backoff; queued audio and local playout do not use this budget.
     timeout: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
@@ -92,8 +156,20 @@ class TTSConfig(BaseModel):
     max_streams: int = Field(default=4, ge=1, le=32, strict=True)
     max_audio_seconds: float = Field(default=120.0, gt=0, le=3600, allow_inf_nan=False)
 
+    @staticmethod
+    def takes_instructions(plugin: str, model: str) -> bool:
+        """Whether an implementation and model read instructions: Voice.ai, tts-1 and tts-1-hd
+        do not."""
+        return plugin != "voiceai" and model not in ("tts-1", "tts-1-hd")
+
+    @staticmethod
+    def takes_speed(plugin: str) -> bool:
+        """Whether an implementation speaks at another speed than 1.0: Voice.ai does not."""
+        return plugin != "voiceai"
+
     @model_validator(mode="after")
     def validate_provider(self) -> "TTSConfig":
+        check_server_key(self.api_key_env, self.base_url)
         if self.first_audio_hedge_after is not None and (
             self.first_audio_hedge_after >= min(self.first_audio_timeout, self.timeout)
             or self.max_retries < 1
@@ -107,11 +183,13 @@ class TTSConfig(BaseModel):
             raise ValueError("voice.tts.speaker is required for OpenAI TTS")
         if self.speaker is not None and not self.speaker.strip():
             raise ValueError("voice.tts.speaker cannot be blank")
+        if not self.takes_speed(self.plugin) and self.speed != 1.0:
+            raise ValueError("Voice.ai TTS does not support voice.tts.speed")
         if self.plugin == "voiceai" and self.instructions is not None:
             raise ValueError("Voice.ai TTS does not support instructions")
         if self.instructions is not None and len(self.instructions) > 4096:
             raise ValueError("TTS instructions exceed 4096 characters")
-        if self.instructions is not None and self.model in ("tts-1", "tts-1-hd"):
+        if self.instructions is not None and not self.takes_instructions(self.plugin, self.model):
             raise ValueError("The selected TTS model does not support instructions")
         return self
 
@@ -125,7 +203,9 @@ class TTSConfig(BaseModel):
             model=self.model,
             speaker=self.speaker,
             instructions=self.instructions,
+            speed=self.speed,
             base_url=self.base_url,
+            **({} if self.api_key_env is None else {"api_key_env": self.api_key_env}),
             timeout=self.timeout,
             first_audio_timeout=self.first_audio_timeout,
             read_timeout=self.read_timeout,
@@ -146,11 +226,12 @@ class VADConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: Literal["silero"] | None = Field(
-        default=None, description="VAD plugin used by Interaction Router."
+    plugin: str | None = Field(
+        default=None, min_length=1, description="VAD implementation used by Interaction Router."
     )
     min_speech_duration: float = Field(default=0.05, ge=0.0)
-    min_silence_duration: float = Field(default=0.55, ge=0.0)
+    # Silence after speech before a segment closes; the next segment continues the same input.
+    min_silence_duration: float = Field(default=0.3, ge=0.0)
     activation_threshold: float = Field(default=0.5, gt=0.0, le=1.0)
     deactivation_threshold: float | None = Field(default=None, gt=0.0, le=1.0)
     smoothing_alpha: float = Field(default=0.35, ge=0.0, lt=1.0)
@@ -158,6 +239,9 @@ class VADConfig(BaseModel):
     inference_timeout_sec: float = Field(default=0.5, gt=0.0)
 
     def get_plugin(self, *, inference_executor: InferenceExecutor) -> VADBase | None:
+        if self.plugin is None:
+            return None
+
         return AvatarModulePlugin.create(
             AvatarModule.VOICE_VAD,
             self.plugin,

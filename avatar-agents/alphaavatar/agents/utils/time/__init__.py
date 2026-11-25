@@ -15,14 +15,14 @@ from .application import application_now, resolve_application_timezone
 from .user import (
     ParticipantTimeContext,
     UserTimeContext,
-    build_user_time_context,
     format_datetime_for_timezone,
     format_user_time,
+    resolve_user_timezone,
 )
 
 __all__ = [
     "application_now",
-    "build_user_time_context",
+    "resolve_user_timezone",
     "format_user_time",
     "format_datetime_for_timezone",
     "resolve_application_timezone",

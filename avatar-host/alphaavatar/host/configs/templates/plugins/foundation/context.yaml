@@ -1,0 +1,5 @@
+plugin: default
+
+init_config:
+  behavior_rules: NONE  # Stable rules added to the system prompt; NONE adds none.
+  max_pending_preparations: 16

@@ -11,7 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .lancedb import LanceDBRunner
-from .qdrant import QdrantRunner
-
-__all__ = ["LanceDBRunner", "QdrantRunner"]
+"""Vector store runners, one module per backend: each loads only its own client library."""

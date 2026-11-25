@@ -1,0 +1,4 @@
+enabled: true  # Camera frames reach the loop's model as images; false keeps the Avatar blind.
+input_mode: vlm
+sample_interval_sec: 1.0
+max_frames: 4

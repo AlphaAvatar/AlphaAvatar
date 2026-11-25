@@ -397,6 +397,7 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
         underruns, starvation = 0, 0.0
         rebuffer_count, rebuffer_wait = 0, 0.0
         prime_wait = prime_audio = 0.0
+        capture_wait = max_capture_wait = 0.0
 
         async def progress() -> None:
             await started.wait()
@@ -457,6 +458,7 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                         "local_elapsed_seconds=%.3f local_excess_seconds=%.3f "
                         "underruns=%d starvation_seconds=%.3f "
                         "rebuffer_count=%d rebuffer_wait_seconds=%.3f "
+                        "capture_wait_seconds=%.3f max_capture_wait_ms=%.1f "
                         "measurement=local_audio_queue",
                         job.identity.output_id,
                         job.pushed,
@@ -466,6 +468,8 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                         starvation,
                         rebuffer_count,
                         rebuffer_wait,
+                        capture_wait,
+                        max_capture_wait * 1000,
                     )
                     await stop_progress()
                     if job.stop_failure is not None:
@@ -509,8 +513,13 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                 frame = event.output.payload
                 job.buffered_samples -= frame.samples_per_channel
                 capture_at = clock()
-                async with asyncio.timeout(self._capture_timeout):
-                    await self._source.capture_frame(to_livekit_audio_frame(frame))
+                try:
+                    async with asyncio.timeout(self._capture_timeout):
+                        await self._source.capture_frame(to_livekit_audio_frame(frame))
+                finally:
+                    waited = clock() - capture_at
+                    capture_wait += waited
+                    max_capture_wait = max(max_capture_wait, waited)
                 if first_capture_at is None:
                     first_capture_at = capture_at
                     logger.debug(
@@ -536,6 +545,23 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
         except Exception:
             logger.exception("Audio playout failed output_id=%s", job.identity.output_id)
         finally:
+            if not success:
+                logger.debug(
+                    "AUDIO QUEUE STOPPED output_id=%s pcm_seconds=%.3f "
+                    "pending_audio_seconds=%.3f underruns=%d starvation_seconds=%.3f "
+                    "rebuffer_count=%d rebuffer_wait_seconds=%.3f "
+                    "capture_wait_seconds=%.3f max_capture_wait_ms=%.1f "
+                    "measurement=local_audio_queue",
+                    job.identity.output_id,
+                    job.pushed,
+                    job.buffered_samples / self._sample_rate,
+                    underruns,
+                    starvation,
+                    rebuffer_count,
+                    rebuffer_wait,
+                    capture_wait,
+                    max_capture_wait * 1000,
+                )
 
             async def settle() -> None:
                 errors: list[Exception] = []

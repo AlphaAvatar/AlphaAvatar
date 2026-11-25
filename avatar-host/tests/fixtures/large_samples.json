@@ -1,0 +1,40 @@
+{
+  "repo_id": "AlphaAvatar/diagnostics-fixtures",
+  "repo_type": "dataset",
+  "revision": null,
+  "license": null,
+  "published": false,
+  "note": "Proposed. On 2026-11-04 the Hugging Face API listed no dataset for the AlphaAvatar organization and answered 401 for this repo without a token: not published, or not public. Publishing fills revision (the 40-hex commit), license and each sample's sha256 and bytes.",
+  "samples": {
+    "long_session": {
+      "path": "speech/long_session_16k.wav",
+      "sha256": null,
+      "bytes": null,
+      "use": "30 minutes of speech and pauses, 16 kHz mono PCM16: long-run VAD, STT and turn-taking stability"
+    },
+    "multi_speaker": {
+      "path": "speech/multi_speaker_16k.wav",
+      "sha256": null,
+      "bytes": null,
+      "use": "two speakers taking turns and overlapping: turn-taking and speaker attribution"
+    },
+    "noisy_room": {
+      "path": "speech/noisy_room_16k.wav",
+      "sha256": null,
+      "bytes": null,
+      "use": "speech over room and street noise: VAD and STT robustness"
+    },
+    "barge_in": {
+      "path": "speech/barge_in_16k.wav",
+      "sha256": null,
+      "bytes": null,
+      "use": "a user speaking over the answer: barge-in and output interruption"
+    },
+    "face_toward_away": {
+      "path": "video/face_toward_away_640x360.mp4",
+      "sha256": null,
+      "bytes": null,
+      "use": "a face turning toward and away from the camera: visual addressing and face analysis"
+    }
+  }
+}

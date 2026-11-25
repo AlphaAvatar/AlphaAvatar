@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -22,13 +21,14 @@ import httpx
 from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.agents.tools.schemas import ToolError
-from alphaavatar.agents.utils import url_to_filename_id
+from alphaavatar.agents.utils import credential, url_to_filename_id
 from alphaavatar.core.cleanup import wait_for_cleanup
 
+from .namespace import NAMESPACE
 from .schemas import TavilyExtractObj, TavilySearchObj
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.utils.files.work_dirs import SessionPath
+    from alphaavatar.agents.workspace import SessionPath
 
 
 class TavilyDeepResearchTool:
@@ -37,7 +37,7 @@ class TavilyDeepResearchTool:
     def __init__(
         self, *, session_path: SessionPath, tavily_api_key: str | None = None, timeout: float = 30.0
     ) -> None:
-        key = tavily_api_key or os.getenv("TAVILY_API_KEY")
+        key = tavily_api_key or credential("TAVILY_API_KEY")
         if not key:
             raise ValueError("TAVILY_API_KEY is required")
         if not 0 < timeout < float("inf"):
@@ -59,9 +59,9 @@ class TavilyDeepResearchTool:
             task.exception()
 
     def _save(self, result: TavilyExtractObj) -> CapabilityResult:
-        from alphaavatar.agents.utils.files import save_single_url_content_to_pdf
+        from .url_to_pdf import save_single_url_content_to_pdf  # WeasyPrint, only when saving.
 
-        root = (self.session_path.artifacts_dir / "tavily").resolve()
+        root = (self.session_path.artifacts_dir / NAMESPACE / "tavily").resolve()
         saved, failures = [], [str(value) for value in (result.failed_results or [])]
         for item in result.results:
             name = url_to_filename_id(item.url)
@@ -89,10 +89,11 @@ class TavilyDeepResearchTool:
             parts=(ModelTextPart("\n\n".join(summary)),), is_error=bool(failures) or not saved
         )
 
-    async def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self._close_task is not None:
             raise RuntimeError("Tavily client is closed")
-        response = await self._client.post(endpoint, json=payload)
+
+        response = await self._client.post(path, json=payload)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

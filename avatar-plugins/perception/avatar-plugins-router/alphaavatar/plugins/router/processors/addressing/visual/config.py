@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -26,14 +28,12 @@ class VisualAddressingConfig(BaseModel):
     min_samples: int = Field(default=2, gt=0)
     republish_interval_sec: float = Field(default=0.75, ge=0.0)
 
-    publish_away_evidence: bool = True
-
     yaw_scale: float = Field(default=0.28, gt=0.0)
     roll_scale_deg: float = Field(default=25.0, gt=0.0)
     min_face_area_ratio: float = Field(default=0.01, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
-    def validate_thresholds(self) -> "VisualAddressingConfig":
+    def validate_thresholds(self) -> VisualAddressingConfig:
         if self.away_threshold >= self.toward_threshold:
             raise ValueError("away_threshold must be smaller than toward_threshold")
         return self

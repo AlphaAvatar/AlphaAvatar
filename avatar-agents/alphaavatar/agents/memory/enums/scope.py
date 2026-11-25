@@ -18,3 +18,4 @@ class MemoryScopeKind(StrEnum):
     OWNER = "owner"
     EPISODE = "episode"
     CONTEXT = "context"
+    DREAM = "dream"

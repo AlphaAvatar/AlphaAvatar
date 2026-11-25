@@ -31,7 +31,7 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
   <a href="https://www.alphaavatar.ai/demo">
     <img src="https://img.shields.io/badge/Demo-Live-7C3AED?style=flat-square&logo=vercel&logoColor=white" alt="Demo">
   </a>
-  <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/ROADMAP.md">
+  <a href="docs/ROADMAP.md">
     <img src="https://img.shields.io/badge/Roadmap-Project%20Plan-F97316?style=flat-square&logo=github&logoColor=white" alt="Roadmap">
   </a>
 </p>
@@ -57,11 +57,11 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 
 - 🧠 **Memory** for long-term user, assistant, and tool interaction history
 - 🧬 **Persona** for user understanding, identity continuity, and personalization
-- 💡 **Reflection** for self-improvement and long-term behavioral adaptation
-- 📅 **Planning** for task decomposition, reminders, and future-oriented actions
-- ⚙️ **Behavior** for response style, workflow policy, and proactive assistance
+- 💡 **Reflection** for self-improvement and long-term behavioral adaptation *(planned)*
+- 📅 **Planning** for task decomposition, reminders, and future-oriented actions *(planned)*
+- ⚙️ **Behavior** for response style, workflow policy, and proactive assistance *(planned)*
 - 🧰 **Tools** through MCP, RAG, DeepResearch, and external integrations
-- 😊 **Virtual Character** for real-time voice/avatar interaction
+- 😊 **Virtual Character** for real-time voice/avatar interaction *(renderer validation pending)*
 
 ✨ **Self-hostable and privacy-first** — AlphaAvatar can run on your own infrastructure, giving you control over runtime configuration, memory and tools. Selected cloud model, embedding and remote-tool providers still require their own network access and credentials; self-hosting the framework does not make those providers local.
 
@@ -159,7 +159,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 
 ---
 
-<h2>AlphaAvatar Plugins</h2>
+<h2 id="alphaavatar-plugins">AlphaAvatar Plugins</h2>
 
 AlphaAvatar organizes plugins into three layers: shared foundation services, perception and interaction capabilities, and tools for external tasks.
 
@@ -204,7 +204,7 @@ Integrations for research, document access, and external actions.
 | [**RAG**][plugin-rag] | Ingests documents and retrieves relevant knowledge for model responses.<br>Connects uploaded content to retrieval-augmented workflows. | ![Available][status-available] |
 | **Sandbox** | Will provide isolated execution for external actions.<br>Will support controlled interaction with tools and other agents. | ![Planned][status-planned] |
 
-See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details and the [Roadmap](ROADMAP.md) for planned work.
+See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details and the [Roadmap](docs/ROADMAP.md) for planned work.
 
 [plugin-voice]: avatar-plugins/foundation/avatar-plugins-voice/README.md
 [plugin-provider]: avatar-plugins/foundation/avatar-plugins-provider/README.md
@@ -226,6 +226,7 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 <h2>Latest News 🔥</h2>
 
+- [2026/11] Released AlphaAvatar **[version 0.6.9](docs/releases/v0.6.9.md)**: Added the Linux package with its own Python, interactive Setup, bundles, profiles and stored credentials, forward upgrade and cleanup, and Doctor diagnosis with latency and runner metrics; made transcript deadlines, utterance-level turn taking, participant ownership, Memory retrieval and embedding-space protection explicit, and added configurable runner workers.
 - [2026/10] Released AlphaAvatar **[version 0.6.8](docs/releases/v0.6.8.md)**: Completed the AlphaAvatar-owned native Host and streaming Agent runtime, removed the LiveKit Agents SDK, separated RTC access from execution ownership, introduced processor-owned Persona and Memory, runtime capabilities and committed-turn consumers, synchronized PCM speech and captions, structured diagnostics, and the Python 3.13 toolchain.
 - [2026/09] Released AlphaAvatar **version 0.6.7**: Added AlphaAvatar-owned multimodal turn taking, local Semantic Addressing with per-speaker conversation focus, typed addressing evidence and fusion, exact annotation-driven turn snapshots, full-duplex interruption, and removed LiveKit text turn detection and the legacy acoustic invocation path.
 - [2026/08] Released AlphaAvatar **version 0.6.6**: Added a unified time-aligned multimodal runtime, adaptive audiovisual ENV Memory, provider-neutral model input, runtime capability awareness, time-based perception retention, participant-scoped timezone context, and date-grouped session storage.
@@ -274,129 +275,37 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 <br/>
 
-<h2>Installation ⚙️</h2>
+<h2>Installation and Usage ⚙️</h2>
 
-AlphaAvatar v0.6.8 uses an AlphaAvatar-owned native Host and targets standard **CPython 3.13**. Install from the matching release tag and its lockfile; older released packages may have different APIs.
+<h3>🖥️ Server</h3>
 
-```bash
-git clone --branch v0.6.8 --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
-cd AlphaAvatar
-
-uv python install 3.13
-uv sync --all-packages --locked
-source .venv/bin/activate
-```
-
-The `alphaavatar` command is provided by **alpha-avatar-host**. No LiveKit Agents installation or separate model-download command is required. Enabled model runners resolve their files during initialization. Native model backends may require additional platform-specific build tools.
-
-When upgrading a previous Python 3.11 checkout, create a new environment and follow the [development environment migration guidance](CONTRIBUTING.md#python-313-development-environment).
-
-<h2>Quick Start ⚡️</h2>
-
-Start the native Host in dev mode against your configured LiveKit deployment. Application and execution-process hosting belong to the native AvatarHost; foreground generation belongs to AvatarEngine and Loop.
-
----
-
-🧩 Step 1. Configure Environment Variables
+Linux x86_64 with glibc 2.28 or newer, the latest release:
 
 ```bash
-cd AlphaAvatar
-
-# Copy template
-cp .env.template .env.dev
+curl -fsSL https://github.com/AlphaAvatar/AlphaAvatar/releases/latest/download/install.sh | bash
 ```
 
-Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services. Example model/voice identifiers are deployment choices, not guarantees of account access.
-
-✅ Step 2. Run the Agent
-
-Enabled inference runners resolve their model files during initialization. Missing files are downloaded automatically; no separate download command is required.
-
-Set `ALPHAAVATAR_MODEL_CACHE` to choose the model cache directory. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
+The installer asks whether to run `alphaavatar setup` right away. Then, as its `Next` says, or in a new terminal:
 
 ```bash
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
-# or
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
+alphaavatar setup    # only if setup was skipped or did not finish; or config init <bundle> --avatar-id <id>, then setup <bundle>
+alphaavatar doctor   # static checks, then the runtime diagnosis in rounds, once you agree to it
+alphaavatar start    # runs the bundle setup enabled
 ```
 
-See the [Host README](avatar-host/README.md) for startup/lifecycle boundaries and [Examples README](examples/README.md) for complete configurations and their service requirements.
+For development, from source (the default branch, with changes not yet released):
 
----
+```bash
+git clone --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
+cd AlphaAvatar && uv sync --all-packages --locked && source .venv/bin/activate
+cp .env.template .env.dev    # then fill in the credentials
+ENV_FILE=.env.dev alphaavatar config init my-avatar --avatar-id my-avatar
+ENV_FILE=.env.dev alphaavatar doctor
+ENV_FILE=.env.dev alphaavatar dev
+```
 
-<h2>Usage 🚀</h2>
+See [DEPLOY.md](docs/DEPLOY.md) for other versions and mirrors, a release's source, unattended installs, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
 
-AlphaAvatar focuses on first-party realtime interaction. The browser demo and Developer Playground provide client surfaces; dedicated App and OS experiences remain planned.
+<h3>💻 Laptop</h3>
 
-External messaging bridges are not included in the current development scope. This does not remove native text chat or tool-based integrations with external services.
-
----
-
-<h3>🌐 Web Access</h3>
-
-<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
-
-AlphaAvatar now provides a browser-based realtime demo interface built on **LiveKit**.
-
-👉 Try the Web Demo: https://www.alphaavatar.ai/demo
-
-The browser client surfaces include (availability depends on the deployed version and configuration):
-
-- 🎙️ Real-time voice interaction
-- 💬 Text chat with the Avatar
-- 📷 Camera preview and video-ready interaction
-- 🔊 Agent audio playback
-- 😊 Optional native AIRI presentation with a separately hosted frontend; renderer/RTC integration must be validated for the deployment
-- 🧠 Configurable Memory, Persona, RAG, MCP and DeepResearch, subject to enabled services and execution policy
-- 🌍 Browser timezone metadata, enabling AlphaAvatar to understand local login time
-
-<p align="center">
-  <img src=".github/assets/web-demo-screenshot.png" alt="AlphaAvatar Web Demo Screenshot" width="100%" />
-</p>
-
-> Screenshots and hosted deployments may reflect another revision. In the current native examples, AIRI-named configurations retain a voice persona, not animated Character transport.
-
----
-
-<h3>📲 Native Mobile App</h3>
-
-<img src="https://img.shields.io/badge/Planned-6c757d?style=flat" />
-
-A dedicated AlphaAvatar mobile application providing:
-
-- 🎙️ Real-time voice communication
-- 😊 Live2D / Virtual character visualization
-- 🧠 Persistent memory & persona
-
----
-
-<h3>🧪 Developer Playground</h3>
-
-<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
-
-Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
-
-👉 https://agents-playground.livekit.io/
-
-After starting your AlphaAvatar server:
-
-1. Connect to your LiveKit instance
-2. Configure the Agent name to match `avatar.name` in the selected YAML (the supplied examples use `AlphaAvatar`) for Explicit Dispatch.
-3. Connect to the agent room
-4. Start testing real-time interaction
-
-Supported capabilities:
-
-- 🎙️ Voice interaction
-- 🧠 Memory extraction
-- 🔍 RAG retrieval
-- 🧰 MCP tool invocation
-- 😊 Character presentation is opt-in and requires the separate frontend setup; it is not enabled by the supplied configurations
-
-![playground airi screenshot](.github/assets/playground-airi-screenshot.png)
-
----
-
-> 💡 AlphaAvatar is currently developer-first, with a Web Demo available for realtime interaction.
-
-> More user-facing web and mobile experiences are under active development.
+<h3>📱 Mobile</h3>

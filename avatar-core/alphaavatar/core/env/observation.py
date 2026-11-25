@@ -21,18 +21,24 @@ from alphaavatar.core.media import MediaPayload
 from alphaavatar.core.time import RuntimeTimeRange
 
 from .annotation import EnvAnnotation
-from .enums import ObservationKind
-from .schemas import PerceptionEntityRef, PerceptionSegmentRef, PerceptionSourceRef
+from .enums import ObservationKind, SpeechCancellationReason
+from .schemas import DeviceId, PerceptionSegmentRef, PerceptionSourceRef
 
 _SEGMENT_REQUIRED_KINDS = {
     ObservationKind.AUDIO_SEGMENT,
     ObservationKind.SPEECH_FRAME,
     ObservationKind.SPEECH_SEGMENT,
+    ObservationKind.SPEECH_CANCELLED,
     ObservationKind.TRANSCRIPT_DELTA,
     ObservationKind.TRANSCRIPT_SEGMENT,
+    ObservationKind.TRANSCRIPT_UNAVAILABLE,
 }
 
-_SPEECH_KINDS = {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}
+_SPEECH_KINDS = {
+    ObservationKind.SPEECH_FRAME,
+    ObservationKind.SPEECH_SEGMENT,
+    ObservationKind.SPEECH_CANCELLED,
+}
 
 
 _RESERVED_METADATA_KEYS = frozenset(
@@ -49,17 +55,12 @@ _RESERVED_METADATA_KEYS = frozenset(
         "segment_id",
         "speech_source_id",
         "speech_source_generation",
-        # Transport identity
-        "transport_participant_id",
-        "participant_identity",
-        # Perception / resolved entity identity
-        "perception_entity_id",
-        "resolved_entity_id",
-        # Old / ambiguous identity names that must disappear
-        "speaker_perception_id",
-        "speaker_entity_id",
-        "speaker_track_id",
-        "track_id",
+        # Device identity
+        "device_id",
+        # Entity and session identity must not be shadowed in metadata.
+        "entity_id",
+        "participant_id",
+        "user_id",
     }
 )
 
@@ -73,8 +74,7 @@ class EnvObservation:
     payload: MediaPayload | None = None
     segment: PerceptionSegmentRef | None = None
 
-    transport_participant_id: str | None = None
-    entity: PerceptionEntityRef | None = None
+    device_id: DeviceId | None = None
 
     frame_id: str | None = None
     path: str | None = None
@@ -85,8 +85,8 @@ class EnvObservation:
     annotations: list[EnvAnnotation] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.transport_participant_id == "":
-            raise ValueError("transport_participant_id cannot be empty")
+        if self.device_id == "":
+            raise ValueError("device_id cannot be empty")
         if self.frame_id == "":
             raise ValueError("frame_id cannot be empty")
 
@@ -106,6 +106,19 @@ class EnvObservation:
             and self.segment.source != self.source
         ):
             raise ValueError(f"{self.kind.value} segment source must match observation source")
+
+        if self.kind == ObservationKind.SPEECH_CANCELLED:
+            if self.payload is not None:
+                raise ValueError("speech_cancelled cannot carry an audio payload")
+            self.metadata["reason_code"] = SpeechCancellationReason(
+                self.metadata.get("reason_code")
+            ).value
+        elif self.kind == ObservationKind.TRANSCRIPT_UNAVAILABLE:
+            if self.payload is not None:
+                raise ValueError("transcript_unavailable cannot carry a payload")
+            reason = self.metadata.get("reason_code")
+            if not isinstance(reason, str) or not reason:
+                raise ValueError("transcript_unavailable requires a reason code")
 
     @property
     def source_id(self) -> str:
@@ -136,8 +149,7 @@ class EnvObservation:
         source: PerceptionSourceRef,
         payload: MediaPayload | None = None,
         segment: PerceptionSegmentRef | None = None,
-        transport_participant_id: str | None = None,
-        entity: PerceptionEntityRef | None = None,
+        device_id: DeviceId | None = None,
         frame_id: str | None = None,
         path: str | None = None,
         mime_type: str | None = None,
@@ -150,8 +162,7 @@ class EnvObservation:
             source=source,
             payload=payload,
             segment=segment,
-            transport_participant_id=transport_participant_id,
-            entity=entity,
+            device_id=device_id,
             frame_id=frame_id,
             path=path,
             mime_type=mime_type,
@@ -195,6 +206,12 @@ class EnvObservation:
         return cls._create(kind=ObservationKind.SPEECH_SEGMENT, **kwargs)
 
     @classmethod
+    def speech_cancelled(cls, *, reason: SpeechCancellationReason, **kwargs: Any) -> EnvObservation:
+        metadata = dict(kwargs.pop("metadata", None) or {})
+        metadata["reason_code"] = SpeechCancellationReason(reason).value
+        return cls._create(kind=ObservationKind.SPEECH_CANCELLED, metadata=metadata, **kwargs)
+
+    @classmethod
     def transcript_delta(cls, **kwargs: Any) -> EnvObservation:
         kwargs.setdefault("mime_type", "text/plain")
         return cls._create(kind=ObservationKind.TRANSCRIPT_DELTA, **kwargs)
@@ -203,6 +220,14 @@ class EnvObservation:
     def transcript_segment(cls, **kwargs: Any) -> EnvObservation:
         kwargs.setdefault("mime_type", "text/plain")
         return cls._create(kind=ObservationKind.TRANSCRIPT_SEGMENT, **kwargs)
+
+    @classmethod
+    def transcript_unavailable(
+        cls, *, outcome: str, reason: str, system_notice_code: str | None, **kwargs: Any
+    ) -> EnvObservation:
+        metadata = dict(kwargs.pop("metadata", None) or {})
+        metadata.update(outcome=outcome, reason_code=reason, system_notice_code=system_notice_code)
+        return cls._create(kind=ObservationKind.TRANSCRIPT_UNAVAILABLE, metadata=metadata, **kwargs)
 
     @classmethod
     def text_input(cls, **kwargs: Any) -> EnvObservation:
@@ -245,11 +270,8 @@ class EnvObservation:
         if self.segment is not None:
             data["segment"] = self.segment.to_dict()
 
-        if self.transport_participant_id is not None:
-            data["transport_participant_id"] = self.transport_participant_id
-
-        if self.entity is not None:
-            data["entity"] = self.entity.to_dict()
+        if self.device_id is not None:
+            data["device_id"] = self.device_id
 
         if self.frame_id is not None:
             data["frame_id"] = self.frame_id

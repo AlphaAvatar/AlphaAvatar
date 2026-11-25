@@ -19,11 +19,10 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from alphaavatar.agents.memory import MemoryStoreBackend
-from alphaavatar.agents.memory.enums import MemoryKind, MemoryOutboxTarget, MemoryType
+from alphaavatar.agents.memory.enums import MemoryOutboxTarget
 from alphaavatar.agents.memory.schemas import (
     MemoryCheckpointAdvance,
     MemoryCommitResult,
-    MemoryContextRef,
     MemoryItem,
     MemoryOutboxEvent,
     MemoryOwnerRef,
@@ -32,7 +31,7 @@ from alphaavatar.agents.memory.schemas import (
 from .commit import commit_sync
 from .database import initialize_database
 from .outbox import claim_outbox_sync, complete_outbox_sync, retry_outbox_sync
-from .query import get_checkpoint_sync, get_many_sync, get_visible_sync, query_visible_sync
+from .query import get_checkpoint_sync, get_many_sync
 from .resolution import resolve_current_sync
 
 T = TypeVar("T")
@@ -100,36 +99,12 @@ class SQLiteMemoryStore(MemoryStoreBackend):
 
         return await self._run_read(get_many_sync, self._path, memory_ids)
 
-    async def get_visible(
-        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
-    ) -> list[MemoryItem]:
-        self._require_initialized()
-
-        return await self._run_read(get_visible_sync, self._path, memory_ids, owner_refs, context)
-
     async def resolve_current(
-        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef]
     ) -> list[MemoryItem]:
         self._require_initialized()
 
-        return await self._run_read(
-            resolve_current_sync, self._path, memory_ids, owner_refs, context
-        )
-
-    async def query_visible(
-        self,
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
-        memory_type: MemoryType | None = None,
-        kind: MemoryKind | None = None,
-        limit: int = 100,
-    ) -> list[MemoryItem]:
-        self._require_initialized()
-
-        return await self._run_read(
-            query_visible_sync, self._path, owner_refs, context, memory_type, kind, limit
-        )
+        return await self._run_read(resolve_current_sync, self._path, memory_ids, owner_refs)
 
     async def get_checkpoint(self, *, context_id: str, processor: str) -> int:
         self._require_initialized()

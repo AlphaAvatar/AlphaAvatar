@@ -17,13 +17,8 @@ import pathlib
 import sqlite3
 from typing import Any
 
-from alphaavatar.agents.memory.enums import MemoryKind, MemoryType
-from alphaavatar.agents.memory.schemas import (
-    MemoryContextRef,
-    MemoryItem,
-    MemoryOwnerRef,
-    MemoryScope,
-)
+from alphaavatar.agents.memory.enums import MemoryOwnerKind, MemoryType
+from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 
 from .database import connect
 
@@ -38,31 +33,32 @@ def normalize_memory_ids(memory_ids: list[str]) -> list[str]:
     )
 
 
-def owner_keys(owner_refs: list[MemoryOwnerRef]) -> list[str]:
-    return list(dict.fromkeys(ref.key for ref in owner_refs))
+def visibility(owner_refs: list[MemoryOwnerRef]) -> list[tuple[list[MemoryType], list[str]]]:
+    """The readers' owner keys, each kind with the memory types read through it."""
+    groups = []
+    for kind in MemoryOwnerKind:
+        keys = list(dict.fromkeys(ref.key for ref in owner_refs if ref.kind is kind))
+        if keys:
+            groups.append(([value for value in MemoryType if value.read_by is kind], keys))
+    return groups
 
 
-def visibility_clause(
-    alias: str, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
-) -> tuple[str, list[Any]]:
-    owners = owner_keys(owner_refs)
-
-    if not owners:
+def visibility_clause(alias: str, owner_refs: list[MemoryOwnerRef]) -> tuple[str, list[Any]]:
+    """Each memory the readers read, by its type and its owners: never by its scope."""
+    parts, params = [], []
+    for types, keys in visibility(owner_refs):
+        parts.append(
+            f"({alias}.memory_type IN ({placeholders(len(types))}) AND EXISTS ("
+            f"SELECT 1 FROM memory_refs o "
+            f"WHERE o.memory_id={alias}.memory_id "
+            f"AND o.ref_group='owner' "
+            f"AND o.ref_key IN ({placeholders(len(keys))})"
+            f"))"
+        )
+        params.extend([*(memory_type.value for memory_type in types), *keys])
+    if not parts:
         return "0", []
-
-    scopes = list(MemoryScope.applicable_keys(context))
-
-    sql = (
-        f"EXISTS ("
-        f"SELECT 1 FROM memory_refs o "
-        f"WHERE o.memory_id={alias}.memory_id "
-        f"AND o.ref_group='owner' "
-        f"AND o.ref_key IN ({placeholders(len(owners))})"
-        f") "
-        f"AND {alias}.scope_key IN ({placeholders(len(scopes))})"
-    )
-
-    return sql, [*owners, *scopes]
+    return "(" + " OR ".join(parts) + ")", params
 
 
 def fetch_many(connection: sqlite3.Connection, memory_ids: list[str]) -> list[MemoryItem]:
@@ -88,24 +84,21 @@ def fetch_many(connection: sqlite3.Connection, memory_ids: list[str]) -> list[Me
 
 
 def fetch_visible(
-    connection: sqlite3.Connection,
-    memory_ids: list[str],
-    owner_refs: list[MemoryOwnerRef],
-    context: MemoryContextRef,
+    connection: sqlite3.Connection, memory_ids: list[str], owner_refs: list[MemoryOwnerRef]
 ) -> list[MemoryItem]:
     memory_ids = normalize_memory_ids(memory_ids)
 
     if not memory_ids or not owner_refs:
         return []
 
-    visibility, params = visibility_clause("r", owner_refs, context)
+    clause, params = visibility_clause("r", owner_refs)
 
     rows = connection.execute(
         f"""
         SELECT r.memory_id, r.payload_json
         FROM memory_records r
         WHERE r.memory_id IN ({placeholders(len(memory_ids))})
-          AND {visibility}
+          AND {clause}
         """,
         [*memory_ids, *params],
     ).fetchall()
@@ -122,65 +115,6 @@ def get_many_sync(path: pathlib.Path, memory_ids: list[str]) -> list[MemoryItem]
 
     try:
         return fetch_many(connection, memory_ids)
-    finally:
-        connection.close()
-
-
-def get_visible_sync(
-    path: pathlib.Path,
-    memory_ids: list[str],
-    owner_refs: list[MemoryOwnerRef],
-    context: MemoryContextRef,
-) -> list[MemoryItem]:
-    connection = connect(path)
-
-    try:
-        return fetch_visible(connection, memory_ids, owner_refs, context)
-    finally:
-        connection.close()
-
-
-def query_visible_sync(
-    path: pathlib.Path,
-    owner_refs: list[MemoryOwnerRef],
-    context: MemoryContextRef,
-    memory_type: MemoryType | None,
-    kind: MemoryKind | None,
-    limit: int,
-) -> list[MemoryItem]:
-    if limit <= 0 or not owner_refs:
-        return []
-
-    visibility, params = visibility_clause("r", owner_refs, context)
-
-    clauses = [visibility]
-
-    if memory_type is not None:
-        clauses.append("r.memory_type=?")
-        params.append(memory_type.value)
-
-    if kind is not None:
-        clauses.append("r.kind=?")
-        params.append(kind.value)
-
-    connection = connect(path)
-
-    try:
-        rows = connection.execute(
-            f"""
-            SELECT r.payload_json
-            FROM memory_records r
-            WHERE {" AND ".join(clauses)}
-            ORDER BY
-                r.updated_ts DESC,
-                r.revision DESC,
-                r.memory_id DESC
-            LIMIT ?
-            """,
-            [*params, limit],
-        ).fetchall()
-
-        return [MemoryItem.model_validate_json(row["payload_json"]) for row in rows]
     finally:
         connection.close()
 

@@ -1,0 +1,2998 @@
+# AlphaAvatar v0.6.9 Doctor — Claude Code 实施日志
+
+- 分支：`dev/v0.6.9`；日期均为 CST。
+- 从 T-10B 开始，Doctor 的设计、实现、实验、测试、限制以及后续 review 收尾都记录在本文件，按时间顺序追加。
+- 统一的 KD/O 表仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`；T-10A～T-10T3 记录在 [claude-code-t10-zh.md](claude-code-t10-zh.md)。
+- 干净机器安装的主日志是 [claude-code-install-zh.md](../2026-11-05/claude-code-install-zh.md)；T-10B 范围中"不做安装器"的结论和安装集合与 `packages.*` 检查的关系记录在那里。
+- 2026-11-20 起的配置诊断与 Doctor 体验优化（基线 `4a46fcab`）记录在 [claude-code-diagnosis-zh.md](../2026-11-20/claude-code-diagnosis-zh.md)。
+- T-10C `6a593f2` 第 6 节「`config init` 轻量交互入口」的方案已由交互配置日志 [claude-code-setup-zh.md](../2026-11-06/claude-code-setup-zh.md) 汇总并取代：交互配置由 `alphaavatar setup` 承担。
+
+## 批次总览
+
+| 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
+|---|---|---|---|---|---|
+| T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`、`8a66b81`；第二轮收尾未提交 | `8a66b81` review：剩一处生产误报和一处测试断言，另要求把 loop 必填项纳入 check、Doctor 文本分组；已完成，待 review。本地全量 301 passed（CI 方式，检出前后一致） |
+| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交）；review 修复基线 `9993aad`；收尾基线 `bf79300`；真实验收基线 `6a593f2` | `9993aad`、`bf79300`、`6a593f2`；验收记录未提交 | 真实服务验收（`6a593f2`）：同一实际请求携带转录与样本帧、输出正常结束、指标齐全；视觉受阻时原配置阻塞原因与纯音频降级同时出现。严格答案校验未通过：真实 STT 丢掉样本第二句格式要求，待用户决定；另发现 KD-17（真实语音轮因 `transcript_timeout` 被丢弃）。第 9 条方案待 review。本地全量 322 passed，检出前后一致 |
+| Doctor 默认运行时测试 | 静态检查后默认运行运行时测试；外部服务先列出、提示计费、明确同意（同一快照），拒绝或 `--no-metrics` 只做静态检查；非交互只认配置授权；缺模型先说明、同意后下载重跑；`—` 带原因、`Run again as JSON`；诊断进程输出不进终端 | 2026-11-06 | `2fc4f398` | 用户已提交（`38fad3c3`） | 部分被下一批取代：下载另行确认、先离线试启动、按 runner 判断外部访问，改为一次确认、按 start 启动；真实服务验收结果见该节第 9 小节 |
+| Doctor 运行时诊断：一次确认、按 start 启动、多轮统计 | 一次确认整批诊断（场景、轮数、可能下载与计费服务），同意后按 `start` 的启动逻辑运行；每个场景默认 5 轮、每轮独立会话，汇总成功数、失败阶段、样本数、中位数和范围，首轮单列；颜色与多句转录分开验收，丢句按 VAD/STT/Turn 定位；模型请求记录本地编码耗时、发送图片数和实发正文大小；Provider 状态按探测结果；外部测试库须配置声明；LiveKit 传输、客户端播放与物理设备标为未测 | 2026-11-07 | `38fad3c3` | 用户已提交（`d5080d5`） | `d5080d5` 审查：执行范围与确认不一致、部分计时与归因口径有缺口，由下一批处理；真实服务对照见该节第 11 小节，默认值未改 |
+| Doctor 第一批：执行范围、指标口径、漏句归因 | 视觉开只跑 `voice_vision`、关只跑 `voice`，去掉 `text` 和降级试跑，确认、预算和执行读同一计划，runtime 与 `start` 共用构造；指标改为 Final speech 到 First audio frame 的节点链（Input、Context、Output 三段相加等于首音频帧），`Model request sent` 在交给传输层时逐次记录；漏句分覆盖、终稿、采用、内容四项；汇总另给全体已观测轮，对照脚本重算并核对 | 2026-11-07 | `d5080d5` | 用户已提交（`64a9de7`） | 离线验证见该节第 6 小节；真实服务复验（4 份 × 5 轮）与 KD-17 见第 7 小节；`cli.html` 重录与合并标注修复见第 9 小节 |
+| Doctor 第二批：Context 构建时刻、报告完整性、KD-19 定位、KD-17 恢复、证据与 STT 拆解 | `context.built` 在 Context build 返回处记录并由 Doctor 读取；`doctor_compare.py` 核对场景分组、指标集合和 `stopped_at`；KD-19 探针（进入 STT 的 PCM 到 Turn 采用文字）与直连对照脚本；KD-17 硬期限后的恢复回归；真实报告的脱敏证据入库；分段 STT 按请求计时（排队、建连、TLS、上传、等待、流），发现 KD-20 | 2026-11-07 | `64a9de7` | 用户已提交（`b1cc485`） | 已审查：三项修复接受，KD-19 定位有证据支持；计时与进程隔离的收尾见第三批 |
+| Doctor 第三批：STT 计时与连接收尾、SDK 预备、执行子进程隔离 | STT 首事件与终稿从应答头起算；未 trace 的请求不记复用，Doctor 写未观测；KD-20 终稿立即发布一次、流在 0.25 s 内读完再复用连接；STT stream 打开时在线程里预备 SDK 资源；Host 以 `-I` 运行时执行子进程也加 `-I`；视觉关 Turn commit 等待与首轮请求准备的来源离线定位；KD-19、KD-20、KD-17 状态与上一批估算更正 | 2026-11-07 | `b1cc485` | 用户已提交（`d43cc4c`） | 已审查，收尾见第四批 |
+| Doctor 第四批：CI、STT 三处 P2、说话人关联观测、多语言与 KD-19、LID 核实 | 见该节 | 2026-11-07 | `d43cc4c` | 用户已提交（`cd5ad32`） | 已审查，收尾见第五批 |
+| Doctor 第五批：两处 P2、KD-17 正常配置验收、O-16 定位、说话人调度、O-15、VAD 300、KD-19 内容对照 | 见该节 | 2026-11-08 | `cd5ad32` | 用户已提交（`b4f074ab`） | 已审查；其后合入 turn-taking 重构（`45ecf28`）与双语 AGENTS 导航（`69b69ff`） |
+| Doctor 第六批：重构后的测试迁移、O-21、O-17、说话人属性队列、语义 addressing 时序窗口、O-16/VAD 复验、KD-19 模型对照、O-19、证据目录清理 | 见该节 | 2026-11-08 | `69b69ff` | 未提交（用户提交） | 待审查 |
+
+---
+
+## T-10B 基础 Doctor
+
+- 基线：`7c53c4a`（T-10T3 验收）。工作区中只有 T-10T3 的验收收尾（两份旧日志），其余是本批改动。
+- 范围：
+  - 命令：`alphaavatar doctor`、`alphaavatar doctor <bundle名称或配置文件> [KEY=VALUE...]`、`--list`、`--json`。
+  - 只做静态检查，模型、服务、设备一律报"未验证"。
+  - 不做：安装器、升级回滚、Agent 自动修复、长时压力测试、真实探测和延迟指标。
+
+### 1. 结构
+
+| 位置 | 职责 |
+|---|---|
+| `avatar-host/alphaavatar/host/doctor.py` | 检查逻辑与报告结构：`CHECKS`（稳定标识、标题、是否需要配置）、`Check`、`Report`（`status`、`exit_code`、`counts()`、`to_dict()`）、`diagnose(target, overrides)`。App、TUI 可以直接调用 |
+| `avatar-host/alphaavatar/host/cli/commands/doctor.py` | CLI：读取 `.env`（与 `config check` 相同）、解析参数、输出文本或 JSON |
+| `avatar-host/alphaavatar/host/cli/app.py` | 注册 `doctor` 子命令，复用 `config check` 的位置参数和 `KEY=VALUE` 规则；`--list` 与配置参数同时给出时报用法错误 |
+
+没有搭建检查插件框架：每项检查是一个返回 `Check` 的函数，`diagnose` 按 `CHECKS` 的顺序汇总。某项检查自身抛出异常时，记为该项 FAIL，内容只包含 `format_failure` 给出的类型和位置，Doctor 本身不会因此中断。
+
+### 2. 复用的公共服务（没有另写一套配置规则）
+
+- 选择与加载：`application_paths`、`read_settings`、`select_configuration`、`load_application`、`check_application_paths`。Home 解析、bundle／profile 组合、覆盖规则、`.env` 和平台路径选择都与 `config check`、`start`、`dev` 相同。
+- 唯一的额外判断：没有参数时，先用 `read_settings` 看是否有默认 bundle。没有就报 WARN 并给出初始化命令，不把它当作配置错误。
+- Runner 计划：`plan_inference_runners`，它是纯函数，不写环境变量、不起进程、不加载模型。
+- 输出边界：把 `view.py` 原来私有的 `_scrubber` 公开为 `output_scrubber(config=None)`。配置中的凭据、Host 日志的脱敏规则和控制字符清理，与 `config check` 是同一个函数；没有配置时只做后两项。`describe_application`、`describe_summary` 改为调用它，行为不变。
+- 配色：复用 `host.log.format` 的样式和 `use_color`。新增命名常量 `YELLOW`，Host 日志的 WARNING 颜色改为引用它，取值不变。
+
+### 3. 检查项
+
+| ID | 内容 | 状态规则 |
+|---|---|---|
+| `system.platform` | 系统、内核版本、架构；POSIX 本地 socket（Host 必需） | 非 POSIX 或没有 AF_UNIX 时 FAIL |
+| `python.version` | 解释器版本、实现、路径，对照 `alpha-avatar-host` 的 `Requires-Python` | 不满足时 FAIL |
+| `packages.alphaavatar` | 已安装的 `alpha-avatar-*` 包及其版本；Host 的依赖 | Host 依赖缺失或版本不符时 FAIL；包来自多个版本时 WARN |
+| `config.load` | 选择、组合、覆盖、校验、只读工作区检查 | 没有默认 bundle 时 WARN（给出 `config init` 命令）；加载失败时 FAIL（细节为 `format_failure` 的输出；缺模块时提示安装） |
+| `config.runners` | Runner 数量与 worker 数，汇总方式与 `config check` 相同 | 计划有效时 PASS |
+| `packages.capabilities` | 已启用能力需要的包（规则见第 4 节） | 有缺失或版本不符时 FAIL，并列出安装目标 |
+| `paths.home` | Home 的来源（配置文件、`application.home` 覆盖、`ALPHAAVATAR_HOME`、平台默认）、状态、所有者与权限、能否写入、默认 bundle、bundle 数量、剩余空间 | 不可写或不是目录时 FAIL；剩余空间不足 1 GiB 时 WARN |
+| `paths.cache` | 缓存根目录、是否已有下载的模型、剩余空间 | 同上 |
+| `paths.workspace` | Avatar 工作区 | 同上 |
+| `models.runners` | Runner 模型 | 始终 SKIP："未验证"，并指向 `alphaavatar dev` |
+| `services.external` | 列出 RTC、模型提供方、语音、Qdrant、工具和 MCP 等服务 | 始终 SKIP："未验证" |
+| `devices.media` | 麦克风、摄像头 | 始终 SKIP："未验证"；Host 的媒体来自 RTC 参与者 |
+
+- 目录还不存在时，检查最近一个已存在的上级目录能否写入，并报告"首次需要时创建"。
+- 没有配置时，需要配置的检查报 SKIP（"未选择配置／配置未加载；见 config.load"），下一步只写在 `config.load` 里，避免重复。
+
+### 4. 依赖检查规则
+
+- 对每个要求的包：先查是否已安装、版本是否满足 specifier；如果是 AlphaAvatar 自己的包（`alpha-avatar-*`），再展开它的依赖，按 extra 计算 marker，每个（包，extra）只展开一次。第三方包只查是否安装和版本，不再向下展开。
+- Host 的基础依赖由 `packages.alphaavatar` 检查；`packages.capabilities` 不重复报告。
+- 能力与包的对应关系：
+  - RTC：`alpha-avatar-host`，带上以后端命名的 extra（`livekit`）。
+  - loop、context、model provider 后端：按入口点组 `alphaavatar.loop`、`alphaavatar.context`、`alphaavatar.provider` 找到提供它们的包；包里有与插件同名的 extra 时一并检查，例如 `alpha-avatar-plugins-provider[openai]`、`[langchain]`。
+  - voice（vad、stt、tts 任一启用）、router、status（启用时）、character（选中时）、deepresearch、rag：各自的插件包。
+  - memory、persona、MCP（启用时）：各自的插件包；插件为 `default` 时另需 `alpha-avatar-agents[vdb]`。
+- Provider 后端的识别：在插件配置中，同时含有 `model` 和 `provider` 或 `backend` 的映射视为一个 provider 任务；没写 `backend` 的任务使用 `ProviderTaskConfig` 的默认后端（`langchain`）。模板中 memory 和 persona 的任务没有写 `backend`，所以会要求 `[langchain]`。
+- 为了解析 specifier 和 marker，`alpha-avatar-host` 显式声明了依赖 `packaging>=24,<27`：
+  - 它原本已经作为 huggingface-hub、langchain-core 等的传递依赖被安装；
+  - `uv.lock` 只增加了 2 行（host 的 dependencies 和 requires-dist）；`uv lock --check`、`check_workspace.py` 通过。
+
+### 5. 默认检查没有副作用
+
+- 不创建文件、目录或设置；不下载、不加载模型；不启动 Host 或 Runner；不访问服务；不打开麦克风或摄像头；不构造服务客户端或本地 socket。
+- 读取方式：`importlib.metadata`、入口点、`stat`、`os.access`、`shutil.disk_usage`、读取 settings 和列出 bundles 目录。
+- `.env`：CLI 与 `config check` 一样调用 `init_env()`（`load_dotenv` 只补充尚未设置的变量）。`diagnose()` 本身不读 `.env`，由调用方决定。
+- 导入配置插件时第三方库改写环境变量，这是已知的 O-2，与 `config check` 相同，本批没有处理。
+
+### 6. 输出
+
+- 文本：
+  - 第一行汇总：`OK`／`WARN`／`FAIL`，以及通过、警告、失败、未验证或跳过各几项；
+  - 之后每项一行（状态、ID、摘要），细节缩进显示，下一步以 `->` 开头；
+  - 只有输出到终端时才着色。
+- JSON：`status`、`counts`、`checks`（`id`、`status`、`summary`、`details`、`action`），与文本是同一份 `Report`。
+- `--list`：只列出检查项，什么也不运行；`--list --json` 输出 `id`、`title`、`needs_configuration`。
+- 退出码：0 表示没有 FAIL（允许 WARN 和 SKIP）；1 表示至少一项 FAIL；2 表示参数错误。
+
+### 7. 实验（scratchpad 中隔离的 HOME，`env -i`）
+
+| 场景 | 结果 |
+|---|---|
+| 空 Home，不带参数 | 退出码 0；`config.load` WARN，给出 `config init` 命令；系统、Python、包、Home、缓存检查 PASS；之后 Home 仍为空 |
+| `config init alpha` 后运行 `doctor` 和 `doctor alpha voice.tts.speed=1.3 --json` | 9 PASS、3 SKIP（模型、服务、设备），退出码 0；Home 下没有新文件 |
+| `doctor nope` | `config.load` FAIL，细节与 `config check` 相同（`Bundle 'nope' does not exist`），退出码 1 |
+| 文件中有无效时区 | `config.load` FAIL，细节为 `fields: avatar.timezone`，不含输入值 |
+| `doctor --list alpha` | 用法错误，退出码 2 |
+
+### 8. 测试
+
+新增 `avatar-host/tests/cli/test_doctor.py`，共 4 项。辅助函数每次同时运行文本和 JSON，并断言两者每一项的状态和摘要一致、ID 顺序与 `CHECKS` 相同。
+
+| 用例 | 保护的行为 |
+|---|---|
+| `test_without_a_configuration_doctor_says_how_to_create_one_and_checks_the_rest` | 没有默认 bundle：退出码 0，各项状态完整固定，`config.load` 给出初始化命令；不创建文件、不构造客户端或 socket；`--list` 不运行检查（settings 损坏时仍成功）；`--list` 带配置时退出码 2 |
+| `test_doctor_selects_and_loads_configurations_as_config_check_does` | 默认 bundle、命名 bundle、只给覆盖项（落到默认 bundle）、文件加覆盖项这四种调用中，来源、Avatar ID、工作区都与 `config check --json` 一致；模型、服务、设备始终为 SKIP；缺失的 bundle 与 `config check` 给出同一条错误，退出码 1；全程只读 |
+| `test_missing_packages_fail_and_low_disk_space_warns_with_a_next_step` | 让 `livekit` 和 `langchain-openai` 显示为未安装：FAIL，退出码 1，细节分别归到 rtc 和 providers，下一步给出 `'alpha-avatar-host[livekit]' 'alpha-avatar-plugins-provider[langchain]'`；磁盘空间不足：三个路径检查都 WARN，退出码 0，并给出下一步 |
+| `test_doctor_reports_pass_the_configuration_output_boundary` | 凭据被用作 Avatar ID、Home 路径和文件路径中有终端转义时，文本和 JSON 中没有任何凭据和控制字符；Home 来源显示为配置文件 |
+
+- 剩余空间是机器的输入，测试用 `disk` 夹具固定它，保证结果确定。
+- 测试设施的改动：
+  - 把 `test_bundles.py` 里的 `home` 夹具移到 `avatar-host/tests/conftest.py`，两个文件共用；
+  - `cli/test_entrypoint.py` 的命令集合断言从 `{dev,start,config}` 改为 `{dev,start,config,doctor}`，这是有意新增的命令；
+  - 同一用例里通过真实的 console 入口运行 `doctor console --json`，断言没有 FAIL，并由原有的文件清单断言证明它没有在 Home 中写入任何东西。
+
+反向验证（每次只改一处，运行 `test_doctor.py`，按 SHA-256 恢复）：
+
+| # | 变异 | 结果 |
+|---|---|---|
+| D1 | 未验证的模型显示为 PASS | 配置复用用例失败 |
+| D2 | 退出码忽略 FAIL | 配置复用用例失败（缺失 bundle 时得到 0） |
+| D3 | 不经过输出边界 | 脱敏用例失败（显示了 `avatar vdb-fictional-0042`） |
+| D4 | 加载时丢掉覆盖项 | 配置复用用例失败（`avatar alpha` ≠ `avatar renamed`） |
+| D5 | 检查时创建目录 | 无配置用例失败 |
+| D6 | 不按 extra 计算依赖 | 缺包用例失败 |
+| D7 | 不使用默认 provider 后端 | 缺包用例失败（漏掉 providers 一行） |
+| D8 | 忽略剩余空间下限 | 缺包用例中的磁盘部分失败 |
+| D9 | 没有默认 bundle 时判为 FAIL | 无配置用例失败 |
+| D10 | `--list` 实际运行检查 | 无配置用例失败（settings 损坏时返回 1） |
+
+### 9. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **300 passed**（296 + 4），46.7 s；检出目录前后一致 |
+| `avatar-host/tests` | 80 passed |
+| `test_doctor.py` ×10 | 0 失败 |
+| Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动和新增文件运行 pre-commit | 全部通过 |
+
+### 10. 文档
+
+- `docs/cli/doctor.md` 重写，分成已实现和计划中两部分：
+  - 已实现：用法、检查表、状态和退出码、文本示例、JSON 结构、不做的事；
+  - 计划中：`--runtime`、`--live`、显式探测和延迟指标。
+  - 原来的 `--format json` 改为已实现的 `--json`。
+- `docs/cli/config.md`：说明 `doctor` 与 `config check`、`start`、`dev` 使用同一个配置参数。
+- `README.md`：Step 1 增加 `alphaavatar doctor my-avatar`；按用户要求，删除了 `config check examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml` 这一行。
+- `avatar-host/README.md`：增加 `doctor` 示例，并在 Python 入口中列出 `output_scrubber` 和 `alphaavatar.host.doctor.diagnose`。
+
+### 11. 限制与未做
+
+- **Provider 后端的识别是结构上的约定**：只认插件配置中写出来的任务。插件内部自带的默认任务看不到；没写 `provider` 也没写 `backend` 的任务也识别不到。例如示例文件没有写 provider 任务时，`services.external` 不会列出模型提供方。
+- **插件名是否已注册没有检查**：例如 memory 的插件名拼错时，静态检查只能确认插件包已安装；名字错误要到启动时才报 `Unknown plugin`。导入 character、status、tools 等插件会执行插件代码，本批不导入。
+- **凭据**：不检查 `OPENAI_API_KEY`、`LIVEKIT_*` 等环境变量是否已设置，也不验证它们是否可用；这些归在 `services.external` 的"未验证"中。配置里的 `<ENV_VAR>` 占位符缺失时，与 `config check` 一样在 `config.load` 中失败。
+- 剩余空间的下限固定为 1 GiB，不根据所选模型估算。
+- `uv.lock` 已更新，但本机 `.venv` 中已安装的 `alpha-avatar-host` 元数据要在 `uv sync` 之后才会包含 `packaging`。这不影响运行，本批没有改动环境。
+- 在 Windows 上，`system.platform` 会报 FAIL；其余检查仍然运行，但没有在 Windows 上验证。原生 AF_UNIX 全量只在本机 Linux 运行。
+- 导入配置插件时改写环境变量，是已知的 O-2，与 `config check` 相同。
+- 没有实现：安装器、升级回滚、Agent 自动修复、长时压力测试、`--runtime`／`--live` 探测、首 token／首音频帧／端到端延迟。
+- 本批修改没有 commit 或 push，停在 review 阶段。
+
+---
+
+## T-10B `0579d81` review 收尾
+
+- 基线：`0579d81`，开始时工作区干净。
+- review 结论：暂不验收，三组 P2，都可以集中做小改，不调整整体架构。另有三处说明不准确。
+- review 环境：收集 300 项，选跑 239 项，234 项通过。其中：
+  - 4 项 Doctor 测试失败，原因是审查环境确实缺少声明的依赖；
+  - 1 项未改动的语音测试首次出现时序失败，当前版本和父版本单独重跑都通过，尚未认定为本批回归。
+
+### 1. P2 修正
+
+| # | 问题 | 修正 |
+|---|---|---|
+| 1 | 依赖检查有漏报也有误报。只写 `model` 的任务实际使用默认后端，却被漏掉；补写同样的默认值后，结果反而不同。已禁用工具残留的 `init_config` 仍被扫描，其中未使用的 backend 被报成 FAIL | `_provider_backends` 不再按字典结构猜测，改为用插件启动时的 schema 校验已启用的内置插件，默认值由 schema 补齐后再收集 `ProviderTaskConfig`。所用 schema 为 realtime loop 的 `RealtimeLoopConfig`，以及默认 memory、persona 的 `DefaultMemoryConfig`、`DefaultPersonaConfig`。向量库的 embedding 是固定用默认后端构造的，所以默认 memory、persona 和启用的默认 MCP 都计入默认后端。已禁用的插件不读取。其他插件，或 schema 拒绝的配置，报为"provider backends not verified"，`packages.capabilities` 给 WARN 并指向 `alphaavatar dev` |
+| 2 | 悬空符号链接被当作可创建的目录：`exists()` 跳过了失效链接 | `_directory` 向上寻找已存在的祖先时，遇到 `is_symlink()` 但无法解析的路径，就直接 FAIL（"is a symbolic link that does not resolve"）；遇到不是目录的祖先，也明确 FAIL。Home 是悬空链接时，Home 和 cache 都 FAIL |
+| 3 | `.env` 读不了时，`doctor --json` 输出裸 traceback，stdout 为空 | `diagnose(..., read_env=init_env)` 在报告内读取 `.env`。失败时 `config.load` 报 FAIL，摘要为"The environment file could not be read"，细节是 `format_failure` 的类型和位置，下一步说明 ENV_FILE 应为 UTF-8 的 KEY=VALUE 文本。此时 Home 可能就定义在没读到的 `.env` 里，所以依赖它的路径检查 SKIP。JSON 照常输出，退出码 1 |
+
+### 2. 说明更正
+
+- `system.platform` 只确认 AF_UNIX API 存在，不打开 socket，摘要改为"AF_UNIX socket API present, not opened"。
+- 导入边界：用 audit hook 实测，首次导入配置插件时，第三方库会做探测：
+  - `urllib3`（经 `requests`）创建并 bind 一个 IPv6 socket，用来判断是否支持 IPv6；
+  - `weasyprint` 通过 `ctypes.util.find_library` 查找本地库，会运行 `ldconfig`、`gcc`、`ld`，并创建、删除临时文件。
+  - 这些来自 `config check`、`start` 同样会执行的导入；Doctor 自己的检查阶段（导入之后）实测没有 socket、子进程、写文件或建目录，只有 Python 为刚改动的模块写 `__pycache__`。
+  - 文档已改为"Doctor 的检查不创建……"，并写明这条导入边界。2A 日志的 O-2 已补充记录。
+- 显式配置有效、但 settings 损坏时，`config.load` 是 PASS，所以提示不能再指向它。现在由 `paths.home` 报 WARN，细节给出 settings 的错误，下一步直接写出要修复或删除的 settings 文件。
+- 另外发现并修正一处与 `config check` 不一致的地方：Doctor 的 `config.load` 没有执行 `config check` 的 `describe_summary`。现在也执行，两者的结论在构造上一致。现有的 persona 配置错误在加载阶段就已经失败（Runner 计划会校验 persona 设置），所以这处修正目前没有可观察的差别（见变异 F7）。
+
+### 3. 测试
+
+- **测试与本机安装解耦**：本机是否装全了声明的依赖，属于机器本身的状态。原测试断言 `packages.*` 为 PASS、退出码为 0，在审查环境中因此失败。
+  - 改法：辅助函数对每次运行都断言"退出码为 1 当且仅当报告里有 FAIL"；退出码的取值规则直接用 `Report` 验证（只有 WARN 和 SKIP 时为 0，有 FAIL 时为 1）。
+  - `packages.*` 的具体状态只在测试主动移除某个包时断言。缺包用例用"包含"判断，不要求细节完全相等。
+  - 其他检查（平台、Python、配置、路径）的状态仍然精确断言。
+- **新增**：`test_provider_backends_follow_defaults_and_ignore_disabled_plugins`。
+  - 只写 `model` 的任务与补写默认值的任务结果相同；
+  - 显式写 `backend: openai` 时要求 openai；
+  - 已禁用 rag 残留的 `backend: nowhere` 不出现在结果中。
+- **扩展**：
+  - 配置复用用例：增加 `persona.init_config.unknown=1` 这一校验失败场景，与 `config check` 的拒绝一致；增加 settings 损坏时显式 bundle 的情况（`config.load` PASS，`paths.home` WARN）。
+  - 失败用例：增加悬空链接 Home（FAIL，退出码 1）和不可读 `.env`（JSON 完整，`config.load` FAIL，路径检查 SKIP，没有 traceback）。
+- `test_doctor.py` 现为 5 项。
+
+反向验证：用一个临时测试文件把各场景拆开，分别对 `0579d81` 的两个 Doctor 模块和修正后的模块运行；文件随后删除，模块按 SHA-256 恢复。
+
+| 场景 | `0579d81` | 修正后 |
+|---|---|---|
+| 只写 `model` 的任务遵循默认值 | 失败（结果中没有 provider） | 通过 |
+| 已禁用工具的残留不参与检查 | 失败（出现 `nowhere`） | 通过 |
+| 悬空链接 Home 报 FAIL | 失败（退出码 0） | 通过 |
+| `.env` 不可读时仍输出 JSON | 失败（`UnicodeDecodeError` 直接抛出） | 通过 |
+| settings 损坏、显式 bundle | 失败（Home 为 PASS） | 通过 |
+| `persona.init_config` 错误与 `config check` 一致 | 通过（加载阶段已拒绝） | 通过 |
+
+变异（每次只改一处，按 SHA-256 恢复）：
+
+| # | 变异 | 结果 |
+|---|---|---|
+| F1 | 悬空链接按"不存在"处理 | 被发现 |
+| F2 | 在报告之外读取 `.env` | 被发现（`UnicodeDecodeError`） |
+| F3 | settings 损坏时仍报 PASS | 被发现 |
+| F4a | 只计入显式写出的 backend | **未被发现**：默认 memory 和 persona 的 embedding 本身就要求默认后端，在用例中掩盖了 loop 的默认值 |
+| F4b | 不计入 embedding 的默认后端 | **未被发现**：loop 只写 `model` 时同样落到默认后端，两者在用例中互相掩盖 |
+| F4c | 不按 loop 的 schema 读取任务 | 被发现 |
+| F5 | 摘要中没有 memory 处理器开关 | 被发现 |
+| F6 | 摘要中没有 vision | 被发现 |
+| F7 | `config.load` 不调用 `describe_summary` | **未被发现**：现有校验在加载阶段已经覆盖 |
+
+T-10B 首版的变异 D1–D10 在最终代码上重跑：
+- D7（基于结构的扫描）对应的代码已删除，改由 F4 覆盖；
+- 其余 9 个仍全部被发现。
+
+### 4. 用户在本轮追加的配置改动
+
+1. **`config check` 摘要补全开关**：
+   - 新增 `vision`（开关及输入方式）、`context`、`status`；
+   - router 显示 audio activity、semantic addressing、visual addressing、turn taking、interruption 的开关；
+   - memory 显示 retrieval、conversation、tool、environment（ENV memory）的开关；
+   - persona 增加 profiler 的开关。
+   - 开关都用各插件自己的 schema 读取，省略的开关显示默认值。JSON 在 `plugins` 下给出相同的值，`router` 和 `status` 由字符串改为对象。
+   - 行为变化：读取 memory 开关时会校验 `DefaultMemoryConfig`，这一点 Runner 计划此前没有做。所以 `memory.init_config` 无效时，`config check` 现在就会拒绝；原来要到 `start` 才失败。
+2. **`config check` 分层展示**：
+   - 选择信息（config、avatar_id、home、workspace）之后，依次分为 `host`（rtc、health）、`agent`（inference）、`plugins/foundation`、`plugins/perception`、`plugins/tools`；
+   - tools 拆成 deepresearch、rag、mcp 三行。
+   - 层的划分来自 `alphaavatar.host.configs.LAYERS`，与 profile 布局共用同一份定义。JSON 结构不分层。
+3. **profile 分层**（用户选择："host 放 host，agent 放 runtime"，tools 用一个文件）：
+   - `host`、`runtime` 可以作为 profile。`profile_sections()` 取代 `plugin_sections()`，`avatar`（身份）仍只能写在 bundle 中。这改变了 T-10A 已验收的规则。
+   - 错误信息改为"profiles must map sections to profile names"。
+   - `config init` 按层生成 12 个 profile：
+
+     ```
+     configs/profiles/<name>/
+       host/host.yaml
+       agent/runtime.yaml
+       plugins/foundation/{context,loop,voice,vision}.yaml
+       plugins/perception/{status,router,character,memory,persona}.yaml
+       plugins/tools/tools.yaml
+     ```
+
+   - 新增的 host、runtime、context、status、router、character profile 都显式写出默认值。memory 增加 `environment: {enabled: false}`；persona 增加 `profiler.enabled`、`speaker`（`enabled`、`inference_queue_size`）和 `face`（`enabled`）。
+   - 生成时，host 用 `HostConfig` 校验，其余用 `AvatarConfig` 校验。
+   - init 输出的 profiles 行改为指向 bundle 的 profile 根目录，并列出各层。
+   - 原测试逐值比较 bundle 与旧的单文件模板，现在改为套用各插件 schema 后再比较（context、router、memory、persona），因为新 profile 把单文件里隐含的默认值写了出来。新增断言 `set(LAYERS) == profile_sections()`。
+4. 此前已按要求删除 README 中 `config check examples/.../pipeline_openai_tools_minimal.yaml` 一行。用户机器上已有的 `~/.local/share/alphaavatar` 文件没有改动。
+
+### 5. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比） | **301 passed**（新增 1 项），46.6 s；检出目录前后一致 |
+| `avatar-host/tests` | 81 passed |
+| Doctor、check、bundles 测试 ×10 | 0 失败 |
+| 真实入口 | 不可读 `.env` 时 `--json` 输出完整、stderr 为空、退出码 1；悬空链接 Home 时两项路径检查 FAIL、退出码 1；settings 损坏时显式 bundle 得到 `config.load` PASS、`paths.home` WARN |
+| Ruff、格式、`check_workspace.py`、`uv lock --check`、pre-commit | 全部通过 |
+
+### 6. 限制
+
+- `config check` 和 Doctor 的 `config.load` 都不校验 `loop.init_config`（`RealtimeLoopConfig`）。例如没有写 `model` 的配置能通过 check，但会在启动时失败。Doctor 会在 `packages.capabilities` 中给出 WARN，并指出缺少的字段。是否把这项校验放进 `config check` 留给 review 决定。
+- F4a、F4b、F7 三个变异未被发现，原因见上表。
+- review 环境中那项语音时序失败不在本批范围，没有处理。
+- 本批修改没有 commit 或 push，停在 review 阶段。
+
+---
+
+## T-10B `8a66b81` review 收尾（第二轮）
+
+- 基线：`8a66b81`，开始时工作区干净。
+- review 复验：
+  - 已通过：`.env`、悬空链接、settings 问题已修复；配置分层与旧 profile 兼容。
+  - 还剩一处生产误报、一处测试断言；F4a／F4b 需要在现有用例中隔离两条后端来源。
+- review 环境：收集 301 项，选跑 240 项，239 项通过；失败的 1 项正是下面第 2 条的字符串断言。
+- review 对上一轮四个待定项的决定：
+
+| 项目 | 决定 | 本轮处理 |
+|---|---|---|
+| host、runtime 可以写成 profile | 接受，Avatar 身份留在 bundle | 不变 |
+| memory 配置提前校验 | 接受；建议集中为一个小型公共纯校验函数，由 check 和 Doctor 共用 | 新增 `validate_plugin_settings`，见第 3 条 |
+| router、status 的 JSON 改为对象 | 接受，明确记录结构变化 | 见第 5 条 |
+| loop 缺少必填的 `model` | **纳入 check**：已知 schema 能确定的错误报 FAIL；未知插件的未验证状态仍为 WARN | 见第 3 条 |
+
+### 1. 关闭的处理器不再计入依赖
+
+- 问题：`collect()` 会遍历 schema 的所有字段。关闭 `memory.tool` 或 `persona.profiler` 后，残留任务里的 backend 仍让 Doctor 报 FAIL，而启动时并不会创建这些处理器。
+- 修正：
+  - 遍历时遇到 `enabled` 为 False 的模型就跳过它和它下面的内容；
+  - 向量库 embedding 的默认后端单独计入，与处理器无关：默认 memory、默认 persona 和启用的默认 MCP 各加一次。
+
+### 2. 测试不再假设两个安装目标紧挨着
+
+缺包用例对 `'alpha-avatar-host[livekit]'` 和 `'alpha-avatar-plugins-provider[langchain]'` 分别断言是否包含。机器另外缺包时，建议中会多出其他目标，用例不受影响。
+
+### 3. 公共纯校验函数 `validate_plugin_settings`，loop 必填项纳入 check
+
+- 新增 `alphaavatar.host.configs.validate_plugin_settings(config)`：
+  - 用各内置插件启动时使用的 schema，校验已启用插件的设置：realtime loop、context、router、memory、persona；
+  - 返回校验后的模型，其他插件不在结果中；
+  - 只读取已接受的配置。
+- 错误按所在段定位，例如 `loop.init_config.model`。实现上重建 `ValidationError`，把渲染后的消息作为上下文传入，避免消息中的大括号被当作模板；输出仍只有类型和字段位置，不含输入值。
+- 使用者：
+  - `config check` 的加载步骤；
+  - `start`／`dev` 的预检（新阶段 "validate plugin settings"，在准备目录之前）；
+  - Doctor 的 `config.load`；
+  - `describe_summary` 读取开关；
+  - Doctor 的依赖检查。
+- 因此 `config check`、`start` 和 Doctor 的结论相同：缺少 `model` 的 realtime loop 现在在 check 中就报 FAIL，`start` 退出码 2，不创建任何目录。
+- Doctor 的 `config.load` 不再调用 `describe_summary`：它额外做的校验都已包含在这里，上一轮未被发现的 F7 因此不复存在。
+- 所有 `examples/agent_configs` 都通过 `config check` 和 `doctor`，没有 WARN 或 FAIL。
+- 测试样例：原来的 `CONFIG` 和几个最小配置都没有 loop 的 `model`，`start` 本来就会拒绝它们。`config_samples` 增加 `LOOP`，并加入 `CONFIG`；`test_check`、`test_bundles` 中需要通过 check 的最小配置也带上 `LOOP`。
+
+### 4. Doctor 文本分组
+
+- 分为 environment（system、python、packages.alphaavatar）、configuration（config.load、config.runners、packages.capabilities）、directories（paths.*）、not verified（models、services、devices）四组。
+- 标题、缩进和配色与 `config check` 一致。
+- PASS 只显示一行；WARN、FAIL、SKIP 显示细节和下一步。
+- `--list` 使用相同分组；`--list --json`、报告 JSON、检查 ID 和退出码都不变。
+- 分组只定义在 CLI 中（`GROUPS`）：只影响展示，库接口不变。测试辅助函数会断言每项检查都出现在文本中，所以新增检查而忘记分组时，测试会失败。
+
+### 5. `config check --json` 的结构变化（v0.6.9）
+
+- `plugins.router`：由插件名字符串改为对象 `{plugin, audio_activity, semantic_addressing, visual_addressing, turn_taking, interruption}`。
+- `plugins.status`：由插件名字符串改为对象 `{plugin, enabled}`。
+- 新增 `plugins.vision` `{enabled, input}` 和 `plugins.context`（插件名）。
+- `plugins.memory` 增加 `retrieval`、`conversation`、`tool`、`environment`；`plugins.persona` 增加 `profiler`。
+- 已写入 `docs/cli/config.md`。
+
+### 6. 测试与反向验证
+
+- `test_provider_backends_follow_defaults_and_skip_what_start_does_not_create`（原用例改写，不扩大矩阵）：
+  - **只有 loop 一个来源**：memory 和 persona 使用其他插件、MCP 关闭，所以没有 embedding 的默认后端。只写 `model` 和补写默认值得到相同结果，都是 `(langchain)`。
+  - **只有 embedding 一个来源**：loop 显式使用 openai，MCP 关闭，因此 `(langchain, openai)` 中的 langchain 只能来自 memory 和 persona 的 embedding。
+  - **关闭的处理器和禁用的工具**：`memory.tool`、`persona.profiler` 关闭后残留的 `backend: nowhere`，以及禁用的 rag 中残留的 `nowhere`，都不会出现。
+- 配置复用用例：在拒绝场景中增加"loop 缺少 `model` 的文件"，check 和 Doctor 一致，细节为 `fields: loop.init_config.model`。
+- 入口用例：真实入口运行 `start <缺少 model 的文件>`，退出码 2，输出 `fields: loop.init_config.model`；随后原有的断言确认 Home 中只有 `configs` 和 `settings`。
+- 测试辅助函数：
+  - 断言四个分组标题依次出现；
+  - 断言 PASS 的细节不出现在文本中，其他状态有细节时会显示。
+
+变异（每次只改一处，按 SHA-256 恢复）：
+
+| # | 变异 | 结果 |
+|---|---|---|
+| G1 | 关闭的处理器仍计入依赖 | 被发现（出现 `nowhere`） |
+| G2 | 只计入显式写出的 backend（原 F4a） | **被发现**（只有 loop 来源时为空） |
+| G3 | 不计入 memory／persona embedding 的默认后端（原 F4b） | **被发现**（只剩 `openai`） |
+| G4 | `validate_plugin_settings` 不校验 loop | 被发现（check 返回 0） |
+| G5 | 错误位置不带所在段 | 被发现（只有 `fields: model`） |
+| G6 | `start` 预检不校验插件设置 | 被发现（退出码 1，而不是 2） |
+| G7 | PASS 也显示细节 | 被发现 |
+| G8 | 不显示分组标题 | 被发现 |
+
+- 在最终代码上重跑之前的变异：
+  - D1–D10（D7 已删除）、F1–F3、F5、F6 全部仍被发现；
+  - F4a、F4b 已由 G2、G3 取代；F7 因 `describe_summary` 调用已删除而不复存在。
+
+### 7. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比） | **301 passed**，49.1 s；检出目录前后一致 |
+| `avatar-host/tests` | 81 passed |
+| `cli`、`configs` 测试 ×10 | 0 失败 |
+| examples 的 `config check` 和 `doctor` | 5 个都通过，没有 WARN 或 FAIL |
+| Ruff、格式、`check_workspace.py`、`uv lock --check`、pre-commit | 全部通过 |
+
+### 8. 限制
+
+- `validate_plugin_settings` 只覆盖 realtime loop、context、router、memory、persona。status、character 和 tools 插件的 `init_config` 仍在启动时才校验。导入它们会执行插件代码（例如 character 依赖 playwright），本批不做。
+- 其他插件的 provider 后端仍报"未验证"（WARN）。
+- 本批修改没有 commit 或 push，停在 review 阶段。
+
+---
+
+## T-10C 多模态 Doctor 自检
+
+- 基线：`8fdc2c2`（用户的临时提交）。其中包含 T-10C 第一版：`--runtime`、`RunnerProbe`、`InferenceRunner.probe()`，以及 Silero 和 Smart Turn 的专用探针。第一版过程中用户还做过两次结构调整：
+  - Doctor 移入 `host/doctor/` 包，另建 `enums/`、`schemas/`；
+  - probe 改为从 Runner 自身派生，不再在插件层注册。
+- 本轮按用户新的 T-10C 说明重做：
+  - 命令行只保留 `alphaavatar doctor [配置]`，外加 `--list` 和 `--json`。移除 `--runtime`，也不引入 `--live`。
+  - 第一版的探针全部移除。Runner 沿用 `initialize()`、`run()` 和现有的资源释放接口。
+  - 固定样本与结果校验只属于诊断场景。
+
+### 1. 统一入口与授权
+
+- **命令流程**：`alphaavatar doctor [配置]` 先做静态检查（与 T-10B 相同），再决定诊断会话这一步要不要启动。
+  - 是否启动由三方面决定：配置启用的能力、本机可用条件、诊断授权。
+  - 静态检查用同步的 `prepare()` 完成，不创建事件循环，也不打开本地 socket。
+  - 只有需要启动时，才进入 asyncio 并接管 Ctrl+C。
+  - 这样做的原因：受限主机会拒绝 AF_UNIX，而 asyncio 自身要用 socketpair。沙箱测试 `sandbox` 复现了这个问题，见第 9 节。
+- **授权**：新增配置项 `host.doctor.external_services`，默认 false，写在 `config init` 生成的 host 档案里。
+  - 也可以单次覆盖：`alphaavatar doctor my-avatar host.doctor.external_services=true`。
+  - 未授权时诊断会话不运行。`session.start` 列出会话会访问的外部服务，并写明开启方法，同时提示可能计费。
+  - 未授权时仍有一项独立检查：如果 Runner 启动不会访问外部服务，就单独启动 Runner，以检查本地模型缓存。
+  - 默认 memory、persona 和 MCP 的 LanceDB Runner 在 `initialize` 时会对探针文本做一次 embedding，这是付费调用。这些插件启用时，Runner 启动也要等授权（实测见第 10 节）。
+- **Library 接口**（App、TUI 可用）：
+  - `diagnose()`：异步，执行完整诊断；
+  - `prepare()`：同步，只做静态检查；
+  - `Diagnosis.run()`：运行诊断会话；
+  - `Diagnosis.report()`：不运行会话，直接给出报告。
+
+### 2. 结构
+
+| 位置 | 职责 |
+|---|---|
+| `host/doctor/doctor.py` | 检查清单 `CHECKS`、静态检查、`prepare`/`Diagnosis`/`diagnose`、报告输出边界（场景、证据一并脱敏） |
+| `host/doctor/session.py` | 诊断会话：场景规划、授权判定、Runner 启动、`create_execution`、逐轮运行、降级、期限、回收 |
+| `host/doctor/transport.py` | 诊断传输：`DiagnosticSource`（按 RTC 输入适配器的方式发布样本）、`DiagnosticSink`（按 RTC 传输的方式读输出边界，兼任本地音频队列并发送播放回执）、`LogTimings`（采集会话已有的计时日志） |
+| `host/doctor/measure.py` | 由观测构造场景结果：阻塞阶段、端到端指标、分段、选帧、关联证据 |
+| `host/doctor/samples.py` | 固定样本与任务；语音为 16 kHz 单声道 PCM16 WAV（待生成，见第 11 节），图片在代码中绘制 |
+| `host/doctor/config.py` | `DoctorConfig`（`external_services`） |
+| `host/doctor/enums/session.py`、`schemas/session.py` | `ScenarioOutcome`；`Metric`、`Evidence`、`ScenarioResult`、`RunnerResult` |
+
+检查项：
+- 保留的静态检查：`system.platform`、`python.version`、`packages.alphaavatar`、`config.load`、`config.runners`、`packages.capabilities`、`paths.*`、`devices.media`。
+- 新增在诊断会话中运行的检查：`session.start`、`models.runners`、`session.scenarios`、`session.cleanup`。
+- `models.runners` 原来恒为"未验证"，现在报告 Runner 的实际启动结果。
+- `services.external` 未授权时保持未验证；授权后跟随场景结果。RTC 服务器始终不联系。
+- 第一版临时提交中的 `runtime.models`、`runtime.cleanup` 已撤销。
+- 文本分组：environment、configuration、directories、session、not verified。
+
+### 3. 诊断会话复用的生产链路
+
+- **生产组件**：配置解析为 `load_application`，另加覆盖项 `avatar.workspace_root=<临时目录>`。Runner 计划、启动快照、Runner、执行接口都与 `start` 一致：
+  - Runner 计划：`plan_inference_runners`，含配置的 workers；
+  - 启动快照：`snapshot_inference_config`；
+  - 运行：`InferenceRuntime`；
+  - Engine、插件和输出运行时：Host 自己的 `create_execution`（`InferenceExecutor.from_env`、`AvatarEngine`）。
+  - 启动顺序同 `SessionManager.start`：先输出端，再 `execution.start()`，再输入端，最后 `notify_ready()`。
+- **Doctor 自己负责的部分**：只有传输和临时工作区。
+- **输入边界**：`perception.publish_observation`，以及 `publish_source_state` 和 `engine.submit_input`，与 LiveKit 输入适配器的调用位置相同。
+  - 音频：20 ms 一帧（取 `runtime.perception.audio_frame_size_ms`），按采样节奏发送。时间范围取发布时刻往前一帧，与 RTC 适配器一致。源晚于节奏的最大时延单独记录（`input_lateness`）。
+  - 屏幕帧：按 `video_publish_interval_sec` 发送。每帧先在线程里编码 JPEG 再发布，与 RTC 视频输入一致。
+  - 打字输入：经 `engine.submit_input`。
+- **输出边界**：`output.stream.subscribe`，用可靠订阅。Sink 按测试 `Player` 和 LiveKit 音频输出的语义发送播放回执，否则字幕不会结束。Sink 不向任何设备播放。
+- **离线与工作区**：
+  - 会话运行期间，诊断进程置 `ALPHAAVATAR_MODEL_OFFLINE` 和 `HF_HUB_OFFLINE`，结束后复原。Runner 子进程在 spawn 时继承这两个变量。
+  - 模型只用已有缓存。
+  - 工作区为临时目录，结束即删除。真实 Avatar 工作区、Memory、Persona 和向量库都不会写入。
+- **期限**：
+  - Runner 启动、会话装配和就绪各不超过 180 s；
+  - 单轮不超过 60 s；
+  - 全程不超过 480 s；
+  - 关闭步骤各有自己的上限；
+  - 缓存检查就是 Runner 启动本身，计入上述期限。
+- **回收**：
+  - 顺序：先关会话（含其 Executor），再关 Runtime，最后删临时工作区。
+  - 检查 `mp.active_children()` 的差集，有残留子进程即报 FAIL。
+  - 成功、失败、超时和 Ctrl+C 走同一条回收路径。Ctrl+C 只设置停止事件，回收过程本身不会被打断。
+
+### 4. 场景、固定样本与结果类别
+
+| 场景 | 触发条件 | 输入 | 答案须含 |
+|---|---|---|---|
+| `voice_vision` | VAD、STT、TTS 都已配置且视觉开启 | 语音"What color is the card on my screen?"，同时以屏幕共享送入绿色卡片图 | `green`/`绿` |
+| `voice` | VAD、STT、TTS 都已配置且视觉关闭 | 语音"What is two plus three?" | `5`/`five`/`五` |
+| `text` | 总是在语音轮之后运行 | 打字"What is two plus three? Answer in one short sentence." | 同上 |
+| `image_input` | — | 尚无传输向会话送入图片：报尚无覆盖 | |
+| `visual_output` | 配置了 Character | AIRI 在独立的浏览器参会方中渲染，帧不带 Turn：报尚无覆盖；未配置则报未启用 | |
+
+- **语音场景的转写**：转写须含问题中的词（每组任一）。
+- **送图方式**：卡片图走屏幕共享（SCREEN），不走摄像头。
+  - 原因：生产 turn-taking 中，摄像头可用时为 AUDIO_VISUAL 模式（`policy.decide`）。此时没有寻址证据会进入 HOLD，最终判为 PASSIVE，不会作答。
+  - 卡片图没有人脸，视觉寻址无法给出证据。
+  - 屏幕帧不改变 turn 模式，帧选择器同样会选取屏幕帧（`VisualFrameSelector` 接受 `VIDEO_FRAME` 和 `SCREEN_FRAME`）。
+- **结果类别**：`passed`、`failed`（这两项是实测）、`not_enabled`、`conditions_unmet`（缺授权、模型、样本或会话）、`no_coverage`、`interrupted`。
+- **阻塞阶段**：失败场景写出 `blocked_stage`，即下列阶段中第一个未到达的：
+  `input`、`vad.closed`、`stt.final`、`turn.committed`、`frames.selected`、`model.request`、`model.first_event`、`text.first`、`text.complete`、`audio.first`、`response.complete`。
+  全部到达但答案不符时，写 `answer`。
+
+### 5. 降级
+
+原配置失败、且有现成降级路径时，降级在独立会话中试跑，原配置与降级结果分别报告（`configuration` 分别为 `original`、`degraded: …`）：
+
+- **视觉不可用**：`voice_vision` 已到 STT 之后，但停在选帧、模型或答案（`frames.selected`、`model.*`、`text.*`、`answer`）。处理：以 `vision.enabled=false` 和 audio 会话运行 `voice` 场景。
+- **语音输出不可用**：语音轮或打字轮停在 `audio.first`。处理：以 chat 会话运行 `text` 场景，不带音频输出。
+
+两条都是项目已有的路径：
+- 视觉关闭时，`VisionConfig` 归为 TEXT，会话类型 audio 不含视频输入；
+- chat 会话为 IMMEDIATE 文本模式，不带音频。
+
+原配置的状态决定 `session.scenarios` 的状态：原配置失败即为 FAIL，即使降级通过。
+
+### 6. 指标口径
+
+- **时钟**：统一用会话时钟的单调部分（`time.monotonic_ns`）。
+  - 输出事件：`OutputEvent.monotonic_ns`；
+  - 输入轨迹：`recorded_time_ns`；
+  - 日志：`LogTimings` 在处理器收到记录时打的时间戳；
+  - 源：发布时刻。
+- **响应起点**：
+  - 语音轮：样本中最后一个有效语音采样所在帧的发布时刻。有效语音按 20 ms 窗口判定：RMS 不低于样本最大窗口的 5%。尾部静音照常送入，一直送到本轮结束。
+  - 打字轮：`engine.submit_input` 返回、输入被接纳的时刻。
+- **测量边界**：诊断输入到服务端输出边界。没有客户端参与，客户端看到或听到的延迟不测。
+
+端到端指标：
+- `first_text`、`first_audio_frame`：分别到首个答案文本块、首个答案音频帧从输出边界发出。
+- `first_visual_output_frame`：恒为 null，注明没有视觉输出到达输出边界。
+- `text_complete`、`audio_last_frame`、`response_final`：分别到文本完成、末个答案音频帧、响应终态。
+- `last_required_input`（仅 `voice_vision`）：到最后一个被选中的帧或最后有效语音采样到达。
+
+流式供给：
+- `audio_duration`、`audio_frame_interval`（中位数）、`audio_max_gap`。
+- `audio_underruns`：假设从首帧起实时播放、没有启动缓冲的队列会断供的次数，注释中给出断供总时长。
+- `audio_rtf`：产出时长除以音频时长，注释中给出分子和分母。
+- `output_events_dropped`：可靠订阅，不丢帧。慢消费者会反压生产者；反压本身在 sink 侧观测不到，注释中已写明。
+
+分段：
+- `vad_close`、`stt_final`、`turn_cutoff`；
+- `stt_request_to_final`：以 `stt.commit` 为请求起点，即段落进入 STT 请求队列的时刻；
+- `cutoff_to_model_request`、`model_first_token`、`model_first_text`；
+- `tts_text_ready_to_request`、`tts_request_to_first_pcm`、`first_pcm_to_first_audio_frame`、`tts_request_to_first_audio_frame`：
+  - TTS 请求起点取 Router 的 `SPEECH REQUEST`，每种 TTS 插件都会经过；
+  - 首个 PCM 只有 HTTP PCM 提供方会记录，其他插件为 null，并注明原因；
+- 视觉：`frame_input_to_available`（JPEG 编码加发布）、`selected_frame_age`（选中帧到模型请求，给出逐帧值）、`vision_wait`（Turn cutoff 之后等帧的时间）；
+- 会话：`session_ready`；
+- Runner：`models.runners` 给出每个 Runner 的启动时长；`queue_wait_max`、`execution_max` 取自 Runner 进程自己的 `INFERENCE SUMMARY`。峰值队列深度现有观测没有，注明未观测。
+
+每项指标都有数值、单位、起止事件、样本数和测量边界，事件未观测到时值为 null。
+
+### 7. 关联证据
+
+- **复用的观测**：`input_trace` 与现有输出事件，外加 loop 和语音合成已有的日志事件。
+  - loop 的 `model.*`、`run.*` 是结构化的 `ConversationEvent`。
+  - 语音合成的 `SPEECH SEGMENT`/`SPEECH REQUEST`/`Speech first audio`、TTS 的 `TTS FIRST PCM`、Runner 的 `INFERENCE SUMMARY` 是 debug 格式串，按固定前缀匹配，参数按位置取。CI 断言了由此得到的分段，可防止措辞漂移。
+  - 采集只在诊断会话期间进行，范围限于 `alphaavatar` logger，结束后复原级别。
+- **生产代码的两处新增**：
+  - `InputTrace.identity(value)`：轨迹的加盐身份对外的唯一入口，`record()` 也改为调用它。这样 Doctor 可以找到自己已知的 Turn。
+  - Context 选帧时记录 `context.frame_selected`（含 `turn_id`、`observation_id`、perception `sequence`、`event_time_ns`），并在每轮记一条 `context.visual`（含 `frame_count`、`outcome`）。只在视觉作为输入时记录。
+  - 之前没有任何记录能说明"哪一帧进了哪一轮"，选帧结果只出现在 prompt 文本里。
+- **关联方法**：按身份关联，不按时间窗。
+  - 轨迹链：Turn → decision → candidate → segment。
+  - 选中帧按 perception sequence 对上 Doctor 自己发布的帧。
+  - 证据中给出缩短后的身份令牌（`turn`、`decision`、`candidate`、`segment`）。输出事件和日志带原始 Turn，经 `identity()` 换成同一个令牌。
+- **CI 实例**（替身）：
+  - 段 `53bd…` 依次出现在 `perception.speech_closed` 和 `stt.terminal`；
+  - candidate `9c91…` 的 commit decision 为 `c27d…`；
+  - `turn.committed` 记录 decision `c27d…`、turn `73fa…`；
+  - 帧 61/97/104 记为 `context.frame_selected`，turn 同为 `73fa…`；
+  - `model.started` 与 `output.text_chunk` 的 turn 也是 `73fa…`。
+- **边界**：证据最多 64 条，有界且经过报告输出边界。
+
+### 8. 生产代码改动
+
+- `avatar-core/.../log/trace.py`：`InputTrace.identity()`。
+- `avatar-plugins-context/.../manager.py`：选帧的两个轨迹阶段。
+- `host/application/config.py`：`HostConfig.doctor`。
+- `host/configs/template.py`：host 档案增加 `doctor.external_services: false`。
+- `host/cli/app.py`、`cli/commands/doctor.py`：移除 `--runtime`，单一入口，按需建事件循环。
+- 撤回第一版：
+  - 删除 `host/doctor/runtime.py`；
+  - `avatar-agents` 的 `RunnerProbe`、`probe()` 和 `cached_*` 文件查询函数，按 `6ff7334` 的内容逐字恢复；
+  - 插件的 `missing_*`、Runner 的 `probe()` 和校验函数，同样按 `6ff7334` 的内容逐字恢复。
+  - `git diff 6ff7334 -- avatar-agents avatar-plugins` 只剩 context 选帧一处。
+
+### 9. 测试
+
+新增 `avatar-host/tests/doctor/test_session.py`，3 个用例，约 23 s。替身在 `avatar-host/tests/doctor_doubles.py`：
+- 只替换外部服务和模型文件：VAD 与 Smart Turn 协议 Runner、按请求内容作答的流式 LLM、分段 STT、实时节奏 TTS、空 Memory 和空 Persona。
+- Router、Context、Loop、Engine、输出运行时和共享推理运行时都是生产代码。
+
+| 用例 | 保护的边界 |
+|---|---|
+| 配置链路跑固定样本、证据按身份关联 | 外部服务允许、下载未关闭的环境中，会话自行关闭下载，结束后复原，logger 级别复原；语音轮与选中帧进入同一个模型请求，帧逐一对上；证据链顺序与身份令牌一致；响应起点为最后有效采样所在帧（首帧在 −1000 ms）；同一时钟下分段之和等于 `first_text`（误差 0.01 ms 内）；vision wait 为 0；语音合成分段可观测；文本逐场景显示；真实工作区未建、临时目录无残留 |
+| 视觉或语音输出不可用时跑现有降级，两者分别报告 | 模型拒绝图片：原配置停在 `model.first_event`，降级 `voice` 通过且无帧；TTS 失败：原配置停在 `audio.first`，不触发视觉降级，降级 `text` 通过且没有音频帧；各轮都靠自身输出结束，没有因超时结束 |
+| 启动失败、超时与中断都报告并回收 | 首个 Runner 启动失败：其余 Runner 为未到达，`session.start` FAIL，报告不含私有信息；Runner 启动超时，限期 1 s；单轮超时；Ctrl+C（SIGINT 发给本进程）：退出码 130，两个场景为 interrupted；每种情况 `session.cleanup` 都为 PASS，且没有残留进程、socket 目录和临时目录（fixture 检查） |
+
+`tests/cli/test_doctor.py` 的调整：
+- 删除第一版的 3 个 runtime 用例和 `doctor_runner_samples.py`。
+- 辅助函数改为记录 `Diagnosis.report` 给出的报告。这些配置都没有授权，因此不启动任何东西，文本与 JSON 必须一致。
+- `--list --json` 增加 `in_session` 断言；`--runtime`、`--live` 均为用法错误。
+- 未授权路径：会话、Runner 和服务三项均为 SKIP，并写明开启方法；向量库会 embedding 时不启动 Runner。
+- provider 用例关闭 turn-taking，使其保持静态（它关心的是 provider 后端）。
+
+变异（H1–H13，脚本 `scratchpad/t10c/mutate.py`，每次运行后按 SHA-256 逐字恢复原文件）：
+
+| 变异 | 结果 |
+|---|---|
+| H1 诊断进程不关闭模型下载 | 测出：Runner 拒绝在可下载时启动 |
+| H2 离线变量不复原 | 测出 |
+| H3 临时工作区不删除 | 测出（fixture 报残留） |
+| H4 不记录选帧 | 测出 |
+| H5 轮次不等输出完成 | 首轮存活：TTS 替身在 0.1 s 收尾窗口内已结束。替身改为实时节奏后测出 |
+| H6 视觉降级在任何失败时都触发 | 测出 |
+| H7 中断目标不计为完成 | 测出（各轮限 10 s） |
+| H8 响应起点取首个音频帧 | 测出 |
+| H9 不接管 Ctrl+C | 测出（pytest 被 KeyboardInterrupt 中断） |
+| H10 日志级别不复原 | 测出 |
+| H11 未授权也运行会话 | 测出（沙箱中拒绝 AF_UNIX） |
+| H12 启动期限不生效 | 首轮存活：只测了单轮期限。新增卡住的 Runner 后测出 |
+| H13 轨迹身份与 `identity()` 不一致 | 测出 |
+
+### 10. 实验记录
+
+- **CI 替身下的音画联合场景**（数值来自替身，只用于验证口径，不代表性能）：
+  - 端到端：首字 705 ms，首音频帧 727 ms，文本完成 706 ms，音频末帧 958 ms，终态 958 ms。
+  - 分段：VAD 封段 600 ms（静音阈值 0.55 s 加上窗口），STT 终稿 650 ms，cutoff 651 ms，cutoff 到请求 2.9 ms，请求到首 token 50.5 ms。
+  - 选中 3 帧，相对语音结束的偏移约为 0、+499、+599 ms，到请求时的帧龄为 655、156、55 ms。vision wait 为 0。
+  - 音频 0.24 s，RTF 0.96。按无缓冲口径，断供 11 次：替身每帧比实时慢约 0.8 ms。
+- **模型拒绝图片时的降级**：
+  - 原配置 `voice_vision` 停在 `model.first_event`。
+  - 同一会话的 `text` 轮也带上了 cutoff 之后仍在 perception 中的屏幕帧，同样失败。这是生产行为。
+  - 降级 `voice` 通过，首字 705 ms。
+- **会话发现的真实配置缺口**：`voice.stt.model` 只在 `get_plugin` 时检查，`config check` 能通过，`start` 却会在会话装配时失败。Doctor 把它报为 `session.start` FAIL。记入 2A 日志 O-10。
+- **LanceDB Runner 在 `initialize` 时做 `embed_query("dimension-probe")`**：空 key 时报 `OpenAIError`，有 key 时就是一次付费 embedding。因此启用默认 memory、persona、MCP 时，Runner 启动也需要授权。记入 O-12。
+- **空缓存时的离线解析**：`resolve_url_file` 和 `resolve_hf_file` 会先创建命名空间目录和锁文件，然后才报缺失。只有授权或 Runner 可以本地启动时才会发生。记入 O-11。
+- **第一版（已撤回）在缓存副本上的单 Runner 实测**，仅作参考：
+  - Silero：启动 0.73 s，每次请求约 0.3 ms；
+  - Smart Turn：启动 2.28 s，每次请求约 31 ms，8 s 音频 RTF 0.004。
+
+### 11. 真实配置实测：未完成，原因与所需条件
+
+- **凭据**：`.env.dev` 中的 `OPENAI_API_KEY` 被 OpenAI 拒绝（401 invalid_api_key），本次没有产生任何计费。
+  - 我随后想逐个检查其他 env 文件里的 key 是否可用，被权限分类器以"凭据探查"拒绝。我没有绕过。
+  - 因此两个验收场景都没有用真实服务实测：
+    - 音画进入同一轮并按任务作答；
+    - 视觉不可用时试跑纯音频降级。
+- **固定语音样本**：本机没有本地 TTS 引擎。原计划用 OpenAI TTS 生成一次 `samples/card_question.wav` 和 `samples/sum_question.wav`（16 kHz 单声道），随代码提交。凭据无效，这一步也没有完成。
+  - 目前真实运行时，语音场景报 `conditions_unmet`（fixed sample unavailable），不会中断会话。
+  - CI 用合成的语音替代样本，不依赖这两个文件。
+- **补测需要的条件**：
+  - 一个可用的 OpenAI key（或用户指定的 `ENV_FILE`）；
+  - 允许用它生成两个样本，费用不到一美分；
+  - 一个视觉可用的验收配置，以及一个视觉不可用的配置（例如模型不接受图片）；
+  - 模型缓存（本机 `~/.cache/alphaavatar/models` 有 Silero、Smart Turn 和语义寻址模型，可复制后用 `application.cache_root` 指向副本，不改动原文件）。
+- 真实实测结果将与本节的 CI 结果分开记录。
+
+### 12. 运行结果
+
+- **测试**：
+  - 全量：304 passed，CI 方式（`--basetemp` 在 scratchpad），检出前后一致。28 条警告都是既有的 LanceDB `table_names()` 弃用提示（O-6）。
+  - `tests/doctor`：3 passed，约 23 s。
+- **静态检查**：`ruff check`、`ruff format --check`、`check_workspace`（16 个成员）、`uv lock --check` 均通过。
+- **pre-commit**：对本批改动和新增文件运行，通过。
+  - 曾用 `--all-files` 运行，它顺带修正了 4 个与本批无关的已提交文件（两个 `__init__.py` 文件末空行，两个 banner SVG 末尾换行）。已按 HEAD 内容逐字恢复。
+- **真实默认 bundle（未授权）**：静态检查与 T-10B 一致；会话、Runner、服务均为 SKIP 并写明开启方法；home 和 `/tmp` 都没有新增内容。
+
+### 13. 限制与未做
+
+- **未验证的部分**：客户端设备、RTC 服务器、客户端实际展示或播放的延迟。
+- **尚无覆盖**：
+  - 图片输入：没有传输把图片送进会话；
+  - 视觉输出：Character 帧不带 Turn；
+  - 摄像头寻址：样本走屏幕共享。
+- **TTS 首 PCM**：只有 HTTP PCM 提供方（OpenAI、Voice.ai）记录。
+- **观测本身的局限**：
+  - 语音合成与 TTS 的分段依赖 debug 文案前缀。CI 守住了 Router 一侧；`TTS FIRST PCM` 只有真实 TTS 才会触发，CI 没有覆盖。
+  - 播放回执是 sink 收到 COMPLETE 时立即给出的，sink 并不播放，因此不测播放端排队。
+- **不在本轮范围**：Runner 并行沿用已有专项测试；长时运行和压力测试归 `alphaavatar test`（0.6.9 第 11 项）。
+- **未提交**：等待 review。真实实测见第 11 节。
+
+---
+
+## T-10C `9993aad` review 修复
+
+- 基线：`9993aad`（用户已 push）。统一 CLI 入口、撤回 Runner 专用探针、复用 `create_execution` 三项已通过审查。本轮修复其余五项，只做离线和受控验证，T-10C 暂不验收。
+- 两个真实服务场景单列为待验收（第 10 节），等用户指定 `ENV_FILE` 和验收配置后再运行。
+
+### 1. 固定语音样本
+
+- **生成方式**：`scripts/doctor_samples.py make [--ffmpeg PATH]`。
+  - 用 FFmpeg 的 `lavfi flite`（kal 音色）。文本取自任务的 `prompt`，经临时 `textfile` 传入，避免过滤器转义。
+  - 参数：`-ar 16000 -ac 1 -c:a pcm_s16le -map_metadata -1 -fflags +bitexact -flags:a +bitexact`，不写元数据。同一 FFmpeg 和 flite 生成同一文件，全程不下载。
+  - 生成后自动执行 `check`。
+- **文本改为要求简短作答**（见第 2 节）：
+  - "What color is the card on my screen? Answer in one word."
+  - "What is two plus three? Answer with just the number."
+  - 独立审查此前按旧文本生成的两段（约 2.24 s、1.75 s）需要按新文本重新生成。
+- **打包**：Host 用 hatchling 的 `packages = ["alphaavatar"]`，`alphaavatar/host/doctor/samples/*.wav` 会自动进入 wheel，也没有被 `.gitignore` 排除，不需要改 `pyproject.toml`。
+- **读取校验**：`check` 通过 Doctor 自己的 `samples.speech()` 读回，校验 16 kHz 单声道 PCM16、时长和有声结尾。`--installed` 还要求读取位置在已安装环境的 site-packages，而不是源码树。
+- **CI**：
+  - `quality.yml` 的 build job 在 `uv build` 之后新增一步：新建空环境，按锁文件装 numpy，`--no-deps` 只装 Host wheel，再执行 `python -I scripts/doctor_samples.py check --installed`。
+  - 另有源码树测试 `tests/doctor/test_samples.py`。
+  - CI 的链路测试继续用替身语音。
+- **本机未能生成样本**：
+  - 本机没有 `ffmpeg`、`flite`、`espeak`。`~/.cache/ffmpeg-static-nodejs` 里缓存了一个静态 FFmpeg 6.0，但它的构建配置没有 `--enable-libflite`。解压出的副本已删除。
+  - 我从 conda-forge 下载了 `flite-2.3.0` 和 `libflite-2.3.0`（SHA-256 与索引一致），准备在 scratchpad 里运行，被权限分类器以"外部代码"拒绝。我没有绕过。
+  - 因此两段 WAV 目前还不存在：
+    - `test_samples.py` 现在失败。这是真实失败，没有 skip。
+    - 真实运行时，语音场景报 `conditions_unmet`（fixed sample unavailable）。
+- **wheel 链路的离线验证**（在 scratchpad 中）：
+  - 用当前树构建 Host wheel（`uv build --offline`），其中没有 WAV。把它装进只含该 wheel 和 numpy 的干净环境，`check --installed` 在 site-packages 下找不到 `card_question.wav`，按预期失败。
+  - 把 avatar-host 复制到 scratchpad，放入两段占位 WAV（正弦音，只用于验证打包，不是语音，不进仓库），再构建 wheel：
+    - wheel 中有 `alphaavatar/host/doctor/samples/card_question.wav` 和 `sum_question.wav`；
+    - 干净环境中 `check --installed` 从 site-packages 读取成功（2.50 s、2.10 s）。
+  - 干净环境所需的 numpy 2.2.6（锁文件版本）不在 uv 缓存中，是从 PyPI 下载装进 scratchpad 环境的。
+  - 真实样本生成后，需要在同样的干净环境里再验证一次（第 10 节）。
+
+### 2. 在实际模型请求边界证明音画同轮，并收紧判定
+
+- **请求边界的记录**（`avatar-plugins-loop` 的 `execution.py`，`_trace_request`）：
+  - Loop 每次构造 `ModelRequest` 并记录 `model.started` 之后，向本会话的 `input_trace` 写一条 `model.request`，字段为 `turn_id`、`run_id`、`request_id`、请求中本轮输入消息的 `input_id`，以及其中的帧数。
+  - 再为每一帧写一条 `model.request_frame`，字段为 `request_id` 和 `ModelImagePart.observation` 的 `observation_id`。
+  - 只看请求中 id 等于本轮 `input_id` 的那条消息。
+  - `InputTrace` 字段白名单增加 `run_id`、`request_id`，仍按会话加盐散列。
+- **Doctor 的判定**（`measure.py`）新增两个阶段：
+  - `request.input`：Turn 的首个模型请求所带的输入（`input_id` 令牌）等于 `turn.committed` 的输入。本轮语音转录沿 segment → candidate → decision → Turn 这条链进入该输入。
+  - `request.frames`（音画场景）：请求所带的帧中，至少有一帧是 Doctor 发布的样本帧。观测 id 按同一加盐身份比对。
+  - 两者缺一，音画场景就不能通过。
+- **报告**：
+  - `request` 摘要：`turn`、`run`、`request` 令牌，`carries_turn_input`、`frames`、`sample_frames`，以及本轮请求数 `requests`。
+  - `frames` 区分 Context 选中的帧（`selected`）、实际进入请求的帧（`requested`）和 Doctor 发布的帧（`published`）。
+- **证据**：
+  - trace 记录带 `input`、`run`、`request`、`observation` 令牌。
+  - loop 日志 `model.started` 中的 `run`、`request`，以及输出事件的 `run`，都用同一个 `identity()` 换成令牌，可以和 trace 直接对上。
+  - 证据仍有界（64 条）。截断时优先保留链路的起点、转折和终态：`input.voiced_end`、`stt.terminal`、`turn.committed`、`model.request`、`run.finished`、`output.control`、末帧等。
+- **答案判定**（`samples.py`）：
+  - 整段答案去掉首尾空白和标点（问号保留），转小写后，必须精确等于期望答案之一。card 为 `green`、`绿`、`绿色`；sum 为 `5`、`five`、`五`。
+  - 转录仍按词组校验，但改为按词匹配，`12` 不再算作 `2`。
+- **逐输出终态**：同一 run 的每个输出按 `output_id` 单独判定。
+  - 终态分为：
+    - `completed`：COMPLETE 早于任何以它为目标的 INTERRUPT；
+    - `failed`：中断原因以 `_failed` 结尾，例如 `speech_synthesis_failed`；
+    - `interrupted`：其他中断原因；
+    - `timed_out` 或 `interrupted`：本轮超时或被停止，由 Doctor 以 `doctor_turn_ended` 收尾；
+    - `not_ended`。
+  - 每个输出附原因和时间。
+  - 新增阶段 `outputs.complete`：全部输出都是 `completed` 才通过。`run.completed` 对应 loop 的运行状态。
+  - `text_complete`、`audio_last_frame`、`response_final` 只在全部输出正常完成后记录，否则为空、样本数为 0，并注明原因。`response_final` 取最后一个输出完成的时刻，不会早于任何输出的末帧。
+
+### 3. 授权、工作区和资源回收限定在本次诊断内
+
+- **同一快照**：
+  - `Diagnosis.run()` 不再重读配置文件和环境。
+  - `session.isolate()` 从已校验快照的 `payload` 派生诊断快照（`derive()`：按点路径改值，再 `validate_application`），只改 Doctor 自己的存储位置。授权判定和启动都用这一份快照。
+  - 诊断进程收到的是这份快照的 payload，用 `restore_application` 还原。
+- **自定义插件**：
+  - Doctor 列出本版本自带的插件名和 provider 后端（`_BUILT_IN`）。其余一律记为 `custom <能力> '<名称>'`，外部访问未知，需要授权。
+  - 不属于 `alphaavatar.plugins.*` 的 Runner 也计入"启动时会访问的服务"，未授权时不会单独启动。
+- **外部服务分四种状态**：
+  - `services.external` 改为结构化的 `services`，字段为 `name`、`authorized`、`reached`、`passed`、`note`。文本逐行写明 configured、authorized、reached、passed，或无法判断的原因。
+  - reached：该服务应答了会话的某个阶段（模型的首个流事件、STT 终稿、TTS 首帧）。
+  - passed：该阶段完成，且没有场景停在这里。
+- **诊断进程**（新增 `process.py`）：
+  - **启动**：用 `spawn` 启动，进程内调用 `os.setsid()` 自成进程组。离线变量在该进程内设置；`TMPDIR` 指向 Doctor 临时目录下的 `tmp/`；推理端点的环境变量和日志采集（`LogTimings`）都只在该进程内。
+  - **停止**：父进程只持有一根管道，关闭写端就是请求停止；父进程意外退出时，这根管道同样会关闭。终端的 Ctrl+C 只到达父进程，因为诊断进程不在前台进程组里。
+  - **结果**：以 pickle 写入 Doctor 的临时目录，父进程在诊断进程退出后读取。
+  - **期限与强制回收**：
+    - 父进程的期限是整轮预算加 `CLOSE_SECONDS`（60 s）。到期或收到停止时关闭管道，再等 `CLOSE_SECONDS`。
+    - 仍未退出就用 `killpg` 结束整个进程组，包括 Runner。
+    - 退出后再检查一次进程组，有残留同样结束，并写入 `session.cleanup`。
+  - **直接取消 `Diagnosis.run()`**：同样关闭管道，等待收尾（不受再次取消打断，有上限），回收之后再抛出 `CancelledError`。取消时没有报告可以返回；Ctrl+C（停止事件）会保留已经取得的结果。
+  - **没有留下报告**：会话类检查记为 FAIL 并写明退出码；回收问题单独写入 `session.cleanup`。
+- **按会话和本次输入关联**（`_find_turn`）：
+  - 语音轮：在本会话的 `input.committed` 中，取 `turn.committed` 感知事件区间 `(start_cutoff_sequence, cutoff_sequence]` 包含本次语音"最后有声帧"事件序号的那一个。
+  - 文字轮：取本会话中文本相同、cutoff 晚于本轮开始的那一个。
+  - 日志再按 `session_id` 过滤，输出按 Turn 和 run 过滤。
+  - 不再取"标记之后的第一个 `input.committed`"。
+- **存储隔离**：
+  - 默认 memory、persona、MCP 的 LanceDB 如果显式指定了 `client_path`，改绑到临时工作区内的默认位置。
+  - Qdrant 等远程存储无法隔离，`session.start` 跳过并写明 "not isolable"。这与 `external_services` 无关：外部调用和写真实 Avatar 数据是两条边界。
+- **预算**：`_bounded` 的行为改为：
+  - 已请求停止或预算已用尽时，不再启动下一项（返回 `interrupted` 或 `budget`）；
+  - 终态在等待结束时确定，任务之后才返回也不改变；
+  - 迟到的结果交给调用方关闭，例如超时之后才装配好的 execution 会立即 `aclose`。
+  - Runner 启动（含模型缓存检查）、会话装配与就绪、每一轮都在整轮预算之内。预算用尽时 Runner 记为"未启动"，不算作 Runner 失败。
+- **单轮回收**：轮次超时、被停止或会话失败时：
+  - 立即取消样本播放。时间线是预先传入的，取消后已发送的部分仍然保留。
+  - 以 `doctor_turn_ended` 中断该轮的全部输出，并关闭本会话。
+  - 剩余场景在新会话中运行，不受前一轮影响。
+
+### 4. 真正的视觉不可用降级
+
+- **触发条件按原因判定**：
+  - 模型拒绝图片：`run.finished` 的 `error_type` 为 `ModelCapabilityError`；
+  - 只有视觉需要的 Runner 启动失败：用原计划的 Runner 集合减去"无摄像头配置"的 Runner 集合，失败的 Runner 落在差集里。
+- **无摄像头配置**（`vision_off()`）：
+  - `vision.enabled=false`，默认 persona 的 `face.enabled=false`，默认 router 的 `addressing.visual.enabled=false`。
+  - 按这份配置重新规划并启动 Runner。
+  - 原配置根本没跑起来时，降级会话同时运行 `voice` 和 `text`。
+- **各配置分开运行**：每个尝试的配置各自启动 Runner 和会话，再各自关闭。`models.runners` 展示原配置的结果，降级配置的 Runner 带 `configuration` 字段另行列出。
+- **其他原因不降级**：凭据错误等（如 `ModelRequestError`）按原因报告。
+- **语音输出降级**：没有音频，或某个输出的音频在首帧之后失败（`speech_synthesis_failed`），都会试跑文本降级。
+
+### 5. 指标与交付
+
+- **模型分段拆为三项**：
+  - `model_first_event`：首个流事件；
+  - `model_first_text_delta`：首个非空文本增量，来自 loop 的 `model.first_text`，没有观测到就为空；
+  - `first_displayable_text`：首段非空文本到达输出边界。
+  - 原来的 `model_first_token`（实际是首事件）删除。
+- **新增 `context_ready_wait`**：取自 Context manager 自己的 readiness 日志。
+- **帧与 cutoff**：
+  - 原 `vision_wait`（实际是帧到达与 commit 之差）改名为 `last_selected_frame_to_cutoff`，正值表示该帧在 cutoff 之前到达。
+  - `vision_wait` 只在观测到等待时填写。目前生产链路里没有"等待帧"的环节，因此它为空，样本数为 0。
+- **样本数**：缺失的指标，样本数统一为 0。
+- **部分覆盖**：原配置有场景通过，但有已启用的场景没能运行（例如语音缺 TTS，或 Character 视觉输出无覆盖）时，`session.scenarios` 为 WARN，摘要以 "Partial coverage" 开头。
+- **CLI**：仍然只有 `alphaavatar doctor [配置]`、`--list`、`--json`。失败场景另外显示 `cause`（细节中已出现时不重复）。
+- **表格输出**（用户在本轮中途提出）：文本输出改为表格，JSON 不变。
+  - 检查表：STATUS / CHECK / SUMMARY，按原分组加组标题行；通过的检查占一行，其余在下方续行写细节和下一步。`--list` 同样是表格（CHECK / NEEDS / TITLE）。
+  - 运行过会话后，依次给出：
+    - Runner 表：STATUS / RUNNER / CONFIGURATION / STARTUP / SUMMARY，原配置与降级配置分行；
+    - 外部服务表：SERVICE / AUTHORIZED / REACHED / PASSED / NOTE。服务已在表中的，检查表不再重复这些行；
+    - 场景表：OUTCOME / SCENARIO / CONFIGURATION / SUMMARY，失败场景在下方续行写阻塞原因；
+    - 指标表：每个实测场景一列，未观测为 `-`，10 ms 以下保留一位小数。原先失败场景下的 "end to end / segments" 两行由该表取代。
+  - 实现是命令模块内的私有 `_table()`：列宽取各列最宽的单元格，最后一列不限宽，颜色只在补齐宽度之后加上；没有引入通用表格框架或新依赖。
+  - 分隔线用 ASCII `-`。
+- **文档**：`docs/cli/doctor.md` 的相应各节已重写，示例输出改为本轮 CI 替身的真实输出。
+
+### 6. 代码改动
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-core/alphaavatar/core/log/trace.py` | `InputTrace` 字段白名单增加 `run_id`、`request_id`，按身份散列 |
+| `avatar-plugins-loop/.../execution.py` | `_trace_request`：在模型请求边界记录 `model.request` 和 `model.request_frame` |
+| `host/doctor/process.py`（新增） | 诊断进程：启动、停止管道、期限、`killpg` 回收、临时目录（同时是诊断进程的 `TMPDIR`）、报告传回 |
+| `host/doctor/session.py` | 快照派生（`derive`、`isolate`、`vision_off`），存储隔离判定，各配置独立的 Runner 与会话，预算与终态，按截断范围找轮次，单轮回收，按原因降级，外部服务四态，部分覆盖 |
+| `host/doctor/measure.py` | 请求边界阶段、逐输出终态、完成类指标条件、指标改名与新增、帧的三种标记、证据令牌与有界截断 |
+| `host/doctor/samples.py` | 新提问文本，整段精确判定，按词校验转录 |
+| `host/doctor/transport.py` | 输出记录带 `run_id`、控制原因；播放时间线由调用方传入；采集 Context readiness 日志 |
+| `host/doctor/doctor.py` | `_external` 返回名称和类别并识别自定义插件；`run()` 经诊断进程；`_report` 一并处理 `cause` 和 `services` |
+| `host/doctor/schemas/` | `ScenarioResult` 增加 `cause`、`reached`、`request`、`outputs`；`RunnerResult.configuration`；新增 `ServiceResult`；`Check.services` |
+| `host/cli/commands/doctor.py` | 文本改为表格（检查、`--list`、Runner、外部服务、场景、指标）；失败场景显示 `cause` |
+| `conftest.py`（根目录） | `pytest_configure` 中 `asyncio.set_event_loop(None)`，见第 9 节 |
+| `scripts/doctor_samples.py`（新增） | 样本生成与读取校验 |
+| `.github/workflows/quality.yml` | build job 新增"只装 Host wheel 读取样本"一步 |
+| `docs/cli/doctor.md` | 诊断进程、快照与存储、授权、场景与判定、降级、指标、证据、期限各节重写；示例输出 |
+
+### 7. 测试与反例验证
+
+- **测试结构**：链路测试改为真正经过诊断进程。
+  - `doctor_doubles.child` 取代诊断进程的入口：先在该进程内装上与测试进程相同的禁网守卫（只允许绝对路径的 AF_UNIX；任何尝试都写入文件，即使调用方吞掉了异常），再装替身，最后调用真实入口。
+  - 替身的说明通过环境变量 `DOCTOR_DOUBLES`（JSON）传入，替身所见写入测试目录。
+  - 每次运行都断言：父进程环境前后完全一致，禁网记录为空。
+- **`tests/doctor/test_session.py`**（7 项）：
+  - **主链路**：
+    - 父进程允许下载时，诊断进程和 Runner 仍然离线（替身 Smart Turn 只在离线时才能启动）；父进程里不出现离线变量和推理端点，日志级别不变。
+    - 请求带本轮输入，样本帧数等于替身实际收到的图片数；三种帧标记；逐输出全部 `completed`。
+    - 证据令牌：`turn.committed` 的 input、`model.request` 的 input/run/request、日志 `model.started` 的 run/request、输出的 run 一一对上。
+    - 分段加和等于端到端；首事件与首文本增量相差约 50 ms（替身先发一个空增量）；`vision_wait` 与视觉输出帧为空、样本数 0。
+    - 服务四态；文本输出。
+    - **快照**：`prepare()` 之后把配置文件改成关闭视觉，运行结果仍是原快照的 `voice_vision`。
+  - **降级**（4 种原因）：
+    - 模型拒绝图片 → 原配置停在 `model.first_event`、`cause=ModelCapabilityError`，但请求已带样本帧；降级 `voice` 通过，请求不带图片；模型服务记为 reached、未通过。
+    - 只有视觉需要的 Runner 缺模型 → 原配置在 `runners` 阻塞；降级配置的 Runner 计划里没有它，`voice` 和 `text` 都通过。
+    - 两个输出，第二个的 TTS 在首帧后失败 → `[completed, failed(speech_synthesis_failed)]`，停在 `outputs.complete`，完成类指标为空、样本数 0；不触发视觉降级；文本降级通过；TTS 服务 reached、未通过。
+    - 凭据被拒（`ModelRequestError`）→ 按原因报告，不尝试任何降级。
+  - **答案判定**：精确匹配与反例清单，另跑一次纯文本会话，答案 "15." 判为失败。
+  - **失败、超时与预算**：Runner 启动失败；启动卡住 1 s 超时；轮次在播报中途超时（输出 `timed_out`，下一场景用新会话，Turn 不同）；预算为 0 时什么都不启动，并写明原因。
+  - **`_bounded` 单元**：超时后迟到返回仍为 `timeout`，被停止后迟到返回仍为 `interrupted`，停止或预算用尽后不再启动。
+  - **Ctrl+C 与直接取消**：退出码 130，两个场景都是 `interrupted`，进程组消失；取消 `Diagnosis.run()` 抛出 `CancelledError`，进程组消失，父进程环境不变，临时根目录为空。
+  - **不响应停止的诊断进程**（替身让它忽略停止和预算，并卡在 Runner 启动里）：约 4 s 后整组被结束；`session.cleanup` 为 FAIL 并写明被结束；卡住的 Runner 进程已不存在；`/tmp` 下没有新的推理 socket 目录残留。
+- **`tests/doctor/test_measure.py`**（3 项，直接构造一轮的记录）：
+  - 评审复现：一个输出完成，另一个在首个音频帧之后被中断，且中断晚于前者完成 → FAILED，停在 `outputs.complete`，`response_final` 和 `audio_last_frame` 为空；两个都完成 → `response_final` ≥ 末帧；从未结束 → `timed_out`。
+  - 请求所带 input 不是本轮的 → 停在 `request.input`；100 条无关步骤时，证据截断仍保留关键终态。
+  - Context 选中两帧、请求只带一帧时，两种标记分开。
+- **`tests/doctor/test_isolation.py`**（4 项，纯判定）：
+  - 显式 LanceDB 路径改绑进工作区，除存储位置外快照不变；Qdrant 即使已授权也阻塞。
+  - 自定义插件需要授权；自定义 Runner 不会在未授权时单独启动。
+  - 关闭视觉时恰好去掉人脸分析 Runner。
+  - 按截断范围和会话找轮次（语音轮与文字轮）。
+- **`tests/doctor/test_samples.py`**（1 项）：源码树中两段样本可被 Doctor 读取。**当前失败**，原因见第 1 节。
+- **`tests/cli/test_doctor.py`**：
+  - 适配结构化的 `services`；新增断言：远程存储标为 not isolable，所有服务都是"未授权、未到达"。
+  - 文本断言改为表格：表头、组标题、检查行（列宽对齐）、非通过项的细节、服务表行、场景表行（含配置列），以及 `--list` 表。
+  - 主链路测试另外断言指标表：表头为各实测场景，未观测为 `-`。
+
+### 8. 变异
+
+脚本 `scratchpad/t10c/mutate2.py`，每次运行后按 SHA-256 逐字恢复原文件，结束后再整体比对一次校验和，一致。
+
+| 变异 | 结果 |
+|---|---|
+| M1 Loop 不记录请求所带帧 | 测出 |
+| M2 不核对请求所带输入 | 测出 |
+| M3 任一输出完成即算完成 | 测出 |
+| M4 失败与中断不区分 | 测出 |
+| M5 超时记成中断 | 测出 |
+| M6 答案按子串判定 | 测出 |
+| M7 轮次不按截断范围关联 | 测出 |
+| M8 超时后迟到的结果记为完成 | 测出 |
+| M9 预算用尽仍启动 | 测出 |
+| M10 停止后仍启动下一项 | 测出 |
+| M11 诊断进程不另立进程组 | 测出（卡住的 Runner 成了孤儿进程，没有被回收） |
+| M12 诊断进程的临时目录不放进 Doctor 目录 | 测出（`/tmp` 残留推理 socket 目录） |
+| M13 超时时只结束诊断进程本身 | 存活：随后的进程组复查会把残留的 Runner 一并结束，结果相同。这是两道等价的回收，记为等价变异 |
+| M14 父进程设置离线变量 | 测出（父进程环境变化） |
+| M15 诊断进程不关闭下载 | 测出 |
+| M16 启动前重读配置 | 测出（快照测试） |
+| M17 不改绑显式 LanceDB 路径 | 测出 |
+| M18 远程存储不阻塞 | 测出 |
+| M19 自定义插件不计入外部访问 | 测出 |
+| M20 自定义 Runner 不计入 | 测出 |
+| M21 关闭视觉时不关人脸分析 | 测出 |
+| M22 视觉降级不看原因 | 测出（TTS 失败时误触发） |
+| M23 视觉专属 Runner 判断失效 | 测出 |
+| M24 降级沿用原配置 | 测出 |
+| M25 首帧后失败不降级到文本 | 测出 |
+| M26 缺失指标的样本数为 1 | 测出 |
+| M27 首文本增量取自首事件 | 测出 |
+| M28 未全部完成仍记录末帧 | 测出 |
+| M29 证据截断丢掉终态 | 测出 |
+| M30 请求帧与选中帧不区分 | 测出 |
+
+### 9. 运行结果
+
+- **全量测试**（CI 方式：`--basetemp` 在 scratchpad，`PYTHONDONTWRITEBYTECODE=1`）：316 项，315 passed，1 failed，用时 112.7 s，检出前后一致。
+  - 唯一失败是 `test_samples.py`：样本尚未生成（第 1 节）。
+  - 28 条警告都是既有的 LanceDB `table_names()` 弃用提示（O-6）。
+  - `tests/doctor` 共 15 项，其中 `test_session.py` 7 项约 72 s；`tests/cli/test_doctor.py` 5 项通过。
+- **事件循环泄漏（O-13，既有问题）**：
+  - 修复前，全量运行 2 次都以 exit 1 结束。会话结束时报 `unclosed event loop` 和两个 AF_UNIX socket，所有测试都是通过的；拆成两半分别运行时不出现。
+  - 我用临时 pytest 插件记录每个事件循环的创建栈，定位到 pytest-asyncio 在首个异步测试（`avatar-core/tests/test_lifecycle.py`）前调用 `asyncio.get_event_loop()` 时新建的那个循环。
+  - 用 `git archive` 导出 `9993aad`，以其代码和测试复现了同样的 exit 1，确认不是本轮引入的。
+  - 根 `conftest.py` 修复后，最小复现和全量运行都不再出现。
+- **静态检查**：以下各项均通过：
+  - `ruff check`、`ruff format --check`（712 个文件）；
+  - `check_workspace`（16 个成员）、`uv lock --check`；
+  - pre-commit（本批改动的文件）；
+  - workflow YAML 可以解析。
+- **CI 替身下的运行**（数值来自替身，只用于验证口径）：
+  - 主链路：`voice_vision` 首字 707 ms、首音频帧 729 ms、完成 961 ms；`text` 首字 53 ms、完成 301 ms。
+  - 模型拒绝图片（文档示例）：原配置 `voice_vision` 停在 `model.first_event`，原因为 `ModelCapabilityError`；降级 `voice` 首字 725 ms，完成 1001 ms。
+  - 真实默认 bundle（未授权）的输出与上一轮一致，只是改为表格。
+
+### 10. 待验收与未实测
+
+- **待验收（等用户指定 `ENV_FILE` 和验收配置后运行）**：
+  - 音画同轮：真实 VAD/STT/LLM/TTS 下，`request.input`、`request.frames` 通过，答案为 `green`，并给出各项指标和分段证据；
+  - 视觉不可用时降级为纯音频：原配置的阻塞阶段和降级结果分别报告。可以用不接受图片的模型，也可以用缺少人脸模型缓存的默认 persona。
+- **先决条件**：用户本机用带 libflite 的 FFmpeg 运行 `uv run python scripts/doctor_samples.py make` 生成两段样本，或允许我在本机运行 conda-forge 的 flite。之后用 `check` 和干净环境中的 `check --installed` 各复验一次，`test_samples.py` 应转为通过。
+- **未实测**：
+  - 真实 TTS 的 `TTS FIRST PCM` 分段；
+  - 真实 STT 对 flite 语音的转录质量；
+  - 远程向量存储（按设计跳过）；
+  - 自定义插件对临时工作区之外的写入（Doctor 无法隔离，只标为未验证）；
+  - 路径过长时，`private_socket_path` 会退回 `/tmp`，此时诊断进程被强制结束后，socket 目录不在 Doctor 目录内。
+
+### 11. 限制
+
+- **直接取消**：直接取消诊断协程时，按 asyncio 惯例抛出 `CancelledError`，已取得的结果不会返回；需要保留结果时用停止事件（Ctrl+C 走的就是这条路径）。
+- **库调用**：诊断进程用 `spawn` 启动，与推理 Runner 相同。在脚本中调用 `diagnose()` 需要 `if __name__ == "__main__":` 保护。
+- **用时**：链路测试改走真实诊断进程后，`tests/doctor` 从约 23 s 增加到约 70 s。全量用时见第 9 节，仍在 CI 的 5 分钟内。
+- **不在本轮范围**：Runner 并行沿用已有的专项测试；长时运行和压力测试归 `alphaavatar test`（第 11 项）。
+- **未提交**：等待 review。
+
+---
+
+## T-10C `bf79300` 收尾
+
+- 基线：`bf79300`（用户已提交上一轮的 review 修复和表格输出）。保持不变的部分：表格输出；唯一入口 `alphaavatar doctor [配置]`；`--list` 列出检查项、`--json` 输出同一份报告；`--live`、`--runtime` 仍然移除。
+- 用户已在本机运行 `ENV_FILE=.env.dev alphaavatar doctor my-avatar`：9 项静态检查通过。该 bundle 未授权外部服务、视觉未启用，因此只验证了静态检查和默认授权行为。两个真实服务场景仍待验收（第 6 节）。
+- 本轮只做离线和受控验证。
+
+### 1. 样本存放
+
+- **Doctor 安装后直接使用的小样本**：
+  - 来源：用户提供的 `AlphaAvatar-Doctor-samples-bf79300.zip`。提取前校验了成员：只有两段 WAV，路径正是 `avatar-host/alphaavatar/host/doctor/samples/`，然后只提取这两个文件到仓库。
+
+    | 文件 | SHA-256 | 时长 | 有声结尾 |
+    |---|---|---|---|
+    | `card_question.wav` | `04763dd6b7f5a1b61d91b752c7865fc41182b1d73b3519ac7862976c53374e98` | 3.65 s | 3.52 s |
+    | `sum_question.wav` | `93ac159096acaf89eed0220b1d42b9c4c89f11f6916053266949910268d2d18f` | 3.26 s | 3.14 s |
+
+    两段都是 16 kHz 单声道 PCM16，内容与当前提示词一致。
+  - 读取：由 `importlib.resources` 读取，随 Host wheel 发布。`scripts/doctor_samples.py` 保留，作为可复现的生成入口。
+  - 源码树：`python -I scripts/doctor_samples.py check` 通过，`tests/doctor/test_samples.py` 由上一轮的失败转为通过。
+  - 干净 wheel 安装验证（scratchpad 中）：
+    - `uv build --offline --wheel --package alpha-avatar-host` 构建的 wheel 含两段 WAV，SHA-256 与仓库中的文件一致；
+    - 新建环境中只装该 wheel（`--no-deps`）和 NumPy 2.2.6（锁文件版本），`check --installed` 从该环境的 site-packages 读出两段样本，通过。
+- **仅供测试的小样本**：约定放在使用它的包自己的 `tests/fixtures/` 下。仓库中目前没有这类文件，测试用的语音和画面都在代码里生成，因此没有需要搬迁的。本轮的大样本清单是测试专用文件，放在 `avatar-host/tests/fixtures/large_samples.json`。
+- **大样本**（独立的 Hugging Face Dataset）：
+  - **实际状态（2026-11-04 查询，未带 token）**：`/api/datasets?author=AlphaAvatar` 返回空列表（该组织下有多个公开模型，但没有 dataset）；`/api/datasets/AlphaAvatar/diagnostics-fixtures` 返回 401，即不存在或不公开。
+  - **结论**：尚未发布。清单中 repo ID 仍为此前建议的 `AlphaAvatar/diagnostics-fixtures`；`revision`、`license`，以及每个样本的 `sha256`、`bytes` 均为 `null`；`published: false`。
+  - **拟用清单**：
+
+    | 名称 | 路径 | 用途 |
+    |---|---|---|
+    | `long_session` | `speech/long_session_16k.wav` | 30 分钟语音与停顿：VAD、STT、轮次的长时稳定性 |
+    | `multi_speaker` | `speech/multi_speaker_16k.wav` | 两人轮流和重叠说话：轮次与说话人归属 |
+    | `noisy_room` | `speech/noisy_room_16k.wav` | 室内和街道噪声下的语音：VAD 与 STT 的鲁棒性 |
+    | `barge_in` | `speech/barge_in_16k.wav` | 回答中途用户插话：打断与输出中断 |
+    | `face_toward_away` | `video/face_toward_away_640x360.mp4` | 人脸转向和背离摄像头：视觉寻址与人脸分析 |
+
+  - **测试入口**：
+    - 测试用 `@pytest.mark.large_samples("名称", ...)` 声明所需样本，通过 `large_sample("名称")` 夹具拿到本地文件。
+    - 默认 `addopts` 带 `-m "not large_samples"`，普通运行、离线 CI 和 wheel 校验都不会选中这类测试；用 `pytest -m large_samples` 选中。
+    - 会话级夹具在各测试的禁网与环境守卫生效之前，按清单拉取所选测试需要的全部样本：`hf_hub_download`，固定到清单中的 commit，以 `local_dir` 缓存到 `~/.cache/alphaavatar/test-samples/<repo>/<revision>/`。
+    - 缓存中的文件 SHA-256 有效时直接复用，完全不联网。否则下载并校验。
+    - 下载失败时报告样本名、文件、`repo@revision` 和错误类型；校验不符时报告样本名、文件、期望值与实际值前缀，并删除不符的文件。
+    - 后续接入 `alphaavatar test`。
+  - **实际拉取状态**：未发布，所以没有拉取过。现在选中这类测试，会逐个报 "`<名称>`: AlphaAvatar/diagnostics-fixtures is not published with a pinned revision and SHA-256"。发布后需要填入 commit、license、各文件的 SHA-256 和大小。
+  - **离线机制测试**（`avatar-host/tests/test_large_samples.py`，2 项）：
+    - 清单结构，以及未发布时逐个样本报告的内容；
+    - 按固定 commit 下载；有效缓存不再下载（下载函数被调用就失败）；损坏的缓存重新下载；下载内容不符时报出并删除；下载失败报出原因；清单之外的名称报出。
+
+### 2. review 问题
+
+#### 2.1 场景终态优先
+
+- **问题**：`ended` 为 `timeout`、`interrupted` 或 `session_failed` 时，如果输出在收尾窗口内完整到达，场景仍返回 PASS。
+- **修复**：
+  - `ended` 非空时，场景不再可能 PASS：`interrupted` 记为 INTERRUPTED，其余记为 FAILED。
+  - 没有更早的阻塞阶段时，阻塞阶段为 `turn.timeout`、`turn.interrupted` 或 `turn.session_failed`。
+  - 迟到的输出及其终态（例如 `completed`）仍保留在 `outputs` 和证据中。
+  - `text_complete`、`audio_last_frame`、`response_final` 只在场景正常完成时填写，否则为空、样本数 0，注明 "not recorded: the turn ended by …"。
+- **反例**（`test_measure.py`）：三种结束方式下输出全部在之后完成，结果分别为 FAILED / FAILED / INTERRUPTED，阻塞阶段为 `turn.<结束方式>`，三项完成耗时为空，`outputs` 仍为 `completed`，证据中有 `output.control`。
+
+#### 2.2 实际请求同时携带语音内容和样本帧
+
+- **Loop**（`_trace_request`）：对本轮 TurnSnapshot 的每个 `input_observation_ids`，在同一个 `ModelRequest` 的本轮消息中查找，并记一条 `model.request_input`（`request_id`、`observation_id`，`outcome` 为 `carried` 或 `missing`）。判断方式：
+  - 该配置使用音频输入时，看是否有对应 observation 的 `ModelAudioPart`；
+  - 否则看该 observation 的文本（转录或输入文字）是否出现在请求文本中。比较前反转义 XML/HTML 实体，并合并空白。
+- **Doctor** 新增阶段 `request.content`：
+  - 语音任务：Turn 的首个请求必须 carried 该样本的 STT 终稿 observation（`stt.terminal outcome=final_text` 的 `observation_id`）。
+  - 文字任务：必须 carried 输入的文字。
+  - 关联链：segment → candidate → decision → Turn（`turn_id`）→ `model.request`（`run_id`、`request_id`、`input_id`）→ `model.request_input` 与 `model.request_frame`（样本 observation ID）。
+  - 报告只保留脱敏令牌和校验结果：`request.carries_turn_input`、`carries_turn_content`、`frames`、`sample_frames`。
+- **反例**（`test_session.py`）：替身让 Context 渲染本轮时去掉语音（`_speech_xml` 返回空），其余不变：
+  - 请求仍带本轮 `input_id`，也带样本帧，但不带转录；
+  - 音画场景停在 `request.content`，细节为 "The model request does not carry this Turn's transcript"；
+  - 不触发降级。
+- 主链路测试中，语音轮和文字轮的 `request.content` 都通过。
+
+#### 2.3 视觉不可用降级
+
+- **Runner 设置**：`vision_off()` 先按关闭视觉后的配置（不带任何方法设置）规划 Runner，再只保留仍在计划中的 `runtime.inference.methods`。否则 `check_inference_config` 会以 `unselected_runner` 拒绝该配置。原配置不变，其阻塞结果照常保留。
+  - 反例（`test_isolation.py`）：原配置为人脸分析 Runner 和另一个 Runner 都设置了 workers；关闭视觉后只剩后者的设置，原配置的两项都在。
+- **图像能力拒绝的分类**：
+  - `ModelCapabilityError` 增加可选的 `code`，与 `ModelRequestError.code` 对应。
+  - OpenAI Responses 适配器在本地拒绝图像时标 `code="image_input"`：图像无媒体载荷、没有可编码的表示、本地路径 URL、内联图像超过 `max_inline_bytes`。
+  - Loop 的 `run.finished` 增加 `error_code`，取模型错误的 `code`；同时把 `error_code` 加入 conversation 事件字段白名单。不加的话，带 code 的 `run.finished` 会被 `log_event` 静默丢弃。实测中这会表现为场景没有原因，最终以超时结束；变异 N9 确认了这一点。
+  - Doctor 的 `cause` 带上 provider 的代码，例如 `ModelCapabilityError: image_input`、`ModelRequestError: http_401`。
+  - 只有 `ModelCapabilityError: image_input` 才触发视觉降级。OpenAI 适配器把 HTTP 错误统一归为 `ModelRequestError(code="http_<状态码>")`，从中看不出与视觉有关，因此 HTTP 400、401 和其他服务故障都按原分类报告，不降级。
+- **用实际 provider 适配器验证**（`test_session.py`）：
+  - 测试进程在 loopback 上起一个 HTTP 替身，诊断进程的禁网守卫只额外放行这一个端口。loop 使用真实的 `openai` backend（Responses 适配器和 OpenAI SDK），`base_url` 指向该替身。
+  - `max_inline_bytes=1024`：适配器在发出请求前拒绝样本帧，原配置 `cause=ModelCapabilityError: image_input`，并触发 "degraded: vision off"。纯音频请求真正发出后被替身以 401 拒绝，降级结果为 `ModelRequestError: http_401`，停在 `model.first_event`。
+  - 默认设置下替身返回 400：原配置为 `ModelRequestError: http_400`，没有降级。
+  - 用 ScriptedLLM 补充两个反例：凭据错误（`ModelRequestError: invalid_api_key`），以及与图像无关的 `ModelCapabilityError`（没有 code）。两者都只有原配置结果，不降级。
+
+#### 2.4 诊断进程隔离与零 Runner
+
+- **诊断子进程不继承 Host 的端点**：子进程入口清除 `ALPHAAVATAR_INFERENCE_ENDPOINT`、`ALPHAAVATAR_INFERENCE_PLAN`、`ALPHAAVATAR_LOG_ENDPOINT`，沿用各自已有的常量。
+- **stdout 只属于报告**：子进程启动后先执行 `dup2(2, 1)`，子进程及其 Runner 打印的内容都进 stderr。父进程的 stdout 只有 `--json` 报告。
+- **验证**（`test_session.py`，用 `capfd` 在文件描述符层面捕获）：
+  - 父进程设置了三个 Host 变量，log endpoint 指向测试进程自己绑定的 AF_UNIX 数据报接收端。替身在诊断进程（STT）和其 Runner（VAD）中各打印一行。
+  - 结果：stdout 可以直接整体解析为 JSON；两行打印都出现在 stderr；会话和 Runner 正常启动，音画场景通过；Host 接收端没有收到任何数据报；父进程环境在运行前后完全一致。
+- **零 Runner**：没有任何 Runner 的计划是合法的（例如纯文字配置）。`session.start` 改为按会话实际的启动结果判定，`models.runners` 为 SKIP（"Not started: no runner selected"）。
+  - 反例：纯文字配置中，`models.runners` 为 SKIP，`session.start` 为 PASS（此前为 FAIL）。
+
+### 3. 代码改动
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-agents/.../provider/errors.py` | `ModelCapabilityError(message, *, code=None)` |
+| `avatar-plugins-provider/.../openai/adapters/responses.py` | 图像相关的本地拒绝标 `code="image_input"` |
+| `avatar-plugins-loop/.../execution.py` | `model.request_input`（按 observation 判断请求中是否携带）；`run.finished` 增加 `error_code` |
+| `avatar-core/.../log/events.py` | conversation 事件字段白名单增加 `error_code` |
+| `host/doctor/measure.py` | `request.content` 阶段；`cause` 带代码；场景终态优先；完成耗时只在正常完成时填写 |
+| `host/doctor/session.py` | `vision_off()` 同步修剪 `runtime.inference.methods`；视觉降级只认 `image_input`；零 Runner 的 `session.start` |
+| `host/doctor/process.py` | 清除 Host 端点，stdout 改道到 stderr |
+| `avatar-host/alphaavatar/host/doctor/samples/*.wav` | 两段固定样本（新增） |
+| `avatar-host/tests/large_samples.py`、`tests/fixtures/large_samples.json`、`tests/conftest.py`、根 `pyproject.toml` | 大样本清单、加载器、夹具、`large_samples` 标记和默认排除 |
+| `docs/cli/doctor.md` | 诊断进程隔离、零 Runner、样本存放、`request.content`、带代码的原因、终态优先、视觉降级条件；示例输出重新生成 |
+
+### 4. 测试与变异
+
+- **新增或修改的测试**：
+  - `test_session.py` 共 9 项，新增 2 项：
+    - 用真实 OpenAI 适配器的分类测试；
+    - Host 隔离与 stdout 测试。
+    - 降级测试增加了去掉语音和非图像能力错误两次运行；答案测试增加了零 Runner 断言。
+  - `test_measure.py` 共 4 项，新增终态优先 1 项。
+  - `test_isolation.py`：增加 Runner 设置修剪的断言。
+  - `test_large_samples.py`：新增 2 项。
+- **变异**（脚本 `scratchpad/t10c/mutate3.py`，每次运行后按 SHA-256 逐字恢复原文件，结束后再整体比对校验和，一致）：
+
+| 变异 | 结果 |
+|---|---|
+| N1 迟到的完成覆盖超时终态 | 测出 |
+| N2 中断时只在已有阻塞阶段时才判中断 | 存活：N1 修复后，`ended` 非空时阻塞阶段一定存在，这一条件永远为真，属于等价变异 |
+| N3 未正常结束仍记录完成耗时 | 测出 |
+| N4 不核对请求所带的转录 | 测出（去掉语音的反例） |
+| N5 Loop 不比对请求内容 | 测出 |
+| N6 任何能力错误都触发视觉降级 | 测出（非图像能力错误的反例） |
+| N7 关闭视觉后保留全部 Runner 设置 | 测出（`unselected_runner`） |
+| N8 Loop 不记录错误代码 | 测出 |
+| N9 事件字段白名单没有 `error_code` | 测出（`run.finished` 被丢弃，原因为空） |
+| N10 适配器的体积拒绝不标图像 | 测出（真实适配器测试） |
+| N11 诊断进程继承 Host 的三个端点 | 测出（推理端点冲突，会话没有启动） |
+| N12 诊断进程只清除推理端点 | 测出（Runner 接入 Host 日志，打印不再出现在 stderr） |
+| N13 诊断进程的 stdout 不改道 | 测出（stdout 无法解析为 JSON） |
+| N14 零 Runner 判为启动失败 | 测出 |
+| N15 有效缓存仍重新下载 | 测出 |
+| N16 校验不符时保留坏文件 | 测出 |
+
+### 5. 运行结果
+
+- **全量测试**（CI 方式：`--basetemp` 在 scratchpad，`PYTHONDONTWRITEBYTECODE=1`）：321 passed，0 failed，exit 0，用时 137.7 s，检出前后一致。
+  - 没有被标为 `large_samples` 的测试，所以默认排除没有排除掉任何测试。
+  - 28 条警告都是既有的 LanceDB `table_names()` 弃用提示（O-6）。
+  - 没有出现 `unclosed event loop`（O-13 已修复）。
+- **样本**：
+  - 源码树 `check` 通过；
+  - 干净 wheel 环境的 `check --installed` 通过（第 1 节）；
+  - `test_samples.py` 通过。
+- **Doctor 相关**：`tests/doctor`、`tests/cli/test_doctor.py`、`tests/test_large_samples.py`、Loop 与 trace 的测试合计 33 项通过，其中 `test_session.py` 9 项约 95 s。
+- **静态检查**：以下各项均通过：
+  - `ruff check`、`ruff format --check`；
+  - `check_workspace`（16 个成员）、`uv lock --check`；
+  - pre-commit（本轮改动的文件）。
+- **CI 替身运行（文档示例）**：模型拒绝图片时，原配置 `voice_vision` 停在 `model.first_event`，原因为 `ModelCapabilityError: image_input`；降级 `voice` 通过。
+
+### 6. 待验收
+
+由用户指定 `ENV_FILE` 和配置后运行，用单次 `host.doctor.external_services=true` 授权：
+
+1. **音画同轮**：启用 `vision.enabled=true`、`vision.input_mode=vlm`，使用支持图像的模型。要验证的是：
+   - `request.input`、`request.content`、`request.frames` 均通过，答案为 `green`；
+   - 输出全部正常完成；
+   - 端到端指标和分段指标齐全。
+2. **视觉链路受阻**：从已启用视觉、但视觉链路受阻的配置开始，例如适配器无法内联图像（`ModelCapabilityError: image_input`），或者只有视觉需要的 Runner 缺少缓存。要验证的是：报告中同时给出原配置的具体阻塞原因，以及 "degraded: vision off" 的纯音频实测结果。
+
+真实服务下尚未实测的项目：`TTS FIRST PCM` 分段、真实 STT 对 flite 语音的转录质量。按设计跳过的项目：远程向量存储，以及自定义插件在临时工作区之外的写入（Doctor 无法隔离，只标为未验证）。
+
+### 7. 限制
+
+- **视觉能力的判定**：只有 provider 能确认是视觉能力问题时，才会触发视觉降级。目前只有 OpenAI 适配器的本地图像拒绝带 `image_input`。服务端因模型不支持图像返回的 HTTP 400，按设计仍报 `ModelRequestError: http_400`，不降级。其他 provider 适配器需要各自给出 `code`。
+- **请求内容的判定**：在实际请求中查找文本，依据是转录文字出现在请求的文本部分里。如果某个渲染器改写了转录（例如翻译或摘要），就会判为 missing。目前 Context 原样嵌入转录。
+- **大样本**：数据集尚未发布，拉取流程只用离线替身验证过，没有真实下载过。
+- **未提交**：等待 review。
+
+---
+
+## T-10C `6a593f2` 真实服务验收
+
+- **基线**：`6a593f2`。
+- **授权**：用户授权以 `/home/ecs-user/AlphaAvatar/.env.dev` 作为 `ENV_FILE`，并执行配置所需的真实服务调用。
+  - 凭据只经 `ENV_FILE` 注入，报告中只出现服务名和错误分类。
+  - 所有 JSON 报告都经过检查：没有 `sk-`，也没有 40 字符以上的类密钥串。
+- **结论**：真实链路的关键证明都成立：
+  - 本轮转录与样本帧进入同一个实际 `ModelRequest`；
+  - 各启用输出正常结束，首字、首音频帧、终态和分段指标齐全；
+  - 视觉受阻时，原配置的 `ModelCapabilityError: image_input` 与纯音频降级（STT、模型、TTS 都实际完成）同时出现在报告中。
+- **未通过之处**：严格答案校验两次都没有通过。真实 STT 返回的转录只有样本的第一句，丢掉了后面的作答格式要求，模型因此用完整句子回答（2.4）。
+- **另外两个发现**：
+  - 默认配置下，真实语音轮会因 `transcript_timeout` 被丢弃（KD-17，2.1）；
+  - 未提交轮次的阻塞阶段原先会被误报，Doctor 已修正（2.1）。
+- **大样本**：HF 数据集的发布与拉取仍单独跟踪，本次没有使用。验收用的是随 Host 打包的两段小样本。
+
+### 1. 验收配置
+
+- **隔离**：
+  - 临时 home 为 `scratchpad/accept/home`。用 `ALPHAAVATAR_HOME` 指向它，以 `alphaavatar config init` 生成两个 bundle：`av-vision`（Avatar `doctor-av-vision`）和 `av-blocked`（`doctor-av-blocked`）。
+  - 用户的 `my-avatar` bundle、真实 home 和 Avatar 数据都没有改动。
+  - 模型缓存只复制了 Silero VAD 和 Smart Turn 两个目录（19 MB）到临时 home 的 `cache/`，真实缓存没有改动。
+- **命令**：`ALPHAAVATAR_HOME=<临时 home> ENV_FILE=.env.dev alphaavatar doctor <bundle> host.doctor.external_services=true --json`，授权只对这一次运行有效。
+- **两份配置共用的链路**（与 `my-avatar` 及模板一致）：
+  - loop：`realtime`，原生 OpenAI Responses backend，模型 `gpt-5.6-luna`；
+  - STT：`openai_segment`，`gpt-4o-transcribe`；
+  - TTS：`openai`，`gpt-4o-mini-tts`，音色 `ash`；
+  - VAD：`silero`；轮次判定：`smart_turn_v3`；
+  - memory、persona：默认插件。LanceDB 位于 Doctor 的临时工作区，embedding 为 `text-embedding-3-small`。
+- **相对模板的改动，两份都有**（完整 diff 在 `scratchpad/accept/config-diff.txt`）：
+
+| 位置 | 模板 | 验收 | 原因 |
+|---|---|---|---|
+| `vision.enabled` / `input_mode` | `false` / `text` | `true` / `vlm` | 音画场景 |
+| `router.init_config.addressing.semantic.enabled` | `true` | `false` | 减少变量：单人会话，样本就是对 Avatar 说的 |
+| `router.init_config.addressing.visual.enabled` | `true` | `false` | 画面以屏幕共享发送，没有人脸 |
+| `router.init_config.turn_taking.transcript_wait_sec` | 默认 0.75 | `3.0` | 见 2.1（KD-17）；第三次运行起才加入 |
+| `persona.init_config.profiler/speaker/face.enabled` | `true` | `false` | 减少变量；也就不需要复制 1.9 GB 的说话人与人脸模型 |
+| `memory.init_config.retrieval/conversation/tool.enabled` | `true` | `false` | 减少变量：不发生 gpt-4o 增量调用 |
+| `status.enabled` | `true` | `false` | 减少变量 |
+
+- **只有 `av-blocked`**：`loop.init_config.model.input_options.max_inline_bytes: 1024`。原生 Responses 适配器因此无法内联样本帧，在发出请求之前就拒绝图像。
+- **静态检查**：两份配置 `config check` 均有效，计划相同：Silero、memory LanceDB、persona LanceDB、Smart Turn，各 1 个 worker。
+
+### 2. 实测过程与结果
+
+#### 2.1 第一、二次运行（`av-vision`，模板默认的 `transcript_wait_sec=0.75`）
+
+- **两次相同的部分**：会话、4 个 Runner、embedding、模型、TTS 都正常；`text` 场景通过（真实 `gpt-5.6-luna` 回答 "5"）。
+- **`voice_vision` 失败**：60 s 内没有提交轮次（Ended by timeout）。
+- **第一次的报告把阻塞阶段误报成 `vad.closed`**：没有提交的 Turn 时，trace 链为空，输入之后的阶段全都显示为缺失。离线用缓存中的真实 Silero 跑这段样本，114 个窗口中有 100 个概率大于 0.5，说明 VAD 本身没有问题。
+- **Doctor 修正**：没有提交的轮次时，按本轮输入的时间窗口追踪其语音片段、STT 和轮次判定记录（`measure._uncommitted`），报告给出实际停下的阶段。
+- **第二次运行，修正后的报告给出实际链路**（时间相对最后有声样本）：
+
+| 时间 | 事件 |
+|---|---|
+| +680 ms | VAD 封段（`perception.speech_closed`） |
+| +681 ms | 提交 STT（`stt.commit`，210 帧） |
+| +815 ms | Smart Turn 判定 HOLD（等待转录） |
+| +1566 ms | CANCEL：等待转录 0.75 s 后超时，候选退役 |
+| +2442 ms | 真实 STT 终稿到达（`final_text`），因片段已退役被拒（`candidate.transcript_rejected reason=retired_segment`） |
+
+- **结论（KD-17）**：轮次判定在判为结束之后，只等待转录 `transcript_wait_sec`（默认 0.75 s）。真实 `gpt-4o-transcribe` 从提交到终稿约 1.76 s，晚于这个等待。按模板默认配置（`my-avatar` 同样如此），只要 STT 比这更慢，用户的语音轮就会被整句丢弃。这是生产问题，不属于 T-10C 范围，本批没有改默认值，已记入 2A 日志的 KD 表，待用户决定。验收从第三次运行起，在两份配置中同时把它设为 3.0 s。
+
+#### 2.2 第三次运行：音画同轮（`av-vision`）
+
+- **检查结果**：13 PASS、1 FAIL（`session.scenarios`）、1 SKIP（`devices.media`），退出码 1。
+  - `session.start` 103 ms 就绪；
+  - Runner：Silero 0.73 s、memory LanceDB 6.53 s、persona LanceDB 4.41 s、Smart Turn 2.29 s；
+  - `services.external`：模型、STT、TTS 三项均为 reached 并通过；
+  - `session.cleanup` PASS：2 个自有部件关闭，Runner 进程、socket 和临时工作区都已回收。
+- **`voice_vision` 场景**：
+  - 转录为 "What color is the card on my screen?"，回答为 "The card is green."；
+  - 停在 `answer`：不是 `green` 这样的单词答案，原因见 2.4。
+- **同一实际请求的关联**（脱敏令牌）：
+  - `model.request`：turn `9b4ef3400415`、run `9202e29b2f68`、request `30e1a51b9e55`，`input` 等于 `turn.committed` 的 input（`carries_turn_input`），`frame_count=4`；
+  - `model.request_input`：STT 终稿 observation `8d970c5d8fec` 为 carried（`carries_turn_content`，即 `request.content` 通过）；VAD 语音片段 observation 为 missing，这是正确的：VLM 模式只带转录，不带音频；
+  - `model.request_frame`：4 帧，全部是 Doctor 发布的样本帧（`sample_frames=4`）。Context 选中与请求所带完全一致，帧龄分别为 2904、1903、1004、104 ms；
+  - 日志 `model.started` 的 run/request 令牌与 trace 一致，输出的 run 也是这个 run。
+- **输出**：1 个输出（text+audio），终态 `completed`。
+- **端到端指标**（起点为最后有声样本发布）：
+
+| 指标 | 值 |
+|---|---|
+| 首字 `first_text` | 3415 ms |
+| 首音频帧 `first_audio_frame` | 4651 ms |
+| 文本完成 `text_complete` | 3943 ms |
+| 音频末帧 `audio_last_frame` | 6431 ms |
+| 响应终态 `response_final` | 6431 ms |
+| 最后必需输入 `last_required_input` | 1482 ms（最后一张选中帧晚于语音结束） |
+| 音频 | 3.15 s，RTF 0.565（3.15 s 音频用 1.78 s 产出），最大间隔 575 ms，按无缓冲口径断供 1 次 |
+
+- **分段指标**：
+
+| 分段 | 值 |
+|---|---|
+| VAD 封段 `vad_close` | 681 ms |
+| STT 终稿 `stt_final` | 1543 ms（提交到终稿 861 ms） |
+| 轮次截断 `turn_cutoff` | 1579 ms |
+| Context 就绪等待 | 0.3 ms |
+| 截断到模型请求 | 4.2 ms |
+| 请求到首个流事件 / 首个文本增量 / 首段文本到输出边界 | 1652 / 1832 / 1832 ms |
+| TTS 请求到首个 PCM | 884 ms |
+| 首个 PCM 到首音频帧 | 0.6 ms |
+| 帧到达到可用（JPEG 编码） | 0.8 ms |
+| 最新选中帧早于截断 | 97 ms |
+| `vision_wait` | 空（没有观测到等待） |
+
+- **Runner 队列**：
+  - Silero 311 次调用，最大排队 0.014 ms、最大执行 2.7 ms；
+  - Smart Turn 2 次，最大执行 37 ms；
+  - LanceDB 1 次，8 ms。
+- **同会话的 `text` 场景**：通过，回答 "5"。首字 992 ms，首音频帧 2022 ms，终态 2410 ms；模型首事件 574 ms，TTS 首 PCM 818 ms。
+
+#### 2.3 视觉受阻后降级为纯音频（`av-blocked`）
+
+- **检查结果**：12 PASS、2 FAIL（`services.external`、`session.scenarios`）、1 SKIP，退出码 1。这是原配置的预期失败导致的，因此单独检查了降级场景自身的结果。
+- **原配置**：
+  - `voice_vision`：转录 "What color is the card on my screen?"，请求带本轮输入、转录（`request.content` 通过）和 4 张样本帧。停在 `model.first_event`，原因为 `ModelCapabilityError: image_input`：Responses 适配器因 `max_inline_bytes=1024` 在本地拒绝图像，没有发出请求。
+  - 同会话的 `text`：同样因上下文中带着屏幕帧，原因为 `ModelCapabilityError: image_input`。这是生产行为。
+  - 原配置的阻塞结果完整保留在报告中。
+- **降级配置 `degraded: vision off`**：重新规划了 Runner，4 个均启动；未修剪任何方法设置（本配置没有设置）。
+  - `voice` 场景实际完成了 STT（转录 "What is two plus three?"）、模型调用（回答 "Two plus three is five."）和 TTS。请求带本轮输入与转录，不带图像。
+  - 输出 1 个（text+audio），终态 `completed`。
+  - 停在 `answer`，原因见 2.4。
+  - 端到端：首字 3274 ms、首音频帧 4189 ms、文本完成 3413 ms、音频末帧与终态 4906/4907 ms；音频 2.4 s，RTF 0.299。
+  - 分段：VAD 682 ms、STT 终稿 1745 ms（提交到终稿 1063 ms）、截断 1781 ms、截断到请求 1.7 ms、请求到首事件 1244 ms、到首文本 1491 ms、TTS 请求到首 PCM 776 ms。
+- **外部服务**：模型 reached 但未通过（原因 `ModelCapabilityError: image_input`），STT 与 TTS 均通过。
+- **回收**：`session.cleanup` PASS，4 个自有部件关闭（原配置与降级配置的会话和各自的运行时）。
+- 本次没有出现普通 HTTP 400、401 或通用服务故障。凭据有效：embedding、模型、STT、TTS 都已实际调用成功。
+
+#### 2.4 严格答案校验没有通过的原因
+
+- **现象**：两段固定样本由 flite 生成，各有两句（问题 + 作答格式要求）。两段都是 VAD 的一个片段（210 帧，覆盖整段），没有被拆开。但真实 `gpt-4o-transcribe` 两次都只返回第一句（"What color is the card on my screen?"、"What is two plus three?"）。STT 插件发送的是整段 PCM，终稿原样使用，没有截断。
+- **后果**：模型没有收到作答格式要求，用完整句子作答。内容正确（"The card is green."、"Two plus three is five."），但不满足"整段答案等于期望单词"。
+- **处理**：我没有放宽判定，避免把真实失败变绿。可选做法（待用户决定）：
+  1. **重写提示词**：改成单句、把格式要求放进问题本身，例如 "In one word, what color is the card on my screen?" 和 "As a single number, what is two plus three?"，再离线重新生成样本。转录模型是否保留前置的格式要求仍需实测，而我在本机无法运行 flite。
+  2. **可确定的去回显判定**：去掉问题中已出现的词以及冠词和系词（`the`、`card`、`is`、`it`、`two`、`plus`、`three` 等）之后，剩下的必须恰好是期望答案。按这个规则，"The card is green." 和 "Two plus three is five." 通过；"Not green."、"Maybe green."、"The card is not green. It is red."、"15"、"Green?" 仍不通过。该规则可以确定判定，也不依赖 STT 保留格式要求。
+  3. 两者结合。
+
+### 3. 回收
+
+- 四次真实运行的 `session.cleanup` 均为 PASS，没有进程残留：第三次运行 2 个部件，`av-blocked` 4 个部件。
+- Doctor 临时目录（含诊断进程的 `TMPDIR` 和 socket）都已删除。
+- 临时 home 中的 `avatars/` 没有生成，诊断数据只写在 Doctor 自己的临时工作区，运行后已删除。
+- 用户的 `~/.local/share/alphaavatar` 只被读取过：用 `config check my-avatar` 读取模型选择。`~/.cache/alphaavatar` 只被读取过：复制了两个模型目录。验收开始后，两处都没有任何文件被修改（已用 `find -newer` 核对）。
+
+### 4. 受控测试（与真实实测分开）
+
+- **新增 `test_measure.py::test_a_spoken_input_that_never_committed_shows_where_it_stopped`**：
+  - 复现真实链路：片段封段、提交 STT、HOLD、CANCEL，之后才到达转录；
+  - 断言阶段到达 `input`、`vad.closed`、`stt.final`，停在 `turn.committed`，证据中按顺序有 hold 和 cancel，且不包含本轮开始之前的旧 `turn.committed`。
+- **变异**（每次运行后按 SHA-256 逐字恢复原文件）：
+  - U1 不跟踪未提交的输入：测出；
+  - U2 不按本轮时间窗口取 trace：测出。
+- **全量结果**：322 passed，0 failed，exit 0，用时 137.8 s（CI 方式），检出前后一致，没有 `unclosed event loop`；`ruff check`、`ruff format --check`（714 个文件）通过。
+
+### 5. 待用户决定
+
+1. **KD-17**：`transcript_wait_sec` 默认 0.75 s，短于真实分段 STT 的延迟（本次实测为 0.86 s 至 1.76 s）。可选：
+   - 提高默认值；
+   - 按 STT 能力（分段或流式）设默认值；
+   - 改为等到 STT 终稿或出错，再加一个上限。
+2. **样本提示词与答案判定**：见 2.4。
+3. **大样本 HF 数据集**：发布、实际拉取和校验仍单独跟踪（见上一节第 1 节）。
+
+### 6. 第 9 条 `config init` 轻量交互入口：最小实现方案（待 review，尚未实现）
+
+- **目标**：交互终端里依次选择：
+  - 预设：纯文本、语音、音画；
+  - Memory 和 Persona 的处理器；
+  - 工具。
+
+  写入前预览启用项和所需凭据的名称。脚本和 CI 可以用显式参数无人值守完成。自动安装另立任务。
+- **配置接口**（放在 `alphaavatar.host.configs`，供 CLI、Web、TUI 和移动端复用，纯函数）：
+  - `InitChoices`（冻结 dataclass）：
+    - `preset`：`text`、`voice` 或 `audio_visual`；
+    - `memory`：retrieval、conversation、tool 中启用的集合；
+    - `persona`：profiler、speaker、face 中启用的集合；
+    - `tools`：deepresearch、rag、mcp 中启用的集合。
+
+    默认值等于现有模板，即 `voice`、全部启用、不启用工具。
+  - `render_bundle(name, avatar_id, choices=InitChoices())`：在现有模板文本上按选择改写各节，例如：
+    - `text` 预设：`voice` 的 vad、stt、tts 均为 null，视觉关闭；
+    - `audio_visual` 预设：视觉启用、`input_mode: vlm`。
+
+    改写后沿用现有校验（`HostConfig` / `AvatarConfig`，以及 Runner 规划），文件写入前就失败。
+  - `preview_bundle(...)`：从渲染结果得出启用项（复用 `describe_summary` 的结构）和所需环境变量名，不含任何值。例如 OpenAI 模型、语音、embedding 需要 `OPENAI_API_KEY`；deepresearch 需要 `TAVILY_API_KEY`；`voiceai` 需要 `VOICEAI_API_KEY`；RTC 需要 `LIVEKIT_*`。现有的 `REQUIRED_ENVIRONMENT` 改为由选择推导。
+  - `create_bundle(paths, name, avatar_id=..., choices=...)`：沿用现有的原子写入、不覆盖和失败回滚逻辑，只是写入渲染后的文本。
+- **CLI**（`cli/commands/config.py`，交互只放在这里）：
+  - `alphaavatar config init <name> --avatar-id ID [--preset text|voice|audio-visual] [--memory retrieval,conversation,tool|none] [--persona profiler,speaker,face|none] [--tools deepresearch,rag,mcp|none] [--yes]`。
+  - stdin 和 stdout 都是终端、且有选项没有给出时，按编号菜单逐项询问，显示预览后确认（`y/N`）。
+  - 非终端，或参数已经给全时，从不提问：用给出的值和默认值，直接预览并写入；`--yes` 跳过确认。
+  - `--json` 输出预览与结果，供脚本使用。
+- **测试**：
+  - 三种预设渲染后都能通过 `config check` 同一套校验；
+  - 预览只列名称、不含值；
+  - 交互流程用替身输入测试，包括取消时不写任何文件；
+  - 无人值守的参数路径；
+  - 不带参数时的输出与现在相同；
+  - 已有的不覆盖、回滚测试保留。
+- **不做**：自动安装依赖、模型下载；凭据的写入或校验（只列出名称）。
+
+---
+
+## Doctor 默认运行时测试（基线 `2fc4f398`）
+
+依据：Codex 对 `2fc4f398` 复核的第二阶段。要求：Doctor 先做静态检查，再默认运行所有适用的运行时测试；纯本地测试直接运行；可能联系外部服务时先列服务、提示计费并要求明确同意，提问和运行用同一份已加载配置；拒绝或 `--no-metrics` 只做静态检查，运行时指标标 SKIP 并写原因；非交互时只有明确授权才调用外部服务；`--json` 的 stdout 保持纯 JSON，仍是同一个 `doctor` 入口；首次缺模型时先说明要下载什么，确认后继续；覆盖文本、音视频、关闭视觉的纯语音；显示首字、首音频帧、响应完成和收集到的所有阶段耗时，失败时保留已测值，未观测的显示 `—` 和原因；离线替身的耗时可用于验收；给出可复现的真实服务验收步骤；报告写明测量止于 Host 输出，LiveKit 传输和客户端播放另测。所有改动在未暂存的工作区。
+
+### 0. 历史记录（合并来源）
+
+| 原位置 | 原结论 | 现状 |
+|---|---|---|
+| 本文件 T-10C 各节 | 外部服务只凭配置授权（`host.doctor.external_services`，默认 false），未授权时跳过会话；缺模型只报告、不下载 | 配置授权保留，用于非交互；终端里多了由人同意这条路。缺模型在同意后下载 |
+| 安装日志「第 1 项第二轮」第 10 节 | 只装基础包时，Doctor 的缺包建议提示 `alphaavatar setup` | 不变；缺包行与 `config check` 共用，窄终端拆成设置、问题、包名、提示四行 |
+| 安装日志「第 1 项 CLI 展示统一」第 4 节 | Doctor 文本分组、未验证原因、端到端与阶段耗时；`Full report` 给出带同样参数的 `--json` 命令 | 展示规则仍记在那里。本轮 `Full report` 改为 `Run again as JSON`，`—` 带原因（第 3 节） |
+
+### 1. 先静态检查，再默认跑运行时测试
+
+- **纯本地**：配置不联系本机以外的服务时（`Diagnosis.unauthorized` 为空），静态检查后直接运行。
+- **外部服务**：在终端里，静态检查后先列出要联系的服务（`_external` 加上 runner 启动时就会联系的，如向量库的 embedding），写明「Calls to these services may be billed.」，再问 `Run the runtime tests? [y/N]`：
+  - 同意：`Diagnosis.authorized()` 在 Doctor 已加载、已校验的同一个快照上 `derive(config, {"host.doctor.external_services": True})`，问的和跑的是同一份配置，中间不重读；
+  - 拒绝、回车或 `--no-metrics`：`session.start`、`models.runners`、`session.scenarios` 为 SKIP，原因分别是 `Not run: the external services it reaches were declined` 和 `Not run: left out with --no-metrics`；`session.cleanup` 写明什么都没启动；`End-to-end latency` 为 `Not measured · Not run: …`。
+- **非交互**：不提问，只认配置或覆盖项 `host.doctor.external_services=true`；未授权时与之前相同，`session.start` 列出会联系的服务和放行方法。
+- **`--json`**：标题和提问写 stderr，stdout 只有 JSON。
+- **提问处 Ctrl+C**：退出 130，报告原因为 `interrupted at a question`，什么都不运行。
+- **`--no-metrics`**：只做静态检查，不起 runner，不联系任何服务，也不提问。
+
+### 2. 缺模型：先说明，同意后下载
+
+- 第一次运行时，runner 只从模型缓存启动，诊断进程里下载是关的。所有模型文件都经共用解析器 `agents/utils/files/model/model_files.py`，离线缺文件时抛 `FileNotFoundError`；`missing_models(report)` 找出因此失败的 runner。
+- 有终端、没有中断、下载也没被 `ALPHAAVATAR_MODEL_OFFLINE`／`HF_HUB_OFFLINE` 关掉时，Doctor 列出这些 runner 和下载位置（`<cache>/models`），问 `Download and continue? [y/N]`。同意后以 `downloads=True` 重跑，报告以重跑为准。
+- 重跑时，runner 启动的时限与 `start` 相同，取 `runtime.inference.initialize_timeout`（默认 300 s），总时限相应加长（第 4 节第 3 条）。
+- 拒绝或没有终端时，报告就是第一次的：这些 runner 失败，原因是模型不在缓存里。
+
+### 3. 文本报告
+
+- `End-to-end latency`：首字、首音频帧、响应完成，再列文本完成、最后一帧；`Stage timing · <场景>`：收集到的所有阶段耗时。失败的场景保留已测值。
+- 未观测的指标显示 `—`，表下逐条写原因：
+  - 指标自己知道的原因，如 `this TTS plugin logs no first PCM`、`not recorded: the turn ended by timeout`；
+  - 否则是场景停在哪里，如 `not reached: stopped at model.first_event`；
+  - 否则是 `not observed`。
+  - 多个场景同一原因时合并为一行，并列出场景名。
+- `Full report` 改为 `Run again as JSON`：`alphaavatar doctor [target] --json`。带过 `KEY=VALUE` 覆盖项时，另起一行说明需要带同样的覆盖项，原文不回显。
+- 测量终点：`docs/cli/doctor.md` 和预览页写明，所有指标止于 Host 的输出边界，LiveKit 传输和客户端播放另测。
+
+### 4. 录制中发现并修复
+
+1. **runner 日志打进终端**：下载场景的录制里，runner 失败时自己的日志（`Inference runner failed`、`error: FileNotFoundError`、调用栈）直接接在「Running the runtime tests…」那行后面。原因是诊断进程把 stdout 并到 stderr，而 stderr 就是终端；runner 没有日志接收端时，Python 的兜底处理器把 WARNING 以上的日志写到 stderr。
+   - 改为：诊断进程和它的 runner 的 stdout、stderr 都写到 Doctor 临时目录里的 `output.log`，随目录删除。runner 的失败本来就在 `models.runners` 的细节里。
+   - 诊断进程自己退出（退出码大于 0）而没有留下报告时，缺报告原因附上它输出的最后一行（例如 `RuntimeError: …`），之后与其他细节一样经过输出边界脱敏。被杀（负退出码）时不附，那一行不是它结束的原因。
+2. **`—` 的原因**：`model_first_text_delta` 的说明「the first token, as far as the stream shows it」被当成缺失原因显示出来。
+   - `_metric` 的第 5 个参数只作缺失原因；说明改用 `note=` 关键字，只在有值时保留。`context_ready_wait` 的说明同样只在有值时保留。
+   - `tts_request_to_first_pcm` 只在 TTS 请求已经发出时才写「this TTS plugin logs no first PCM」；请求没发出时，原因是场景停在哪里。
+3. **下载重跑的时限**：原先重跑时 runner 启动仍按 180 s 计，真实下载可能超时。改为 `session.budget(initialize)`：启动时限取 `max(180, initialize_timeout)`，总时限加上同样的差值。
+4. **提问处 Ctrl+C 的换行**：光标停在提问行末，报告紧贴其后。`Report.ask` 遇到 Ctrl+C 或输入结束时先结束该行；setup 同样受益。
+5. **下载重跑的提示**：进行中提示改为「Downloading the model files, then running the runtime tests…」。
+
+### 5. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/.../doctor/doctor.py`、`doctor/__init__.py` | `Diagnosis.unauthorized`、`authorized()`、`report(skipped)`、`run(downloads)`；`missing_models` |
+| `avatar-host/.../doctor/process.py` | `diagnose(downloads)`，只在未同意下载时设离线；输出写入 `output.log`；无报告时附最后一行；下载时的时限 |
+| `avatar-host/.../doctor/session.py` | `budget(initialize)` |
+| `avatar-host/.../doctor/measure.py` | 缺失原因与说明分开 |
+| `avatar-host/.../cli/commands/doctor.py` | 同意、拒绝、下载、`--no-metrics`、提问处 Ctrl+C、`—` 的原因、`Run again as JSON` |
+| `avatar-host/.../cli/app.py` | `--no-metrics`；帮助文本 |
+| `avatar-host/.../cli/render.py` | `pending` 进行中提示；`ask` 中断时结束提问行 |
+| 测试 | `test_session.py`：同意与拒绝（`--json` 时提问在 stderr、stdout 是纯 JSON）、`--no-metrics`、下载同意与拒绝（终端里没有 runner 日志；两次运行的 runner 启动时限为 180 s 和 300 s）、提问处 Ctrl+C、诊断进程自己退出时附最后一行、Host 内运行时终端上没有诊断进程的输出；`test_measure.py`：缺失原因与说明；`test_render.py`、`test_doctor.py`：文本报告；`doctor_doubles.py`：`DownloadRunner`、`crash`、`runs.jsonl` |
+| `docs/cli/doctor.md` | 默认运行时测试、同意与计费、`--no-metrics`、模型文件、时限、`—` 的原因、`Run again as JSON`、测量终点、新的示例输出 |
+
+### 6. 验证
+
+**本地**
+- 全量测试 491 项通过；拦截已移除的包后再跑一遍，也是 491 项通过（含第 9 节验收后新增的 5 项）。静态检查（Ruff `--no-cache`、格式、`check_workspace.py`、`uv lock --check`、`git diff --check`、`bash -n`、pre-commit）全部通过。
+- 变异：本部分 D1–D10、F1–F7b 共 18 个，全部被抓到，每个都核对过失败的是预期断言。首轮 F3（被杀的诊断进程也附最后一行）存活：被杀的替身什么都没输出，断言证明不了这一点；替身改为先输出一行再挂起后被抓到。证据：`scratchpad/evidence8/mutants8.log`、`mutants8-b.log`。
+
+**离线测试替身（`doctor_doubles`：只替换外部服务和模型文件，Router、Context、Loop、Engine、输出运行时和推理运行时都是生产代码；本轮最终代码，伪终端录制）**
+
+| 录制 | 结果 |
+|---|---|
+| `doctor-offline-agreed-100`、`-72` | 列出 6 项服务和计费提示，答 y：`Diagnostics completed · 14 passed · 1 skipped`；voice_vision 首字约 704 ms、首音频帧约 726 ms、响应完成约 954 ms，text 约 53／74／299 ms（替身的耗时）；`TTS request → First PCM` 为 `—`，原因 `this TTS plugin logs no first PCM` |
+| `doctor-offline-voice-100` | 关闭视觉：`voice` 和 `text` 两列；`voice_vision` 为 SKIP |
+| `doctor-offline-download-100` | 缺模型的 runner 和下载位置列出，答 y 后重跑通过；终端里没有 runner 的失败日志 |
+| `doctor-offline-degraded-100` | 模型不接受图片：`voice_vision`、`text` 停在 `model.first_event` 并保留已测阶段，`voice [vision off]` 通过；`—` 的原因都是 `not reached: stopped at model.first_event` 或 `not recorded: an output ended otherwise` |
+| `doctor-offline-interrupt-72` | 提问处 Ctrl+C：退出 130，`Not run: interrupted at a question` |
+
+**干净沙箱（本轮最终构建）**
+
+| 录制 | 结果 |
+|---|---|
+| `doctor-declined-72`、`-100` | 列出 5 项服务和计费提示，答 n：`OK 9 passed · 6 skipped`，`Session and services` 为 SKIP，原因 `Not run: the external services it reaches were declined` |
+| `doctor-nometrics-100` | 不提问，SKIP 原因 `Not run: left out with --no-metrics` |
+| `doctor-unasked.txt`（stdin 为 `/dev/null`） | 不提问；未授权时按原样跳过，并给出放行方法 |
+| `doctor-unasked.json` | `--json`：stdout 第一个字符是 `{`，stderr 为空 |
+
+### 7. 真实服务验收步骤（用户已确认，实测结果见第 9 节）
+
+前提：Linux x86_64，glibc 2.28 或更新；真实的 `OPENAI_API_KEY`；三个 LiveKit 变量（Doctor 不连接 LiveKit，`config check` 只要求它们已设置）。下面全部放在 `$HOME/aa-accept`，不影响已有安装。
+
+```bash
+export ALPHAAVATAR_HOME=$HOME/aa-accept/home
+P=$HOME/aa-accept/prefix; B=$HOME/aa-accept/bin; OUT=$HOME/aa-accept/out
+
+# 1. 构建并安装本轮的基础包（推送后也可用 CI 制品）。在这台机器上构建要放宽到 glibc 2.32：
+#    本机编译的 llama-cpp-python 引用了 2.32 的符号；CI 在 manylinux_2_28 里构建，不需要
+packaging/linux/build.sh --allow-dirty --max-glibc 2.32 --out "$OUT"
+bash "$OUT/install.sh" --file "$OUT"/alphaavatar-*-linux-x86_64.tar.gz --prefix "$P" --bin-dir "$B"
+export PATH="$B:$PATH"
+
+# 2. 首次交互 setup：逐项回车保留参考配置（含本机模型），bundle 名填 accept；
+#    凭据回车保留环境里的值，Store …? 答 n；看完计划后 Install and enable? 答 y
+export OPENAI_API_KEY=… LIVEKIT_URL=… LIVEKIT_API_KEY=… LIVEKIT_API_SECRET=…
+alphaavatar setup --artifacts "$OUT"
+
+# 3. Doctor：先看列出的服务和计费提示，再在 Run the runtime tests? [y/N] 答 y；
+#    首次会出现 Model files：看清 runner 和下载位置后，在 Download and continue? [y/N] 答 y
+alphaavatar doctor accept
+
+# 4. 关闭视觉的纯语音；5. 纯文本（每次同样先确认）
+alphaavatar doctor accept vision.enabled=false
+alphaavatar doctor accept voice.vad.plugin=null voice.stt.plugin=null voice.tts.plugin=null
+
+# 6. 拒绝：在提问处直接回车，应只做静态检查、不产生调用
+alphaavatar doctor accept
+
+# 7. 非交互：不提问，stdout 为纯 JSON
+alphaavatar doctor accept host.doctor.external_services=true --json < /dev/null > report.json
+python3 -c 'import json; r = json.load(open("report.json")); print(r["status"], r["counts"])'
+
+# 8. 无人值守的 setup 路径（可选）
+alphaavatar config init ci --avatar-id ci
+alphaavatar setup ci --artifacts "$OUT" < /dev/null
+alphaavatar config check ci
+```
+
+- **预期**：
+  - 第 2 步：`Validate PASS · 8 runners`。
+  - 第 3 步：同意下载后 `voice_vision`、`text` 有结果（失败时给出阻塞阶段和原因），`End-to-end latency` 有首字、首音频帧、响应完成，`Stage timing` 有各阶段，每个 `—` 都带原因。
+  - 第 4 步：`voice`、`text`。第 5 步：只有 `text`。
+  - 第 6 步：`Not run: the external services it reaches were declined`。
+  - 第 7 步：模型已在第 3 步下载，不再提问。
+- **计费**：每次同意后的运行都会多次调用对话模型、记忆与画像任务、embedding、STT 和 TTS；第 3、4、5、7 步各运行一次，模型不接受图片时还会多跑一次降级配置。第 6 步不产生调用。
+- **下载**：只在第 3 步同意之后发生，位置是 `$ALPHAAVATAR_HOME/cache/models`。
+- **测量终点**：所有指标止于 Host 的输出边界。LiveKit 传输和客户端播放不在其中，留给第 4 项（真实手机浏览器 RTC）另测。
+- **清理**：`rm -rf $HOME/aa-accept`，只删本次验收的目录。
+
+### 8. 待复核
+
+1. **先跑一次再问下载**：第一次运行只从缓存启动 runner，失败后才知道缺哪些模型。runner 没有声明式的模型清单，不启动就列不出来。缺的若只是仅视觉用到的模型（例如人脸），第一次运行会先跑一遍关闭视觉的降级配置，这些调用已经过同意；同意下载后再整体重跑。参考配置下 turn taking 的模型也缺，降级配置同样起不来，第一次运行不会联系外部服务。
+2. **同意只对本次有效**：不会写回配置；下次运行还会再问。
+3. **列出的服务**：提问时列的是会话阶段和 runner 启动时会联系的全部服务；非交互跳过时，`session.start` 的细节只列会话阶段的服务（沿用原文本）。两处的列表可能不同。
+
+### 9. 真实服务验收（用户确认后运行，2026-11-06）
+
+用户确认后，按第 7 节在本机实测。凭据取自 `/home/ecs-user/AlphaAvatar/.env.dev`（T-10C 验收用过的同一文件），只取 `OPENAI_API_KEY` 和三个 LiveKit 变量，写进会话临时目录里一个只有本人可读的文件；每条命令都在空环境里运行，只带这四个变量、隔离的 `ALPHAAVATAR_HOME`、本轮的命令和 `PATH`。验收目录放在会话临时目录，而不是第 7 节示例的 `$HOME/aa-accept`。全部录制（伪终端，`.cast`／`.ansi`）和 JSON 报告都检查过，不含任何凭据值。
+
+**磁盘与模型缓存**：磁盘只剩 3.4 GB，装不下 1.7 GB 的参考环境再加约 2 GB 的模型全量下载。验收的模型缓存因此用硬链接从本机已有缓存（`~/.cache/alphaavatar/models`）建立，不占额外空间，并去掉 turn taking 的模型，让 Doctor 首次运行真的缺模型、真的去下载。模型解析从不原地改写缓存文件（都是写临时文件再 `os.replace`），小文件（锁文件、清单）另外复制断开链接；删除验收目录后核对过，原缓存字节数不变、链接数恢复为 1。所以「首次缺模型并下载」只覆盖了 turn taking（8.4 MB），其余模型没有在本次验收中重新下载。
+
+**结果**（第一轮用 `20261106133847` 构建；第 4 小节的修复后用 `20261106142425` 构建复验）
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 安装 | `install.sh --file … --prefix … --bin-dir …` | 基础包 208 MB |
+| 交互 setup | `alphaavatar setup --artifacts …`：逐项回车（参考配置，含本机模型），bundle `accept`，凭据回车保留，不存 | 从真实索引下载 105 个包、514 MB；`Validate PASS · 8 runners`；环境 1.7 GB |
+| 拒绝下载 | `doctor accept`，同意测试、拒绝下载 | 只列出 `smart_turn_v3`；第一次的报告：该 runner 失败，其后 5 个 runner 未到达；向量库 runner 未启动，没有任何计费调用 |
+| 同意下载 | `doctor accept`，同意测试、同意下载 | turn taking 模型下载后 runner 3.07 s 启动；`text` 通过；`voice_vision` 各阶段都到达，卡在严格答案校验（见下） |
+| 非交互 | `doctor accept host.doctor.external_services=true --json < /dev/null` | 不提问；stdout 第一个字符是 `{`，stderr 为空；三项外部服务都是 reached、passed |
+| 关闭视觉 | `doctor accept vision.enabled=false` | `OK · 14 passed · 1 skipped`；`voice`、`text` 都通过 |
+| 纯文本 | `doctor accept voice.vad.plugin=null voice.stt.plugin=null voice.tts.plugin=null` | `OK`；`text` 通过；两个音频指标为 `—`（原因见第 4 小节第 4 条） |
+| 拒绝测试 | `doctor accept`，提问处回车 | 只做静态检查，`Not run: the external services it reaches were declined`，没有调用 |
+| 无人值守 | `config init ci` → `setup ci --artifacts … < /dev/null` → `config check ci` | 复用已装环境，不提问，`Validate PASS · 8 runners`；之后 `config init` 的下一步是 `config check`、`doctor`（已装完整环境） |
+
+**实测指标**（真实服务，单次样本；止于 Host 输出边界，不含 LiveKit 传输和客户端播放）
+
+| 指标 | voice_vision | text（同一次） | voice（关闭视觉） | text（同一次） | text（纯文本会话） |
+|---|---|---|---|---|---|
+| 首字 | 6,575 ms | 1,717 ms | 5,862 ms | 1,006 ms | 1,632 ms |
+| 首音频帧 | 8,330 ms | 3,745 ms | 6,629 ms | 2,519 ms | —（无音频输出） |
+| 响应完成 | 9,060 ms | 4,176 ms | 7,121 ms | 2,896 ms | 1,705 ms |
+| 语音结束 → STT 终稿 | 2,459 ms | | 1,664 ms | | |
+| 语音结束 → Turn 提交 | 2,462 ms | | 1,895 ms | | |
+| 模型请求 → 首个事件 | 3,610 ms | 1,055 ms | 3,550 ms | 542 ms | 1,098 ms |
+| TTS 请求 → 首段 PCM | 1,499 ms | 1,446 ms | 696 ms | 1,402 ms | |
+
+**`voice_vision` 未通过：严格答案校验（T-10C 2.4 遗留，待用户决定）**：非交互那次的 JSON 里，转录只有 `What color is the card on my screen?`，样本第二句「Answer in one word.」被 STT 丢掉，模型答 `The card is green.`，不是单个词，判为 `answer` 阶段失败。两次音画运行都是这样，与 T-10C 的发现相同；本轮没有改样本或判定。
+
+**KD-17 未复现**：三次有语音的运行里，turn taking 连续 HOLD（约 +825、+1,361、+1,861 ms），直到 STT 终稿到达（+1,901 ms）后才提交，没有出现 T-10C 那样在等待超时后 CANCEL。这只说明这几次 STT 来得够快或判定一直在 HOLD，不说明 KD-17 已修复；KD 表状态不变。
+
+**验收中发现并修复的报告问题**
+
+1. **`services.external` 的误报（T-10C 起就有）**：一个更早的 runner 启动失败时，向量库 runner 根本没启动，模型 provider 却显示 `not reached, failed (vector store embeddings)`，标题因此多算一项失败。原逻辑按整个运行时是否启动来判断。改为按启动时会嵌入的 runner 自己的结果判断：这些 runner 由 `InferenceRunner.PROVIDERS` 识别（`session.embedding_runners`），不写死插件名。全部启动为 passed，有一个失败为 failed，没轮到为 not observed，并写明「an earlier runner did not start」。
+2. **缺模型的处理建议过时**：`models.runners` 仍建议「Start `alphaavatar dev …` once with network access」。改为先说本命令自己的做法：「Run doctor again in a terminal and agree to the download, or start `alphaavatar dev …` once with network access」。
+3. **允许下载时仍写「offline」**：`models.runners` 通过时的摘要固定写「started from the cache, offline」。改为按诊断进程是否离线，写「from the cache, offline」或「with downloads allowed」。
+4. **纯文本会话的最后一帧**：首音频帧写「no audio output in this session」，最后一帧却写「not observed」。会话没有音频输出时，两项都写这个原因。
+
+复验（修复后的构建，重新安装；这次 setup 走无人值守路径 `config init accept` → `setup accept < /dev/null`，同样从真实索引下载 105 个包、514 MB）：
+- 拒绝下载：`services.external` 改为 SKIP，模型 provider「reached: not observed, passed: not observed (vector store embeddings: an earlier runner did not start)」，失败从 3 项降为 2 项；处理建议为新文本。
+- 纯文本加同意下载：turn taking 模型再次下载，runner 3.15 s 启动，`text` 通过；两项音频指标都写「no audio output in this session」。
+- 第 3 条由新的单元测试覆盖，文本报告里通过的分组不显示该摘要。
+
+新增测试：`test_session.py` 的 `test_the_model_provider_is_judged_by_the_starts_of_the_runners_that_embed`（参考 bundle：未到达、启动、失败三种）、`test_the_runners_summary_says_whether_downloads_were_allowed`；下载拒绝的测试加了处理建议的断言；`test_measure.py` 的 `test_a_session_without_audio_output_says_so_for_each_audio_figure`。变异 G1–G5 全部被抓到（`scratchpad/evidence8/mutants8-c.log`）。修复后全量 491 项通过，拦截已移除的包后也是 491 项通过；Ruff、格式、pre-commit 通过。改动文件：`doctor/session.py`（`embedding_runners`、`_service`、`_runner_check`）、`doctor/measure.py`、`docs/cli/doctor.md`（`services.external` 如何判断只在 runner 启动时用到的模型 provider），以及上述测试。修复后重新构建，沙箱录制和离线测试替身录制都在修复后的代码上重做，`docs/cli/cli.html` 随之重新生成。
+
+**计费调用**：同意下载那次、非交互那次、关闭视觉、纯文本，以及复验的纯文本，共 5 次运行调用了 OpenAI（对话、记忆与画像任务、embedding、STT、TTS；纯文本两次没有 STT 和 TTS）。两次拒绝下载、拒绝测试和无人值守 setup 都没有调用。
+
+**清理**：验收目录在复验后删除；凭据副本在复验后删除。
+
+---
+
+## Doctor 运行时诊断：一次确认、按 start 启动、多轮统计（基线 `38fad3c3`）
+
+依据：基于 `38fad3c3` 的两条要求，第二条为准。Doctor 是当前业务运行时的诊断助手：按当前 bundle 启动临时 runtime，用固定样本按真实节奏模拟输入，多次执行后给出统计；业务判断照常由 runtime 完成，Doctor 只负责临时资源、注入样本、采集指标、判断结果和清理。第一条里「逐个 runner 判断外部访问」「缺权重单独确认下载」两点被第二条取代：本轮先按第一条做了一部分（`LOCAL_START` 声明、缺模型先离线试启动再确认下载），收到第二条后都已移除，见第 0 小节。所有改动在未暂存的工作区。
+
+### 0. 与上一批的关系
+
+| 上一批（`2fc4f398` → `38fad3c3`） | 本批 |
+|---|---|
+| 外部服务单独确认；只在本机运行的测试直接跑；未授权时还会单独启动「启动时不联网」的 runner | 统一问一次「是否运行本次诊断」，同意即授权整批；未授权时什么都不启动，包括 runner |
+| 诊断进程关闭下载，先从缓存试启动；缺模型的 runner 失败后再问是否下载，同意后重跑 | 移除。按 `start` 的启动逻辑运行：有缓存就加载，缺权重按正常策略下载；启动失败直接报原始错误和位置 |
+| 本轮途中曾按 runner 声明 `LOCAL_START` 判断启动时是否联网（修正模块名前缀可被冒用的问题） | 移除。一次确认后不再需要逐个判断；未确认时什么都不启动，冒用命名空间的第三方 runner 同样不会启动（测试用同命名空间替身证明） |
+| `voice_vision` 两句（「…on my screen? Answer in one word.」），只接受单词答案；真实 STT 丢第二句导致严格校验失败（T-10C 2.4 遗留） | 颜色场景改为一句问题，接受 `green` 或「The card is green.」这类明确陈述；多句转录改由 `voice`（两句）单独验收，并定位丢句的层 |
+| 每个场景跑一次，同一会话里连续几轮 | 每个场景默认 5 轮，每轮独立会话；按场景汇总统计 |
+
+### 1. 一次确认
+
+- 交互时，静态检查之后只问一次 `Run the diagnosis? [y/N]`。问之前列出：
+  - 会按 `start` 的方式启动这个 bundle 的 runtime，然后每个场景跑几轮、每轮一个独立会话，以及每个场景验证什么；
+  - 缓存里缺的模型文件会先下载，和 `start` 一样；
+  - 会调用的服务，包括 runner 启动时按 `PROVIDERS` 声明要调用的（例如向量库的 embedding 探测），并写明可能计费。
+- 同意：在 Doctor 已加载、已校验的同一个快照上授权，跑完整批。拒绝、回车、输入结束（EOF）或 `--no-metrics`：只返回静态检查，运行时各项 SKIP，原因分别是 `Not run: the diagnosis was declined`、`left out with --no-metrics`；提问处 Ctrl+C 退出 130。
+- 非交互：不提问，只认 `host.doctor.external_services: true`（或同名覆盖项），含义扩大为「允许运行时诊断，包括下载和计费调用」。纯本地的配置也需要授权，因为它同样会启动 runtime、可能下载模型。`--json` 时提问写 stderr，stdout 只有 JSON。
+- 配置已授权时不再提问。
+
+### 2. 按 start 启动
+
+- runtime 由 `InferenceRuntime` 按配置的 runner 计划、模型解析和缓存启动，与 `start` 相同；诊断进程不再设离线环境变量。
+- 每个配置的 runtime 只启动一次，记一个启动样本 `runtime_start`：耗时，以及启动前后模型缓存的字节数差。增长了就写「X of model files downloaded first」，否则写「every model file from the cache」，首次下载和缓存命中的启动耗时因此分开。
+- 外层时限：每个 runner 按自己的 `runtime.inference.initialize_timeout` 依次启动（runtime 自己的超时先触发，报的是它的原始错误），Doctor 的外层时限是各 runner 超时之和再加 30 s，只兜底一个哪条都不守的启动。总时限按轮数加长。
+- 机器自己关闭了下载（`ALPHAAVATAR_MODEL_OFFLINE`／`HF_HUB_OFFLINE`）时，模型解析器抛专门的 `ModelNotCached`（`FileNotFoundError` 的子类），`models.runners` 写明是下载被关掉，处理建议是取消这两个变量。普通的 `FileNotFoundError`（例如自定义配置文件不存在）照原样报告，不触发任何下载或重跑。
+- `models.runners` 的 runner 行里加上服务期间的调用次数、排队峰值和执行峰值（由 runner 进程自己的汇总给出）。
+
+### 3. 场景
+
+- `voice_vision`：「What color is the card on my screen?」一句，配绿色卡片的屏幕共享帧。仍要求本轮语音与样本帧进入同一个模型请求。答案为 `green`／`绿`／`绿色`，或只陈述这个颜色的短句（「The card is green.」「It's green.」）；错误颜色、同时提到别的颜色、否定、含糊（maybe、I think、looks）、问句都不通过。
+- `voice`：「What is two plus three? Answer with just the number.」两句。每句的词都要出现在提交的转录里；视觉开启时也跑（原先只在视觉关闭时跑）。
+- `text`：同一道加法，打字输入。
+- 丢句定位：录音按停顿切出每句的时间段，与 VAD 关闭的语音段、各段的 STT 终态、候选与 Turn 的关联逐一对应：
+  - `vad`：没有语音段覆盖这句的声音；
+  - `stt`：所在段没有终稿，或终稿漏了这句（例如一段里含两句，终稿只有第一句）；
+  - `turn`：这句自己的段有终稿，但没进这个 Turn：作为已退役段的终稿被拒（Turn 已提交），或进了别的候选。
+  - 该轮停在 `vad.closed`／`stt.final`／`turn.committed`，JSON 的 `sentences` 给出每句的时间段、段、STT 结果和字符数。
+- 新的单句卡片录音是从原两句录音在句间停顿处截出的（本机没有带 flite 的 FFmpeg）；`scripts/quality/doctor_samples.py make` 按新提示词也能重新生成，`check` 通过。
+- KD-17 保持开放：丢句定位说明某一轮在哪一层丢了句子，不等于找到了 turn taking 的原因。
+
+### 4. 多轮与统计
+
+- `--rounds N`（1 至 50，默认 5）是唯一的轮数入口。轮次按「第 1 轮的所有场景，第 2 轮的所有场景……」依次运行，每个场景每轮一个独立会话，不累积历史。
+- `session.scenarios` 的 `summaries`：每个场景、每个配置一条，含运行轮数、通过数、其余各轮停在哪个阶段，以及每项指标：第 1 轮的值单列（runtime 启动后的首轮），之后通过的各轮给出样本数、中位数和范围；有 20 个样本才给 P95（不足时 P95 只能是最大的两个值之一，范围已经表达了）。失败轮不计入统计，其已测数据保留在逐轮结果里，终端在「Failed rounds」里单独列出。
+- 会话就绪 `session_ready` 改为所有会话的中位数，`values` 保留每个会话的值。
+- 任何一轮失败，`session.scenarios` 都为 FAIL。
+
+### 5. 模型请求的拆解
+
+- 继续区分：模型首事件（可能只是 response 开始，其类型写在 note 里）、首个文本增量、Host 首字、首音频帧、响应完成。
+- OpenAI Responses provider 新增一条结构化事件 `model.request_sent`，只有数值和 Loop 的 `request_id`：本地编码耗时（`adapter.encode` 在线程里的耗时）、请求里的图片数（数已编码 payload 中的 `input_image`）、实发正文字节数（httpx 请求钩子读 SDK 已编码的正文长度，不重新编码），以及发送次数（含 SDK 重试）。请求被服务拒绝时也记录（请求确实发出了）。
+- Doctor 按 `model.started` 的 `request_id` 把它关联到 Turn，输出为 `model_request_encode`、`model_request_frames`、`model_request_bytes`。没有这条记录时写明「none went out, or its provider logs none」。
+
+### 6. 隔离、测试库与未测
+
+- 可写数据仍放在临时工作区。远端向量库（Qdrant）默认阻止诊断；配置声明 `host.doctor.test_stores: true`（远端库是测试数据）后才运行，并在 `session.start` 里逐个标明「a test store」。
+- `devices.media` 的细节写明：LiveKit 传输未测（样本止于 Host 输出），客户端播放未测，物理设备未打开。
+
+### 7. Provider 状态按实际请求
+
+- 新增 `agents/utils/vdb/probe.py`：`probe_dimension` 发出启动探测，provider 失败时抛 `EmbeddingProbeError`（原错误为其 cause）。五个向量库 runner（memory／persona 的 LanceDB 与 Qdrant、MCP 的 LanceDB）都改用它。
+- `services.external` 对只在 runner 启动时用到的模型 provider：全部启动成功为 passed；启动诊断里有 `EmbeddingProbeError` 才算 provider failed；向量库在探测前失败（例如 LanceDB 打不开本地库）时，provider 为 not observed，失败记在该 runner 上；更早的 runner 失败导致没轮到，也是 not observed。
+
+### 8. 报告
+
+- 终端顺序：`Session`（会话就绪中位数与范围）→ `Runners`（runtime 启动样本，各 runner 启动、调用、排队与执行）→ `Scenarios`（每个场景「通过/总轮数」、失败阶段、按原因合并的失败轮说明、下一步建议）→ 每个场景一张 `Latency` 表（分组：端到端、输入、Context 与模型请求、输出；列为第 1 轮、后续样本数、中位数、范围，样本够时加 P95；窄终端改为逐项分行）→ `Failed rounds`（每个失败轮停在哪里、已测到什么）→ `Run again as JSON`。
+- 未观测的值为 `—`，表下按原因合并说明。
+- JSON 保留逐轮数据（`round`、`sentences`、分段证据）与 `summaries`。
+
+### 9. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/.../doctor/doctor.py`、`doctor/__init__.py` | `ROUNDS`、`MAX_ROUNDS`；`prepare(rounds)`、`Diagnosis.asks／services／scenarios／rounds`；删 `missing_models`；`devices.media` 写明未测项 |
+| `avatar-host/.../doctor/session.py` | 未授权什么都不启动；`start_services` 只列 runner 的 `PROVIDERS`；`budget(initialize, turns, runners)`；每轮每场景一个会话；runtime 启动样本与缓存增长；`session_ready` 中位数；runner 的调用与排队执行峰值；`summarize` 接入 `session.scenarios`；按探测结果判 Provider；`test_stores`；`ModelNotCached` 的处理建议 |
+| `avatar-host/.../doctor/process.py` | 不再关闭下载；`rounds` 贯穿；按 runner 数与 `initialize_timeout` 计时限 |
+| `avatar-host/.../doctor/measure.py` | `summarize`、`P95_SAMPLES`；丢句定位 `sentences`；`model.request_sent` 关联与三项请求指标；首事件类型 |
+| `avatar-host/.../doctor/samples.py`、`samples/card_question.wav` | 单句卡片问题；`voice` 两句逐句检查；答案可为明确陈述；`voiced_spans` |
+| `avatar-host/.../doctor/schemas/*`、`transport.py`、`config.py` | `FigureSummary`、`ScenarioSummary`、`round`、`sentences`、runner 服务数据；捕获 `model.request_sent`；`test_stores` |
+| `avatar-host/.../cli/commands/doctor.py`、`cli/app.py`、`cli/render.py` | 一次确认；`--rounds`；EOF 按拒绝；Session／Runners／Scenarios／Latency／Failed rounds；表格行去尾随空格 |
+| `avatar-agents/.../utils/files/model/model_files.py` | `ModelNotCached` |
+| `avatar-agents/.../utils/vdb/probe.py`（新增）与五个向量库 runner | `probe_dimension`、`EmbeddingProbeError` |
+| `avatar-core/.../log/events.py` | 注册 `model.request_sent` 与四个数值字段 |
+| `avatar-plugins/.../provider/openai/llms/client.py`、`responses.py` | httpx 请求钩子记实发正文大小；编码耗时、图片数；被拒也记录 |
+| `scripts/quality/doctor_compare.py`（新增） | 并排比较多份 `--json` 报告 |
+| 测试 | `test_session.py`：一次确认、EOF、未同意不启动（同命名空间第三方替身）、普通缺文件、缓存命中与正常下载、关闭下载、多轮汇总与部分失败、后续轮次取消、真实 Responses 适配器的请求记录（与服务端收到的字节数一致）、探测前后失败的归因；`test_measure.py`：丢句定位、P95 门槛；`test_isolation.py`：未授权不启动、测试库；`test_render.py`：多轮汇总的终端版式；`test_compare.py`；`agents/tests/utils`：探测与离线缺模型；`provider/tests`：图片计数与实发大小；`doctor_doubles.py`：`CachedModelRunner`、`MissingFileRunner`、`runs.jsonl`；`fixtures/thirdparty`：同命名空间的第三方 runner |
+| `docs/cli/doctor.md`、`setup.md`、`README.md`（CLI）、`README.md` | 一次确认、按 start 启动、轮数与统计、场景与丢句、请求拆解、测试库、未测项 |
+
+### 10. 离线验证
+
+- **测试**：全量 511 项通过；把已移除的包设为不可导入后再跑一遍，也是 511 项通过。Ruff（`--no-cache`）、格式、`check_workspace.py`、`uv lock --check`、`git diff --check`、pre-commit、`doctor_samples.py check` 全部通过。
+- **变异**：34 个，最终全部被抓到（`scratchpad/evidence8/mutants9.log`、`mutants9-b.log`）。首轮有两个存活：
+  - D3（退役段的终稿不归 Turn）：测试只断言了层，退役与「进了别的候选」都是 `turn`；补上原因断言后被抓到；
+  - F1（被拒的请求不记）：第一版变异是等价的（前面的 `except Exception` 先接住了 401），改成把 `finally` 换成 `else` 后被抓到。
+- **离线回归覆盖**（测试名见第 9 节）：
+  - 缓存命中，与缺权重按正常路径下载：替身 runner 第一次把权重写进配置的模型缓存，启动样本写「64.0 KB of model files downloaded first」；第二次从缓存加载，写「every model file from the cache」；机器关闭下载时按 `start` 的方式失败并给出处理建议。
+  - 拒绝启动：未授权、拒绝时，同命名空间的第三方 runner 的 `initialize` 都没有执行；同意后才执行。EOF 按拒绝。
+  - 部分场景失败：3 轮里第 2 轮 STT 丢了第二句，`voice` 为 2/3，`stopped_at` 为 `{"stt.final": 1}`，失败轮的 `sentences` 指出第 2 句丢在 `stt`。
+  - 取消清理：第 2 轮的第一个语音段提交后按 Ctrl+C，第 1 轮全部通过，第 2 轮全部为 interrupted，清理通过，进程组与临时目录都已回收。
+  - 多轮汇总：第 1 轮单列，后续轮的样本数、中位数和范围与逐轮数值一致；P95 不到 20 个样本不给。
+  - 真实 OpenAI Responses 适配器对本机替身服务：被 401 拒绝的请求也记了录，`model_request_bytes` 与服务端收到的字节数相同，图片数为 0；图片在本地就被拒时没有发出请求的记录。
+- **离线录制**（`docs/cli/cli.html`，标「离线测试替身」）：默认 5 轮、72 列、关闭视觉、缺权重下载、第 2 轮丢句、模型不接受图片、提问处 Ctrl+C。替身的耗时只说明替身。
+- **沙箱**（bubblewrap 里的 Ubuntu 24.04，本轮构建）：Doctor 拒绝、`--no-metrics`、无人值守和 `--json` 都符合预期；无人值守时 stdout 第一个字符是 `{`，stderr 为空。
+
+### 11. 真实服务对照（用户确认后运行，2026-11-07）
+
+前提同上一批第 7 节：本轮构建的基础包装到隔离的前缀和 home，`setup` 出含本机模型的参考 bundle `accept`，四个凭据在环境里。每项只改一个变量，同一 bundle、默认 5 轮，非交互授权，各存一份 JSON：
+
+```bash
+# 0. 基线：当前配置（分段 STT openai_segment，vision.max_frames 默认 4）
+alphaavatar doctor accept host.doctor.external_services=true --json < /dev/null > segment.json
+
+# 1. 实时 STT，其余不变
+alphaavatar doctor accept host.doctor.external_services=true \
+  voice.stt.plugin=openai_realtime voice.stt.model=gpt-realtime-whisper --json < /dev/null > realtime.json
+python3 scripts/quality/doctor_compare.py segment=segment.json realtime=realtime.json
+
+# 2. 视觉选帧：回到分段 STT，只改帧数
+alphaavatar doctor accept host.doctor.external_services=true vision.max_frames=2 --json < /dev/null > frames2.json
+python3 scripts/quality/doctor_compare.py frames4=segment.json frames2=frames2.json
+```
+
+- **看什么**：
+  - STT 对照：`voice` 和 `voice_vision` 的「Speech end → STT final」「Speech end → Turn commit」「Host first text」，通过轮数，丢句的层，holds／cancels，以及是否有退役段的终稿被拒（取消后的旧终稿没有串到别的轮）。
+  - 帧数对照：`voice_vision` 的 Pictures sent、Request size、Request encoding、Model request → First text delta，以及答案是否仍通过。帧数没降时，按 JSON 里该请求的 `frames`（Context 选了哪些、请求实际带了哪些）解释。
+  - 首轮与后续：`compare` 的括号里是第 1 轮，主值是后续轮的中位数。
+- **交互方式**：去掉 `host.doctor.external_services=true` 和 `< /dev/null`，在终端里看清提示后答 y。
+- **计费**：每份报告 5 轮 × 3 个场景，共 15 次模型调用，加 10 次 STT、15 次以上的 TTS 和若干 embedding；三份报告约 45 轮。
+- **默认值**：等统计结果出来再决定是否改默认 STT 后端、Turn 超时或 `max_frames`，本轮都没改。
+- 测量止于 Host 输出边界；LiveKit 传输、客户端播放和物理设备不在其中，另行测量。
+
+#### 11.1 实测（真实服务，2026-11-07）
+
+以下全是真实服务数据，与 `docs/cli/cli.html` 和第 10 节的离线测试替身数据无关。
+
+**执行方式**：
+- **构建与安装**：用本轮构建 `alphaavatar-0.6.8-38fad3c313de-dirty.20261106164029`。改动的 29 个源文件逐个与包内文件比对，内容一致。
+  - 基础包装到会话临时目录里的隔离前缀和 home。
+  - 无人值守路径 `config init accept` → `setup accept < /dev/null`：从真实索引下载 105 个包、514 MB，`Validate PASS · 8 runners`。
+  - 两个改动项先用 `config check` 确认可解析：`stt=openai_realtime`、`vision on`。
+- **凭据**：同上一批，只从 `.env.dev` 取四个变量，写进只有本人可读的文件。每条命令在空环境里运行，只带这四个变量、隔离的 `ALPHAAVATAR_HOME`，以及 `HOME`、`PATH`、`LANG`、`TERM`。
+- **模型缓存**：在隔离 home 里（`paths.cache`），开始时为空，所以基线那次是真实的首次下载。
+- **输出检查**：三份报告的 stdout 都以 `{` 开头，stderr 都为空；JSON 和 stderr 里都没有凭据值。
+- **退出码**：都是 1，每份都有场景没有全部通过（第 12 节第 2 条）。
+
+**启动样本**（每次 runtime 启动一个）
+
+| 报告 | runtime 启动 | 模型文件 | 最慢的 runner |
+|---|---|---|---|
+| segment（基线） | 146.19 s | 先下载了 1,731.9 MB | addressing `qwen3_0_6b`，67.64 s |
+| realtime | 16.31 s | 全部来自缓存 | memory `lancedb`，5.37 s |
+| frames2 | 16.95 s | 全部来自缓存 | memory `lancedb`，5.69 s |
+
+每份报告各 15 个会话。会话就绪的中位数是 10–11 ms，每份的第一个会话是 134–212 ms。
+
+**通过轮数**（每个场景 5 轮，每轮一个独立会话）
+
+| 场景 | segment | realtime | frames2 |
+|---|---|---|---|
+| `voice_vision`（单句颜色问句） | 5/5 | 0/5，5 轮停在 `stt.final` | 5/5 |
+| `voice`（两句加法题） | 1/5，4 轮停在 `stt.final` | 5/5 | 0/5，5 轮停在 `stt.final` |
+| `text` | 5/5 | 5/5 | 5/5 |
+
+**STT 对照**（只改 STT 后端：`openai_segment`／`gpt-4o-transcribe` 对 `openai_realtime`／`gpt-realtime-whisper`）
+
+- **分段 STT 丢第二句**：在两句样本上，两份报告共 10 轮，有 9 轮丢了第二句「Answer with just the number.」（segment 4 轮，frames2 5 轮）。
+  - 证据链：VAD 把两句合成一个段（191 帧），STT 终稿只有第一句（23 个字符），Doctor 把它定位在 STT 层。
+  - 唯一通过的一轮，终稿 50 个字符，两句都在。
+  - 和 T-10C、上一批的发现一致；被丢的都是那句指令。
+- **实时 STT 的结果正好相反**：
+  - 两句样本 5/5，两句都听到。第二句转成「Answer with just the number.」，判为听到。
+  - 单句颜色样本 5 轮都转成「Color is the color on my screen(.)」：缺了「What」，「card」听成「color」，Doctor 判在 STT 层。
+  - 两种后端拿到的是同一段音频（148 帧），分段 STT 在这份录音上 5/5 正确。
+- **排除了录音截取的影响**：卡片录音逐样本核对过，前 37,600 个样本和已提交的两句录音完全一致；语音在 2.24 s 结束，截断点 2.35 s 落在句间停顿里，没有截掉语音。
+- **时延**（语音结束 → STT 终稿，后续 4 轮的中位数和范围）：
+  - Doctor 的统计只计通过的轮，分段 STT 的 `voice` 因此只有 1 个样本。
+  - 下表另列所有轮的观测值。失败轮也是在 STT 终稿到达之后才判失败，所以终稿时间是真实观测到的。这张表不是报告里的统计。
+
+| | segment | realtime |
+|---|---|---|
+| `voice`：STT 终稿 | 1,484 ms [1,245–1,622]（含失败轮） | 1,328 ms [1,267–1,365] |
+| `voice`：Turn 提交 | 1,627 ms [1,387–1,755]（含失败轮） | 1,484 ms [1,424–1,512] |
+| `voice_vision`：STT 终稿 | 1,555 ms [1,374–1,850] | 1,318 ms [1,194–1,425]（失败轮） |
+
+- **时延解读**：
+  - 实时 STT 的终稿早约 150–240 ms，范围也更窄。
+  - 但 `voice` 的 Host 首字是 realtime 2,712 ms [2,633–2,851]，segment 2,622 ms（只有 1 个样本），STT 的提前没有体现到首字上。
+  - 这一组的「模型请求 → 首个文本增量」是 realtime 999 ms [822–1,136]，segment 706 ms（1 个样本）。差异在模型侧，样本太少，不能下结论。
+- **Turn taking**：
+  - holds 在 `voice` 是 14 对 15，在 `voice_vision` 是 10 对 10。
+  - 都没有 cancel，也没有退役段的终稿被拒，取消后的旧终稿没有串到别的轮。
+  - KD-17 未复现，KD 表不变。
+
+**选帧对照**（只改 `vision.max_frames`，4 对 2，都用分段 STT；`voice_vision` 后续 4 轮的中位数和范围）
+
+| | frames4（segment） | frames2 |
+|---|---|---|
+| 答案 | 5/5「The card is green.」 | 5/5「The card is green.」 |
+| 发送的图片 | 4 | 2（第 1、3 轮是 3 张） |
+| 请求大小 | 64,066 B [63,994–64,138] | 41,798 B [41,798–53,040] |
+| 本地编码 | 0.2 ms | 0.2 ms |
+| 模型请求 → 首个事件 | 626 ms [502–775] | 521 ms [476–594] |
+| 模型请求 → 首个文本增量 | 1,320 ms [1,261–1,364] | 1,211 ms [1,157–1,789] |
+| Host 首字 | 3,080 ms [2,916–3,431] | 2,945 ms [2,727–3,676] |
+| 响应完成 | 4,595 ms [4,516–4,983] | 4,369 ms [4,296–5,466] |
+
+- **帧数没降到 2 的两轮**：
+  - JSON 里这两轮都是 3 帧，全部选中并发送，位置在语音结束后 +559、+1,060、+1,560 ms。
+  - 按 `vision/selector.py` 的语义 VLM 选帧，每个 speech/gap 切片至少保留它的最后一帧，预算是 `max(max_frames, 切片数)`。所以对齐窗口里有 3 个带帧的切片时，就发了 3 张。
+  - 这是由代码和数据推断的，报告 JSON 里没有切片编号。
+  - 4 帧时选中的是语音结束前 −1,040、−39 ms 和之后 +560、+1,360 ms 的帧；2 帧时只剩语音结束之后的帧。
+- **效果**：
+  - 改成 2 帧后，请求小了约 22 KB（约 35%），模型侧中位数快约 100 ms，但范围重叠，每组只有 4 个样本。
+  - 同一组对照里，与帧数无关的 STT 终稿中位数也差了 75 ms，所以这个差距和噪声同一量级。
+
+**三份报告共同的观察**：
+- **第 1 轮明显更慢**：
+  - 模型请求 → 首个事件：第 1 轮在三份报告里分别是 3,006、1,106 和 1,121 ms，后续轮的中位数在 460–630 ms。
+  - `voice_vision` 的 Host 首字：第 1 轮 6,443 ms（基线，紧接在首次下载的启动之后），frames2 第 1 轮 4,067 ms。
+- **Context 等待**：每轮模型请求前，Context 准备等待 200–320 ms（`context_ready_wait`），三个场景都有。这是 Turn 提交到模型请求之间的主要部分。
+- **请求本身**：本地编码 0.1–0.3 ms，可以忽略。不带图的请求约 20 KB，每张图约 11 KB。
+- **服务判定**：
+  - `services.external` 三份都把 STT 判为 failed（stopped at stt.final），与丢句或错句所在的层一致。
+  - 模型与 TTS 都是 passed，LiveKit 没有连接。
+  - `session.cleanup` 三份都是 PASS。
+
+**对照中发现并修复**：`scripts/quality/doctor_compare.py` 把 10 ms 以下的值取整成 0，本地编码因此显示为「0」。改成和终端报告一样，10 ms 以下保留一位小数。`test_compare.py` 加了对应断言，回退这处改动后测试失败。
+
+**结论与待决定**：
+- **STT**：两个后端各在一份样本上稳定失败，都不能直接改成默认，默认值不改，由用户决定。可以考虑的下一步都会计费，需要再确认：
+  - 用原来的两句卡片录音，或另一种声音生成的样本，重测两个后端，看失败是跟后端走还是跟样本走；
+  - 提高轮数，例如 `--rounds 20`，让 STT 时延达到 P95 门槛。
+- **`max_frames=2`**：答案没有受影响，请求小约 35%，时延差距在噪声范围内。是否改默认，由用户决定；第 1、3 轮多出的一帧是选帧预算的既有行为。
+
+**计费调用**：三份报告共 45 轮。
+- 每轮一次模型请求和一次 TTS。
+- `voice` 和 `voice_vision` 的 30 轮各有一次 STT。
+- 另有记忆、画像任务和 embedding 若干。
+- `setup` 和 `config check` 没有计费调用。
+
+**保留与清理**：
+- 三份 JSON（`segment.json`、`realtime.json`、`frames2.json`）和两张对照表保留在会话临时目录的 `real2/` 下，里面只有临时路径，没有凭据。
+- 隔离环境、它的模型缓存和凭据副本已删除。
+
+#### 11.2 完整指标表（真实服务）
+
+**读法**：
+- 单元格是第 2–5 轮的中位数 [最小–最大]，括号里是第 1 轮。单位是 ms，另有注明的除外。
+- 没标 † 的列就是 Doctor 自己的统计：只计通过的轮，和 JSON 的 `summaries` 一致（生成脚本逐列核对过中位数）。
+- 标 † 的列：该场景通过的后续轮不到 2 轮，改为列出所有轮的观测值，失败轮也计入，这不是 Doctor 的统计。
+  - 这些轮都是在 STT 终稿到达后才判失败，后面各阶段都真实走完了。
+  - 但失败轮的转录不对，回答也就变了：分段 STT 的 `voice` 答成整句「Two plus three is five.」，实时 STT 的 `voice_vision` 答成「The color on your screen is green.」。所以这两列的音频时长和响应完成，不能和通过轮直接比较。
+- 「输入结束」：语音场景是最后一个有声样本，`text` 是文本输入被接受的时刻。
+- 欠载按「首帧到达即开始播放、没有启动缓冲」计算，带抖动缓冲的客户端未必会出现。
+
+**会话与 runner**
+
+| | 分段 STT · 4 帧 | 实时 STT | 分段 STT · 2 帧 |
+|---|---|---|---|
+| runtime 启动 | 146.19 s（先下载 1,731.9 MB） | 16.31 s（全部来自缓存） | 16.95 s（全部来自缓存） |
+| 会话就绪，15 个会话的中位数 | 10.6 ms，第一个 212.5 ms | 10.5 ms，第一个 134.0 ms | 10.4 ms，第一个 124.6 ms |
+| 会话就绪，其余 14 个的范围 | 10.2–11.1 ms | 10.2–11.3 ms | 10.2–12.7 ms |
+
+| runner | 首次下载时的启动 | 缓存命中时的启动（实时 STT／2 帧） | 调用次数（三份） | 排队峰值（三份） | 执行峰值（三份） |
+|---|---|---|---|---|---|
+| `voice.vad.silero` | 1.30 s | 0.24／0.24 s | 2430／2235／2286 | 0.48／0.61／0.86 ms | 1／2／2 ms |
+| `router.addressing.semantic.qwen3_0_6b` | 67.64 s | 1.97／1.96 s | 10／10／10 | 0.01 ms | 152／151／158 ms |
+| `router.turn_taking.smart_turn_v3` | 3.30 s | 1.60／1.62 s | 25／27／25 | 0.01 ms | 82／63／59 ms |
+| `memory.vdb.lancedb` | 7.22 s | 5.37／5.69 s | 15／15／15 | 0.01 ms | 320／425／288 ms |
+| `persona.speaker.attribute` | 29.44 s | 1.08／1.07 s | 5／5／5 | 0.01 ms | 124／105／101 ms |
+| `persona.speaker.vector` | 8.82 s | 1.32／1.32 s | 10／10／10 | 0.01 ms | 93／90／91 ms |
+| `persona.face.analysis` | 25.14 s | 1.57／1.52 s | 未观测 | 未观测 | 未观测 |
+| `persona.vdb.lancedb` | 3.33 s | 3.16／3.54 s | 29／29／29 | 0.01 ms | 965／408／345 ms |
+
+排队峰值都在 1 ms 以内，没有 runner 成为排队瓶颈。`face.analysis` 在这些样本里没有观测到调用：卡片画面里没有人脸。
+
+**各场景**
+#### `voice_vision`
+
+| 指标 | 分段 STT · 4 帧 | 实时 STT † | 分段 STT · 2 帧 |
+|---|---|---|---|
+| **输入** | | | |
+| 语音结束 → VAD 关段 | 721 [719–722] (721) | 721 [721–722] (721) | 720 [720–721] (721) |
+| 段提交 STT → 终稿 | 834 [653–1,131] (1,926) | 597 [473–704] (635) | 760 [636–936] (936) |
+| 语音结束 → STT 终稿 | 1,555 [1,374–1,850] (2,647) | 1,318 [1,194–1,425] (1,357) | 1,480 [1,357–1,657] (1,657) |
+| 语音结束 → Turn 提交 | 1,557 [1,376–1,852] (2,650) | 1,352 [1,273–1,427] (1,359) | 1,482 [1,359–1,659] (1,660) |
+| **视觉** | | | |
+| 所选最旧帧到请求的年龄 | 2,394 [1,912–2,704] (2,371) | 2,640 [2,522–2,693] (2,639) | 1,175 [1,009–1,327] (1,338) |
+| 最新所选帧 → Turn 提交 | 93 [15–99] (89) | 39 [5.5–77] (98) | 94 [53–98] (99) |
+| **Context 与模型请求** | | | |
+| Context 准备等待 | 216 [207–250] (278) | 216 [206–283] (237) | 218 [209–289] (234) |
+| Turn 提交 → 模型请求 | 219 [210–253] (281) | 218 [209–286] (240) | 220 [211–291] (238) |
+| 本地编码 | 0.2 (0.2) | 0.2 (0.2) | 0.2 (0.3) |
+| 发送图片（张） | 4 (4) | 4 (4) | 2 [2–3] (3) |
+| 请求大小（B） | 64,066 [63,994–64,138] (64,282) | 63,990 [63,989–63,990] (63,990) | 41,798 [41,798–53,040] (53,040) |
+| 模型请求 → 首个事件 | 626 [502–775] (3,006) | 559 [505–626] (1,106) | 521 [476–594] (1,121) |
+| 模型请求 → 首个文本增量 | 1,320 [1,261–1,364] (3,512) | 1,227 [1,172–1,666] (1,716) | 1,211 [1,157–1,789] (2,169) |
+| **输出** | | | |
+| TTS 请求 → 首段 PCM | 756 [572–812] (1,442) | 759 [672–884] (794) | 688 [627–782] (755) |
+| 输入结束 → Host 首字 | 3,080 [2,916–3,431] (6,443) | 2,876 [2,728–3,148] (3,315) | 2,945 [2,727–3,676] (4,067) |
+| 输入结束 → 首音频帧 | 4,054 [3,807–4,243] (8,083) | 3,825 [3,773–4,200] (4,245) | 3,727 [3,634–4,542] (4,937) |
+| 输入结束 → 文本完成 | 3,266 [3,090–3,637] (6,639) | 3,114 [2,928–3,390] (3,450) | 3,073 [2,851–3,844] (4,181) |
+| 输入结束 → 响应完成 | 4,595 [4,516–4,983] (8,785) | 4,738 [4,545–5,138] (5,164) | 4,369 [4,296–5,466] (5,648) |
+| **音频供给** | | | |
+| 音频时长（s） | 2.20 [1.55–2.30] (2.55) | 3.62 [3.20–3.90] (3.35) | 2.70 [2.10–3.60] (2.60) |
+| 最大帧间隙 | 340 [179–366] (280) | 436 [299–585] (367) | 265 [243–296] (292) |
+| 欠载（次） | 1 [0–1] (1) | 1 (1) | 1 (1) |
+| 累计饥饿 | 142 [0.0–168] (81) | 238 [101–386] (169) | 67 [45–98] (93) |
+| 生成时间／音频时长 | 0.31 [0.24–0.35] (0.28) | 0.24 [0.22–0.30] (0.27) | 0.29 [0.19–0.31] (0.27) |
+
+#### `voice`
+
+| 指标 | 分段 STT · 4 帧 † | 实时 STT | 分段 STT · 2 帧 † |
+|---|---|---|---|
+| **输入** | | | |
+| 语音结束 → VAD 关段 | 680 [680–681] (680) | 682 [680–682] (682) | 681 (682) |
+| 段提交 STT → 终稿 | 804 [564–941] (910) | 647 [585–684] (661) | 696 [652–732] (584) |
+| 语音结束 → STT 终稿 | 1,484 [1,245–1,622] (1,590) | 1,328 [1,267–1,365] (1,342) | 1,377 [1,334–1,413] (1,267) |
+| 语音结束 → Turn 提交 | 1,627 [1,387–1,755] (1,719) | 1,484 [1,424–1,512] (1,494) | 1,514 [1,461–1,554] (1,412) |
+| **Context 与模型请求** | | | |
+| Context 准备等待 | 214 [204–310] (252) | 215 [178–426] (215) | 255 [229–289] (224) |
+| Turn 提交 → 模型请求 | 217 [207–313] (255) | 219 [181–429] (219) | 258 [233–292] (227) |
+| 本地编码 | 0.1 (0.2) | 0.1 [0.1–0.2] (0.1) | 0.1 [0.1–0.3] (0.1) |
+| 发送图片（张） | 0 (0) | 0 (0) | 0 (0) |
+| 请求大小（B） | 20,176 [20,176–20,203] (20,023) | 20,205 (20,052) | 20,176 (20,023) |
+| 模型请求 → 首个事件 | 469 [418–576] (2,392) | 580 [463–667] (534) | 487 [446–948] (873) |
+| 模型请求 → 首个文本增量 | 758 [649–968] (2,871) | 999 [822–1,136] (943) | 879 [650–1,387] (1,303) |
+| **输出** | | | |
+| TTS 请求 → 首段 PCM | 678 [643–748] (931) | 662 [633–770] (804) | 728 [620–824] (741) |
+| 输入结束 → Host 首字 | 2,647 [2,258–2,930] (4,845) | 2,712 [2,633–2,851] (2,655) | 2,630 [2,496–3,122] (2,943) |
+| 输入结束 → 首音频帧 | 3,405 [3,134–3,725] (5,877) | 3,502 [3,321–3,562] (3,510) | 3,468 [3,230–4,072] (3,822) |
+| 输入结束 → 文本完成 | 2,736 [2,383–3,059] (4,944) | 2,778 [2,670–2,928] (2,703) | 2,723 [2,609–3,278] (3,079) |
+| 输入结束 → 响应完成 | 4,161 [3,821–4,437] (6,683) | 4,092 [3,747–4,339] (3,926) | 4,233 [3,936–4,853] (4,732) |
+| **音频供给** | | | |
+| 音频时长（s） | 2.80 [1.95–4.05] (3.05) | 1.57 [0.30–2.25] (1.40) | 2.85 [2.60–3.30] (3.40) |
+| 最大帧间隙 | 284 [271–443] (380) | 278 [206–658] (230) | 383 [259–481] (271) |
+| 欠载（次） | 1 (1) | 1 (1) | 1 (1) |
+| 累计饥饿 | 86 [72–244] (183) | 80 [7.9–459] (32) | 185 [62–283] (73) |
+| 生成时间／音频时长 | 0.25 [0.17–0.42] (0.26) | 0.36 [0.25–0.83] (0.30) | 0.27 [0.19–0.31] (0.27) |
+
+#### `text`
+
+| 指标 | 分段 STT · 4 帧 | 实时 STT | 分段 STT · 2 帧 |
+|---|---|---|---|
+| **Context 与模型请求** | | | |
+| Context 准备等待 | 276 [202–321] (201) | 224 [200–349] (202) | 205 [197–278] (239) |
+| Turn 提交 → 模型请求 | 280 [205–324] (204) | 227 [204–352] (206) | 208 [200–282] (242) |
+| 本地编码 | 0.1 (0.1) | 0.1 (0.1) | 0.1 (0.1) |
+| 发送图片（张） | 0 (0) | 0 (0) | 0 (0) |
+| 请求大小（B） | 20,230 (20,230) | 20,230 (20,230) | 20,230 (20,230) |
+| 模型请求 → 首个事件 | 476 [424–502] (507) | 502 [456–530] (481) | 520 [499–788] (679) |
+| 模型请求 → 首个文本增量 | 874 [693–946] (777) | 883 [715–937] (818) | 879 [742–944] (927) |
+| **输出** | | | |
+| TTS 请求 → 首段 PCM | 764 [697–890] (1,439) | 688 [645–774] (650) | 749 [642–797] (687) |
+| 输入结束 → Host 首字 | 1,153 [898–1,269] (980) | 1,127 [932–1,239] (1,023) | 1,093 [954–1,199] (1,168) |
+| 输入结束 → 首音频帧 | 2,059 [1,696–2,108] (2,480) | 1,864 [1,724–2,112] (1,758) | 1,870 [1,730–2,064] (2,006) |
+| 输入结束 → 文本完成 | 1,246 [975–1,337] (1,038) | 1,192 [1,042–1,337] (1,107) | 1,151 [1,002–1,288] (1,319) |
+| 输入结束 → 响应完成 | 2,678 [2,114–5,500] (2,908) | 2,530 [2,351–3,596] (2,415) | 2,479 [2,333–2,580] (2,723) |
+| **音频供给** | | | |
+| 音频时长（s） | 1.25 [0.30–2.40] (1.30) | 1.27 [1.05–2.25] (1.05) | 1.65 [1.00–2.05] (2.80) |
+| 最大帧间隙 | 301 [164–351] (209) | 417 [338–1,028] (467) | 325 [210–451] (294) |
+| 欠载（次） | 1 [0–1] (1) | 1 (1) | 1 (1) |
+| 累计饥饿 | 103 [0.0–152] (11) | 219 [140–830] (268) | 126 [12–253] (96) |
+| 生成时间／音频时长 | 0.63 [0.18–1.10] (0.33) | 0.42 [0.30–1.59] (0.62) | 0.35 [0.30–0.52] (0.26) |
+
+**表里另外看到的**：
+- **音频欠载**：几乎每轮都有 1 次，累计饥饿 0–830 ms，最大帧间隙 164–1,028 ms，三种配置都一样；45 轮里只有 2 轮是 0 次。报告只给总量，没有记录间隙出现在第几帧，所以还没能定位到是 TTS 首块之后的停顿，还是句间。
+- **音频时长波动**：`text` 每次都答「5」，音频时长却在 0.30–2.80 s 之间，原因未定位。
+- **事件丢失**：三份报告的 `output_events_dropped` 全部为 0。
+
+### 12. 待复核
+
+1. **纯本地配置也要授权**：非交互时，即使配置不调用任何外部服务，也要 `host.doctor.external_services: true` 才跑运行时诊断，因为它会启动 runtime、可能下载模型；开关名沿用旧名，含义扩大了，没有改名。
+2. **一轮失败即 FAIL**：5 轮里只要有一轮失败，`session.scenarios` 就是 FAIL，退出码 1。
+3. **丢句定位的依据**：句子的时间段来自录音的停顿；VAD 段的时间来自 perception 的时间范围，两者同一时钟。录音句数与停顿数对不上时（例如替身的噪声样本），所有段都算候选。
+4. **单句卡片录音**：本机没有带 flite 的 FFmpeg，新录音是从原录音截出的；以后有 FFmpeg 时用 `doctor_samples.py make` 重新生成，内容一样、字节可能不同。
+5. **runner 行变长**：加上调用和排队、执行峰值后，100 列下长方法名的 runner 值会换到下一行。
+
+## Doctor 第一批：执行范围与确认一致、指标口径、漏句归因与报告复现（基线 `d5080d5`）
+
+依据：`d5080d5` 审查的「第一批实现与验收」第 2～4 项（第 1 项 Setup 与 Quality 记在交互配置日志「交互配置第三轮」）。所有改动在未暂存的工作区。真实服务复验与 KD-17 在用户确认后运行，见第 7 节；其后各项没有开始，见第 8 节。
+
+### 0. 与上一批的关系
+
+| 上一批（`38fad3c3`，本文件上一节） | 本批 |
+|---|---|
+| 视觉开时排入 `voice_vision` 和 `voice`，并总是排入独立 `text` | 视觉开只跑 `voice_vision`，视觉关只跑 `voice`；`text` 场景删除 |
+| 原配置失败后可能自动追加「关闭视觉」「纯文本输出」两种降级试跑，各自再启动一次 runtime | 删除降级：失败按原因报告，不再试别的配置 |
+| 确认、预算、执行各自调用 `session.plan` | `prepare` 时生成一份 `Plan`，确认文案、预算和子进程执行读同一份 |
+| Doctor 自己拼 `InferenceRuntime` | `application.create_inference_runtime(config)`，`start` 与 Doctor 共用 |
+| `runtime_start` 的说明来自缓存扫描（「downloaded first」），计时含扫描 | 计时止于启动自身结束；说明只写缓存净变化 |
+| 部分模型时延从 `model.started` 起算；OpenAI 的 `model.request_sent` 在 `create()` 返回或抛错后才记 | 节点链：从「Final speech」到「First audio frame」，`Model request sent` 在交给传输层时逐次记录 |
+| 漏句按第一个重叠语音段和终稿字符数推断 | 覆盖、终稿、采用、内容四项分开，证据不足标 `unknown` |
+| 汇总只有通过轮；对照脚本照抄汇总 | 汇总另给全体已观测值；对照脚本从逐轮数据重算并核对 |
+
+### 1. 执行范围与确认一致
+
+- `session.plan(config)` 返回一个场景：`vision.enabled` 且 `input_mode` 不是 `text` 时为 `voice_vision`（会话类型 `video`），否则为 `voice`（`audio`）。VAD、STT、TTS 缺任何一个时没有场景：`missing` 写明缺哪几项；`blocked` 以「no scenario to run: …」开头，不提问、不启动 runtime（`runs.jsonl` 不出现），`session.start` 为 SKIP 并给出下一步。另一个语音场景列为 `not_enabled` 并说明原因。
+- `Diagnosis` 增加 `plan` 字段（`prepare` 时生成）：`scenarios`（确认文案）、`process.diagnose` 的预算（`turns = rounds × len(plan.tasks)`）、传给子进程的 `planned` 都是它；子进程不再重新规划。测试替身把子进程收到的计划写进 `runs.jsonl`，用例逐次核对。
+- 删除：`samples.TEXT`、`Task.text`、`DiagnosticSource.type`、`session.vision_off`、`_degradations`、`_vision_unavailable`、`_speech_failed`、按配置区分的 runner 表和启动表。`RunnerResult.configuration` 删除；`ScenarioResult.configuration` 与 `ScenarioSummary.configuration` 改为本轮配置标识（如 `model m · stt openai_segment m · tts openai m · vision vlm, max_frames 4`），summary 增加 `sample`（样本名与内容 sha256 前 12 位）。
+- runtime：`application.create_inference_runtime(config)` 做 `prepare_inference_runners`、`bootstrap_inference_runners` 和 `RunnerLaunch`（工作区、模型缓存、推理配置快照），`AvatarHost._serve` 和 Doctor 都调用它；缓存命中、缺模型下载、`ALPHAAVATAR_MODEL_OFFLINE` 都走同一条路径。
+- 启动耗时：`runtime.start()` 包一层，在它自己的 `finally` 里记结束时刻，耗时止于此；缓存扫描改到线程里、在计时之后。说明只写净变化：`the model cache grew by 64.0 KB (net)` 或 `the model cache did not grow (net)`，不再说「downloaded」或「every model file from the cache」。
+  - 关于下载事件：中途曾在模型解析器里加下载日志，随后确认 runner 子进程的日志不进诊断进程的 `LogTimings`（Doctor 不启动 Host 的日志接收端，`INFERENCE SUMMARY` 能采到是因为它在父进程记录），所以这条日志支撑不了报告，已撤回。报告只给净变化；要给真实下载量，需要 runner 启动状态里带下载字节数（推理协议改动），记为待定。
+- 模型拒图：`voice_vision` 失败在 `model.first_event`，原因 `ModelCapabilityError: image_input`，下一步为「The model takes no pictures: choose one that does, or turn vision off」，不再自动换配置。
+
+验收（`test_session.py`，替身见上一节；每次都核对 `runs.jsonl` 的运行次数与计划、`requests.jsonl` 的模型请求数、`session.cleanup` 和临时根目录为空）：
+
+| 情形 | 结果 |
+|---|---|
+| 视觉开 | 只跑 `voice_vision`；1 次运行、1 次模型请求；`voice` 为 `not_enabled` |
+| 视觉关 | 只跑 `voice`，两句都听到；`voice_vision` 为 `not_enabled`，请求不带图 |
+| 确认与拒绝 | 确认文案只列 `voice_vision` 和 `then runs this scenario once`；拒绝时什么都不运行 |
+| 没有语音 | 不提问、不启动、不建 runner，`session.start` 说明缺项 |
+| 冷缓存、热缓存、重新下载覆盖 | 净增 64.0 KB；未增长；重新下载覆盖时仍是「did not grow」，`model.log` 显示确实下载了一次 |
+| 启动计时 | 把缓存扫描放慢到 2 s，`runtime_start` 仍小于 2000 ms |
+| 模型拒图、凭据被拒、STT 无终稿、TTS 中途失败 | 各自按原因失败；运行次数始终为 1，没有追加配置 |
+| runner 起不来、超时、预算耗尽、Ctrl+C（第 2 轮中断）、取消 | 状态与回收同上一批；三轮中断时第 1 轮通过、第 2 轮中断、第 3 轮未运行 |
+
+### 2. 指标口径
+
+节点（同一轮、首个模型请求及其对应输出，全部为单调时钟）：
+
+| 节点 | 证据 |
+|---|---|
+| Final speech | 带最后一个有声样本的帧送入的时刻（计时起点，不变） |
+| VAD close | 下面那条终稿所属语音段的 `perception.speech_closed` |
+| Final transcript | 首个请求实际携带的 STT 终稿中最晚就绪的一条（`stt.terminal final_text`，其 observation 在 `model.request_input carried` 中） |
+| Turn commit | `turn.committed` |
+| Context readiness check complete | Context 管理器的 readiness 日志（等待结束时记录） |
+| Context built | `model.started`：Loop 构建完请求输入之后、交给网关之前 |
+| Model request sent | 首个请求第一次尝试的 `model.request_sent` |
+| First text delta | 该请求的 `model.first_text` |
+| TTS request | 该请求所流出文本的输出上，第一条 `speech.request` |
+| First PCM | 该 TTS 请求的 `tts.first_pcm` |
+| First audio frame | 该输出的第一个音频帧，且必须是运行时输出的首帧 |
+
+- 阶段：`input`（Final speech → Final transcript）、`context`（→ Model request sent）、`output`（→ First audio frame），每个阶段从前一阶段的终点开始；行名为 `<阶段>.<节点>`，从前一个节点开始。边界齐全的一轮，三段之和等于端到端 `first_audio_frame`。
+- 合并：阶段内部节点缺失，或早于前一个已按序观测的节点（或晚于阶段终点），该行为空，说明「merged into the next row: …」；下一行从最后一个按序节点开始，`start` 写实际起点，`merged` 列出被跳过的节点，不计入任何一行的样本。
+- 边界缺失：相邻两段与贴着它的行为「not measured: <节点> not observed: <原因>」；不贴边界的行照常计算。边界早于起点（例如请求带的最后一条终稿早于最后一句）时，前一段不测，说明「came before」。
+- 重试：OpenAI Responses provider 的 `model.request_sent` 改由 httpx 的 request hook 触发，即编码完成、交给传输层、服务器尚未看到时，每次尝试一条（字段 `attempt`，日志白名单 `attempts` 改为 `attempt`）。节点取第一次；`model_request_attempts` 计次数，证据逐条列出。用本机回环服务验证：先回 500 再回 401，两次尝试都在服务器收到前已记录，正文大小与服务器收到的一致。
+- 同轮多请求：输出记录增加 `request_id`（`OutputSource.request_id`），只看首个请求流出文本的输出。首个请求没有文本（调用工具）而后续请求作答时，`output` 段不测（「no audio frame answers the first model request」），端到端首音频帧照常给出。
+- RTC 传输和客户端播放不在链上，`devices.media` 照旧标为未测。
+- 删除的重叠指标：`vad_close`、`stt_final`、`turn_cutoff`、`cutoff_to_model_request`、`model_first_text_delta`、`first_displayable_text`、`tts_text_ready_to_request`、`tts_request_to_first_pcm`、`first_pcm_to_first_audio_frame`、`tts_request_to_first_audio_frame`。保留在 JSON 的补充指标：`stt_request_to_final`（改为所用终稿那一段）、`context_ready_wait`、`model_first_event`（改从 Model request sent 起算）、`model_request_encode`、`model_request_frames`、`model_request_bytes`、新增 `model_request_attempts`、视觉帧和音频供给各项、`input_lateness`。
+- 证据：`model.request_sent` 每次尝试各一条，输出事件带 `request` 令牌；candidate、segment、STT 终稿、Turn 提交照旧有界保留。
+- 文本：保留配色、宽窄屏布局和 `Round 1 / n / Median / Range`；`End to end` 五项顺序与起点不变，首字改称 `Runtime first text`；之后是 Input、Context、Output 三组，组行是阶段总计，下面是各行；表下说明 `n` 是后续通过且有值的轮数、三段之和等于 First audio frame，合并过的行说明合并了几轮。
+
+### 3. 漏句归因与报告复现
+
+- 每句话的 `sentences` 条目分开给出：`coverage`（`full`、`partial` 并给 `covered_ms`、`none`；对不上句子时为 `null`）、`segments`、`stt`（`final`、`late`、各段结束方式或 `no_final`）、`adopted`（首个请求是否列出这条终稿）、`content`（被采用的终稿是否含这句话的词；没有采用时为 `null`）。
+- 定位：没有段或只覆盖一部分为 `vad`；没有及时终稿为 `stt`；终稿在 Turn 提交后才到（`candidate.transcript_rejected` 或 `stt.stale segment_retired`）、或及时到了但没被采用为 `turn`；被采用的终稿缺词为 `stt`（一段装两句、终稿只有第一句也在这里）；声音位置对不上句子而终稿缺词时为 `unknown`，场景停在 `transcript`。
+- 汇总：主表口径不变（通过轮，第 1 轮单列，`samples` 为后续通过且有值的轮数）；新增 `all_first`、`all_samples`、`all_median`、`all_low`、`all_high`（全体已观测轮，失败轮也算）和 `merged`。有轮次未通过时，文本另出一张「every round, the N not passed included」表。失败轮的原值仍在各自的 `scenarios` 里。
+- `scripts/quality/doctor_compare.py`：从保存的 JSON 逐轮重算每个指标的通过轮和全体轮统计（同一场景按同一配置标识分组，过滤条件与 Doctor 相同，合并值不计），与报告自带的汇总逐项核对，不一致时在 stderr 写出并以 1 退出；事件计数增加重试次数。重跑命令保留 `--rounds N`，覆盖参数仍不重复。
+
+### 4. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/alphaavatar/host/doctor/session.py` | 单场景计划与缺项原因；去掉降级；共用 runtime；启动计时与净变化说明；报告各项改为单一配置 |
+| `avatar-host/alphaavatar/host/doctor/measure.py` | 节点链、阶段与合并规则；首个请求及其输出；逐句四项证据；汇总的全体轮统计与合并计数 |
+| `avatar-host/alphaavatar/host/doctor/doctor.py`、`process.py` | `Diagnosis.plan`；预算和子进程读同一计划 |
+| `avatar-host/alphaavatar/host/doctor/transport.py`、`samples.py`、`schemas/session.py` | 输出带 `request_id`；去掉键入路径和 `TEXT`；样本标识；`merged`、`all_*`、`sample` 字段 |
+| `avatar-host/alphaavatar/host/application/application.py` | `create_inference_runtime` |
+| `avatar-host/alphaavatar/host/cli/commands/doctor.py` | 新表格与说明、全体轮次表、配置与样本行、拒图的下一步、重跑命令带 `--rounds` |
+| `avatar-plugins/.../openai/llms/client.py`、`responses.py`；`avatar-core/.../log/events.py` | 交给传输层时逐次记录请求；字段 `attempt` |
+| `scripts/quality/doctor_compare.py` | 重算、核对、事件计数 |
+| `docs/cli/doctor.md`、`docs/cli/README.md` | 场景、失败处理、指标、汇总、对照脚本、文本说明 |
+| 测试：`doctor/test_measure.py`（重写）、`test_session.py`、`test_isolation.py`、`test_compare.py`、`doctor_doubles.py`；`provider/tests/test_responses_request.py` | 见第 5、6 节 |
+| `avatar-plugins-router/tests/test_speech_transcription.py` | KD-17 的 0.75 s 观察点与 3 s 硬期限，离线复现（第 7 节）；只改测试 |
+
+### 5. 测试
+
+| 用例 | 保护的行为 |
+|---|---|
+| `test_measure.py::test_the_stages_add_up_to_the_first_audio_frame_on_one_clock` | 节点不在整毫秒上，从原始纳秒时间戳断言每段的值，且三段的原始跨度之和等于首音频帧的原始跨度；两条终稿被携带、一条更晚的没被携带时取携带的最晚一条；VAD close 取该终稿的段 |
+| `…_a_node_missing_or_out_of_order_inside_a_stage_is_merged_into_the_next_row` | 缺 First PCM、VAD close 早于 Final speech 两种合并；阶段总计不受影响；合并值不进汇总，`merged` 计数 |
+| `…_a_stage_missing_a_boundary_is_not_measured_and_says_why` | 阶段的首尾节点（边界）缺失时，该阶段合计和贴着这个节点的行都标为未测并写明原因，其余行照常计算。三种情形：① provider 不记录 Model request sent：Context、Output 合计，以及 Context built → Model request sent、Model request sent → First text delta 两行未测；② 请求没带 STT 终稿：Input、Context 合计未测；③ 模型不作答（如拒图）：Output 内部三行按合并规则并入下一行，最后一行 First PCM → First audio frame 的终点也缺失，标为未测并写明原因，不再标成「从更早节点开始」，汇总里的合并轮数为 0（修复见第 9 节） |
+| `…_a_retry_is_an_attempt_of_its_own…` | 节点取第一次尝试，`attempts` 为 2，证据逐条 |
+| `…_with_several_requests_in_a_turn_the_first_is_measured_with_its_own_outputs` | 首个请求无文本、第二个作答：`output` 不测，端到端照常 |
+| `…_a_sentence_missing_from_the_transcript_is_placed_where_it_was_lost` | 两句都听到（回归）；无段、部分覆盖、一段两句、多段都无终稿、迟到终稿、及时但未采用、采用但缺词 |
+| `…_where_the_evidence_cannot_place_a_sentence_it_is_unknown` | 声音位置对不上句子时为 `unknown` |
+| `…_the_summary_keeps_passed_rounds_apart_from_every_round_observed` | 全部失败、首轮失败、部分缺值、无观测、样本标识 |
+| `test_session.py` 主链路、失败照实报告、答案判定与无语音、超时预算、Ctrl+C、回环 OpenAI（拒图、500 后重试再 401、400）、确认、运行次数、缓存三种状态与慢扫描、多轮汇总 | 第 1 节验收表 |
+| `test_session.py::test_the_text_shows_the_figures_the_json_holds` | 同一份报告的文本与 JSON：两张表每一行的 Round 1、n、Median、Range 与 summary 逐项相同 |
+| `test_isolation.py::test_the_plan_is_one_spoken_scenario_by_vision_and_none_without_voice` | 视觉开、关、`input_mode: text`、缺 TTS 的计划与阻塞原因 |
+| `test_compare.py` 两个用例 | 重算（首轮失败、部分缺值、合并、全部失败的报告）与事件计数；汇总被改动时指出并退出 1 |
+| `provider/tests/test_responses_request.py::test_each_attempt_is_logged_as_it_goes_to_the_transport_before_any_answer` | 真实 `OpenAIResponsesLLM`、模拟传输：500 重试后 401，每次尝试在服务器收到前已记录 |
+
+删除的直接覆盖：`test_degradations_follow_the_original_cause…`（降级功能已删除）、`test_vision_off_is_a_camera_less_device…`（函数已删除）、`test_a_session_without_audio_output_says_so…`（不再有无音频输出的场景）、键入文本的找 Turn 分支（键入路径已删除）。
+
+变异（`scratchpad/mutate.py`，每项改完即恢复）：
+
+| # | 变异 | 结果 |
+|---|---|---|
+| N1 | Final transcript 取携带终稿中最早的一条 | 链路用例失败 |
+| N2 | 不要求终稿被请求携带 | 链路用例失败（第一次漏掉：未携带的终稿不在 Turn 的链上；补上它所属段与候选的关联后抓到） |
+| N3 | 乱序节点不合并 | 合并用例失败 |
+| N4 | 合并值计入汇总 | 合并用例失败 |
+| N5 | 请求发送取最后一次尝试 | 重试用例失败 |
+| N6 | 输出不限首个请求 | 多请求用例失败 |
+| N7 | 退役段的终稿当作及时 | 漏句用例失败 |
+| N8 | 部分覆盖当作全覆盖 | 漏句用例失败 |
+| N9 | 全体轮统计只用通过轮 | 汇总用例失败 |
+| N10 | 视觉开时仍排入 `voice` | 主链路用例失败（`runs.jsonl` 的计划） |
+| N11 | 缺语音时仍计划场景 | 计划用例失败 |
+| N12 | 启动耗时含缓存扫描 | 缓存用例失败（慢扫描） |
+| N13 | 对照脚本不核对汇总 | 对照用例失败 |
+| N14 | 对照脚本把失败轮算进通过轮 | 对照用例失败 |
+| N15 | 末行没有值时仍标为合并（第 9 节的修复撤回） | 缺边界用例失败 |
+| P1 | provider 在 `create()` 返回后才记录 | provider 用例失败 |
+| S1、S2 | 见交互配置日志第三轮 | 失败 |
+
+### 6. 离线验证
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| Quality 复现（修复前） | `scratchpad/quality/clean`：`git clone` 本仓库 `d5080d5`，`uv sync --all-packages --locked --offline`；按 `quality.yml` install 任务执行 `PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 uv run --no-sync pytest -p no:cacheprovider --basetemp=…`，前后 `git status --porcelain --ignored` 对比 | 新增 70 个 ignored `__pycache__`，`diff` 退出 1；单跑 `test_choices.py -k bare` 即全部复现。另有 1 项 `test_check` 失败，是 scratchpad 路径过长、超过该用例设定的 200 列所致，与代码无关（改用短 `--basetemp` 后不再出现） |
+| Quality 同等命令（本批） | 同一干净克隆，套用本批完整 diff（与工作区逐文件一致），`scratchpad/quality/run2.sh`：pytest、前后 ignored 状态对比、`alphaavatar --help` 与 `--version`、检查前后已跟踪文件不变 | **524 passed**，pytest 退出 0；ignored 状态对比退出 0（0 行差异）；CLI smoke 退出 0；已跟踪文件不变。511（`d5080d5`）+ 本批净增 13 |
+| lint 任务 | `python scripts/quality/check_workspace.py`、`pre-commit validate-config`、`bash -n packaging/linux/*.sh`、`ruff check .`、`ruff format --check .`、`uv lock --check --offline`、`pre-commit run --files <改动文件>`、`git diff --check` | 全部退出 0 |
+| 工作区全量（中途） | `ALPHAAVATAR_MODEL_OFFLINE=1 pytest -p no:cacheprovider` | 第一次 6 项失败：`tests/cli/test_doctor.py` 5 项期待旧的重跑命令（没有 `--rounds`），`test_render.py` 1 项用旧场景与旧指标名；均为测试未随本批更新，已改（`test_doctor` 的单文件配置补上语音，使它仍检查授权与不可隔离存储）。之后的完整结果即上面的干净克隆一行 |
+| 变异 | `scratchpad/mutate.py` | 第 5 节 N1～N14、P1 全部被抓到（N2 第一次漏掉，补测试数据后抓到） |
+
+未运行：Linux package 工作流（审查结论为已通过，本批未改打包）；任何真实服务。
+
+### 7. 真实服务复验（用户确认后运行，2026-11-07）
+
+以下全是真实服务数据，与 `docs/cli/cli.html` 和第 5、6 节的离线替身数据无关。
+
+**执行方式**
+- **构建**：`packaging/linux/build.sh --allow-dirty --max-glibc 2.32`（uv 0.10.0，与 CI 同版本）从本批工作区构建 `alphaavatar-0.6.8-d5080d5f168b-dirty.20261107072333`（63 MB）。本批改动的 14 个源文件逐个与安装后的文件比对，内容一致。
+- **安装**：`install.sh --file … --prefix … --bin-dir …` 装到会话临时目录 `real3/` 下的隔离前缀和 home；`config init accept --avatar-id doctor-accept` → `setup accept --artifacts <构建目录> < /dev/null`：105 个包、514 MB，`Validate PASS · 8 runners`。不带 `--artifacts` 时 setup 按设计拒绝（本批构建的插件 wheel 没有发布）。
+- **凭据**：只从 `.env.dev` 取 `OPENAI_API_KEY` 和三个 LiveKit 变量，写进只有本人可读的文件。每条命令在空环境里运行，只带这四个变量、隔离的 `ALPHAAVATAR_HOME`，以及 `HOME`、`PATH`、`LANG`、`TERM`。
+- **覆盖项**：两组覆盖先用 `config check` 确认可解析，都退出 0。
+- **命令**：同一构建、同一 bundle、5 轮、非交互授权，每份只改一个变量组合：
+
+```bash
+A="alphaavatar doctor accept host.doctor.external_services=true"
+RT="voice.stt.plugin=openai_realtime voice.stt.model=gpt-realtime-whisper"
+$A --rounds 5 --json < /dev/null > vision-segment.json
+$A vision.enabled=false --rounds 5 --json < /dev/null > blind-segment.json
+$A $RT --rounds 5 --json < /dev/null > vision-realtime.json
+$A vision.enabled=false $RT --rounds 5 --json < /dev/null > blind-realtime.json
+python3 scripts/quality/doctor_compare.py <名>=<报告>                       # 每份单独重算
+python3 scripts/quality/doctor_compare.py segment=… realtime=…             # 视觉开、关各一张对照
+```
+
+**结果**
+
+| 报告 | 跑的场景 | STT | 退出码 | 通过 | 未通过的停止层 | runtime 启动 | 模型缓存 |
+|---|---|---|---|---|---|---|---|
+| vision-segment | `voice_vision` | `openai_segment` `gpt-4o-transcribe` | 0 | 5/5 | — | 135.10 s | 净增 1,731.9 MB（空缓存，首次） |
+| blind-segment | `voice` | 同上 | 1 | 1/5 | 4 轮 `stt.final` | 16.74 s | 没有增长 |
+| vision-realtime | `voice_vision` | `openai_realtime` `gpt-realtime-whisper` | 1 | 0/5 | 5 轮 `stt.final` | 17.34 s | 没有增长 |
+| blind-realtime | `voice` | 同上 | 0 | 5/5 | — | 18.09 s | 没有增长 |
+
+- **执行范围**：每份报告都只跑了一个场景，5 轮各一个会话，另一个语音场景是 SKIP 并写明原因（`Vision is on: voice_vision speaks to it; voice runs with vision off`，或反过来）。四份的 `session.cleanup` 都是 PASS。
+- **输出与脱敏**：四份 stdout 都以 `{` 开头，stderr 都是 0 字节；按值检索 `OPENAI_API_KEY`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET`，JSON 和 stderr 里都没有。
+- **退出码 1**：两份都因场景没有全部通过；`services.external` 也为 FAIL，因为语音识别 reached 但 `stopped at stt.final`。模型与语音合成两项都通过。
+- **复现**：`doctor_compare.py` 对四份单独重算、两张对照，全部退出 0，stderr 为空，即通过轮、全体轮、合并计数和事件计数与报告自带汇总逐项一致。文本报告用 CLI 自己的渲染器从 JSON 重建，与重算结果逐格相同。
+
+**漏句归因**（逐句，四项证据）
+- **blind-segment**：第 1、2、4、5 轮的第 2 句（"Answer with just the number."）丢在 `stt`：覆盖 full，STT 返回终稿，终稿被 Turn 采用，但只有 23 个字符（"What is two plus three?"），缺这一句。第 3 轮两句都在。上一轮（`38fad3c3` 构建）为 10 轮丢 9 轮，结论相同。
+- **vision-realtime**：5 轮的唯一一句都丢在 `stt`：覆盖 full，已采用，终稿 31～32 个字符（"Color is the color on my screen"），缺词。上一轮同样 5/5。
+- 分段 STT 的 `voice_vision`、实时 STT 的 `voice` 全部通过。20 轮里没有 `unknown`，也没有丢在 `vad` 或 `turn` 的句子。
+
+**指标**（全体已观测轮：后续 4 轮的中位数 [范围]，括号里是第 1 轮，单位 ms；两份 5/5 的报告与通过轮的数值相同）
+
+| 指标 | vision-segment | vision-realtime | blind-segment | blind-realtime |
+|---|---|---|---|---|
+| First audio frame | 4,055 [3,573–5,909] (7,521) | 3,509 [3,311–3,752] (3,600) | 3,643 [3,492–3,771] (4,039) | 3,206 [3,013–3,349] (4,273) |
+| Input | 1,531 [1,401–2,173] (2,481) | 1,452 [1,246–1,473] (1,355) | 1,482 [1,307–1,647] (1,483) | 1,299 [1,180–1,349] (1,335) |
+| · Final speech → VAD close | 720 [719–722] (720) | 721 [720–721] (721) | 680 [679–681] (681) | 681 [680–682] (681) |
+| · VAD close → Final transcript | 810 [680–1,454] (1,761) | 732 [525–752] (634) | 801 [626–967] (803) | 618 [499–669] (655) |
+| Context | 255 [235–889] (365) | 278 [217–326] (435) | 346 [272–457] (525) | 313 [305–520] (1,139) |
+| · Final transcript → Turn commit | 2.0 [1.9–2.2] (2.3) | 2.0 [1.9–113] (2.0) | 95 [70–134] (184) | 67 [66–68] (540) |
+| · Turn commit → Context readiness check complete | 241 [222–876] (255) | 214 [202–303] (235) | 241 [191–313] (245) | 237 [226–437] (384) |
+| · Context built → Model request sent | 9.6 [9.5–9.7] (105) | 9.7 [9.5–10] (196) | 8.5 [8.2–8.6] (93) | 8.5 [8.5–14] (212) |
+| Output | 2,153 [1,538–3,479] (4,675) | 1,814 [1,738–1,991] (1,809) | 1,785 [1,649–1,992] (2,031) | 1,529 [1,446–1,692] (1,800) |
+| · Model request sent → First text delta | 817 [780–2,750] (3,139) | 862 [834–911] (949) | 825 [667–1,038] (1,285) | 871 [805–977] (1,103) |
+| · TTS request → First PCM | 641 [576–1,616] (1,351) | 758 [683–811] (679) | 749 [572–1,081] (603) | 566 [550–649] (590) |
+| Pictures sent · Request size (B) | 4 · 63,996 | 4 · 63,991 | 0 · 19,284 | 0 · 19,313 |
+
+未列出的行：`Context readiness check complete → Context built` 1.5–2.0 ms，`First text delta → TTS request` 54–346 ms，`First PCM → First audio frame` 0.5–1.0 ms。20 轮都没有合并值、没有边界缺失，每轮只有 1 个模型请求，每个请求只发了 1 次（`Request attempts` 1，无重试）。Holds 10、10、13、10，Cancels 0，退役终稿 0。
+
+读数（只陈述数据，默认值没有改）：
+- **Final speech → VAD close** 按样本固定：`card_question` 720 ms、`sum_question` 680 ms，20 轮差在 ±2 ms 以内，是 VAD 静音阈值本身的耗时，与 STT 后端无关。这是后续「VAD 550/300/200 ms」一项的起点。
+- **STT**：实时 STT 的 VAD close → Final transcript 中位数比分段低 78～183 ms（`voice` 618 对 801，`voice_vision` 732 对 810），但听错卡片问题 5/5；分段 STT 丢求和样本第二句 4/5。两个后端各有一个样本过不了。
+- **Context**：Turn commit → Context readiness check complete 在每一轮都是 190～440 ms（vision-segment 第 4 轮 876 ms），是 Context 段的主要部分，与上一轮（200～320 ms）一致。Context built → Model request sent 后续轮约 9 ms，每份的第 1 轮 93～212 ms（每个 runtime 的第一个模型请求）。
+- **Final transcript → Turn commit**：`voice_vision` 约 2 ms（vision-realtime 第 4 轮 113 ms），因为终稿到达时轮次判定已经在等转录；`voice` 为 66～540 ms，因为终稿先于轮次判定到达，commit 要等下一次判定。
+- **Output**：Model request sent → First text delta 后续轮中位数 817～871 ms。vision-segment 第 1、2 轮为 3,139 ms、2,750 ms，慢在请求交给传输层之后（Model request sent → First event 3,116 ms、2,495 ms）。这段包含建连、网络往返和服务端处理，报告不再细分，不能单独归因于服务端；其余 18 轮的 First event 为 451～1,112 ms。TTS request → First PCM 中位数 566～758 ms，最长 1,616 ms。
+
+完整指标表原在证据 `doctor-baseline/full-tables-segment.md`，会话与 runner 的数字在各份 JSON 的 `session.start` 和 `models.runners`（第六批已移出仓库，见文末「证据目录清理」）。
+
+视觉开那份的启动是空缓存首次下载，所以 runner 启动远长于视觉关那份（缓存命中）。`voice_vision` 的样本没有触发说话人分析的两个 runner，上一轮也只有 `voice` 触发过，原因没有查。
+
+**KD-17**
+- **离线复现（不计费）**：`avatar-plugins-router/tests/test_speech_transcription.py`，默认值 0.75 s / 3.0 s，没有改生产代码。
+  - 新增 `test_a_final_later_than_the_transcript_wait_still_commits_before_the_deadline`：终稿在观察点之后到达，先记录 `candidate.transcript_wait`（`outcome=pending`、`missing_count=1`），候选随后以该终稿 commit，早于 3 s，没有 cancel，也没有拒收。
+  - 改 `test_late_stt_final_after_transcript_timeout_never_revives_the_candidate`：等待值由 0.05 s 改为默认 0.75 s，并断言先在 ≥0.75 s 记录 pending，到 ≥3 s 才以 `transcript_timeout` cancel；原有的迟到终稿被拒、候选不复活的断言保留。
+  - 变异（`scratchpad/mutate_kd17.py`，改完即恢复）：把观察点改成截止，两项都失败；把硬期限提前到 1.5 s，第二项失败。
+  - 路由插件全部测试 33 passed，`ruff check`、`ruff format --check` 都退出 0。
+- **真实服务**：20 轮里有 2 轮命中目标分支，都在 vision-segment，分段 STT。
+  - 第 1 轮：转录等待开始后 0.75 s 记录 `pending`，终稿在等待开始后 1,122 ms 到达，候选随即 commit（36 个字符），该轮通过。
+  - 第 2 轮：同样记录 `pending`，终稿在 913 ms 到达，随即 commit，该轮通过。
+  - 其余 18 轮的终稿都在 0.75 s 之前到达。
+  - 20 轮都没有 `transcript_timeout`、cancel 或退役终稿。3 s 硬期限在真实服务中没有触发，只有离线复现。
+- **修复与状态**：修复是用户提交的 `b791572a`（2026-11-04）：0.75 s 只报告，3 s 才退役候选。真实服务已命中 0.75 s 分支，2A 日志 KD-17 的状态据此更新为「已修复，待复核」；3 s 分支只有离线证据。
+
+**保存的证据**：当时存于仓库内 `2026-11/2026-11-07/doctor-baseline/`（第六批已移出仓库，见文末「证据目录清理」），见「Doctor 第二批」第 5 节。四份脱敏 JSON（临时目录替换为 `$RUN`，没有凭据），每份的 `doctor_compare.py` 重算、分段两份的对照与完整表格，以及 `kd17-real.txt`（20 轮的转录等待与终稿时刻）。安装、setup 和 `config check` 的输出只留在会话临时目录。
+
+复验结束后，已删除隔离前缀、home（含 1.7 GB 模型缓存）和凭据副本，只保留上述证据。
+
+### 8. 仍待复验与延期
+
+- 已复验：真实服务新基线 4 份、分段与实时 STT 对照、KD-17 的 0.75 s 分支（第 7 节）。KD-17 的 3 s 硬期限在真实服务中没有触发，只有离线复现。
+- 用户决定（2026-11-07）：不再跑实时 STT 对照，后续基线只用配置的分段 STT（`openai_segment` `gpt-4o-transcribe`）。本轮已跑的两份实时报告只作记录。
+- 待用户决定（默认值都没有改）：分段 STT 丢求和样本第二句 4/5；Context readiness 每轮约 240 ms；每个 runtime 的第一个模型请求慢约 100～200 ms。
+- `docs/cli/cli.html`：已按本批构建重录，见第 9 节。
+- 真实下载字节数：需要 runner 启动状态带下载事件（推理协议改动），本批只报缓存净变化。
+- 「基线后按顺序推进」各项（STT warmup、VAD 阈值、发行顺序的证据、持续会话与并发、`alphaavatar test`）未开始。
+
+### 9. 补充：`cli.html` 重录、一处合并标注修复、用户决定（2026-11-07）
+
+**`cli.html` 上一轮为什么没重录**：没有技术障碍，是我自己把它列成了延期。本批改了 Doctor 的确认文案、场景和指标表，`cli.html` 的 Doctor 面板因此与当前输出不符，本应随本批一起更新。
+
+**重录**
+- **Setup、config 与 Doctor 拒绝、`--no-metrics`**：在干净的 Ubuntu 24.04 根目录里运行。包是本批构建 `0.6.8-d5080d5f168b-dirty.20261107072333`，由本地服务器提供，凭据都是虚构值。脚本 `scratchpad/accept10/run10.sh`。各面板退出码与上一轮相同；setup 的 Ctrl+C 在沙盒里是 254，页面照旧注明 130。
+- **Doctor 测量面板**：用离线替身录了 7 块，退出码依次为 0、0、0、0、1、1、130。驱动 `accept10/doctor_offline.py` 已改为视觉开只排 `voice_vision`、视觉关只排 `voice`。
+- **页面**：`scripts/docs/cli_preview.py html` 生成 18 块面板。标题改为：
+  - 「agreed: 5 rounds of its one scenario」；
+  - 「vision off: voice instead of voice_vision」；
+  - 「vision off, a sentence lost in round 2」；
+  - 「a model that refuses images, reported as it is」。
+- **检查**：页面里没有临时目录路径，`.env.dev` 里四个凭据的值都不在其中。
+
+**合并标注修复**：录制时发现，向用户说明后，按用户决定保留。
+- **现象**：模型拒图、什么都没回答时，Output 最后一行 First PCM → First audio frame 被写成 "from an earlier node in 3 rounds, so no sample of it"，汇总的 `merged` 记了 3 轮。其实这一行的终点也缺失，什么都没有量到。
+- **原因**：`measure.chain()` 给「并入的下一行」打 `merged` 标记时，没有区分这一行有没有值。
+- **修复**：`measure.py` 改一行，没有值的行不再带 `merged`。现在这一行写 "not measured: First audio frame not observed: no audio frame answers the first model request"，`merged` 为 0。
+  - 阶段合计按设计不单列原因，它与贴着缺失边界的那一行原因相同。修复后，这一行的原因能正常显示。
+- **测试**：`test_measure.py` 缺边界用例新增情形 ③；变异 N15（撤回修复）被抓到。今天 20 轮真实报告里没有合并值，不受影响。
+
+**验证**
+- **全量测试**：`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 pytest -p no:cacheprovider`，525 passed，退出 0。前后两次 `git status --porcelain --ignored` 没有差异。
+- **lint**：`ruff check`、`ruff format --check` 通过。
+
+**用户决定**
+- 不再跑实时 STT 对照（第 8 节）。
+- Doctor 的指标表保持现状：
+  - 四组的行与顺序与要求一致；
+  - Input、Context、Output 的分组行带阶段合计；
+  - 分组之间不空行，窄布局保持现在的折行；
+  - 任何一行缺值都照常显示为 `—`，原因写在表下。
+
+## Doctor 第二批：Context 构建时刻、报告完整性、KD-19 定位、KD-17 恢复、证据与 STT 拆解（基线 `64a9de7`）
+
+依据：`64a9de7` 审查的第 2～5 项（第 1 项 Setup 脱敏记在交互配置日志「交互配置第四轮」）。所有改动在未暂存的工作区。`64a9de7` 的 CI：Quality 成功（run 42355038363），Linux package 成功（run 42355038522）。
+
+### 1. Context built 取 Context build 实际返回的时刻
+
+- **问题**：上一批把 `model.started` 当作 Context built。但 Loop 在 `build()` 返回之后、记录 `model.started` 之前，还要组装请求并 `await self._feedback.change(...)`。这段组装时间被算进了「Context readiness check complete → Context built」。
+- **修复**（`plugins/loop/execution.py`）：请求号在 build 之前生成，`build()` 一返回就记 `context.built`（带同一个 `request_id`、`turn_id`、`run_id`），再用这个请求号构造 `ModelRequest`。`core/log/events.py` 登记该事件。Doctor 的 `LogTimings` 收这个事件，`measure` 按首个请求的 `request_id` 取它作 Context built 节点；缺失时按合并规则写明 "the loop logs no context built"。证据里的 `context.built` 带请求令牌。
+- **回归**：`test_session.py::test_what_follows_the_context_build_is_the_requests_assembly_not_the_build`。替身规格 `slow_assembly` 让真实 Loop 在 build 返回后、请求交出前等 300 ms。断言这 300 ms 落在 `Context built → Model request sent`，不在 `Context built` 那一行；三段之和仍等于首音频帧；证据里只有一条 `context.built`，属于同一个请求。
+- **变异 C1**：把 `context.built` 移回 `model.started` 的位置，用例失败（`Context built → Model request sent` 只有 0.5 ms）。
+- 终端布局不变。
+
+### 2. 报告完整性检查（`doctor_compare.py`）
+
+- 新增三项核对，任何一项不符都写进 stderr，退出 1：
+  - 每个场景和配置的轮次正好有一个汇总，汇总都有对应的轮次；
+  - 每个汇总的指标集合等于其轮次里出现的指标；
+  - `stopped_at` 等于按各轮未通过的停止层重算的计数。
+- **用例**：`test_compare.py::test_a_report_whose_summaries_do_not_cover_its_rounds_is_refused`，覆盖删除汇总、重复汇总、删除一个指标、写入矛盾的停止计数四种。
+- **变异 CMP1～CMP3**：分别关掉三项核对，用例都失败。
+- 2026-11-07 的四份真实报告在新核对下都退出 0。
+
+### 3. KD-19：两句样本，逐个边界定位（离线部分）
+
+**固定条件**
+- **录音**：`avatar-host/alphaavatar/host/doctor/samples/sum_question.wav`，文件 sha256 `93ac1590…68d2d18f`，16 kHz、单声道、16 位，52,102 个样本点（3.256 s），PCM 标识 `sum_question sha256:7792b2508854`。内容是 "What is two plus three? Answer with just the number."，两段有声分别在 0.22–1.52 s 和 1.76–3.14 s，中间只停 0.24 s。
+- **配置**：`accept` bundle 的 `voice.stt`，`openai_segment` / `gpt-4o-transcribe`，不设 language、prompt、temperature。请求参数为 `file`、`model`、`response_format=json`、`stream=true`。
+- **SDK**：openai 2.7.2、httpx 0.28.1、httpcore 1.0.9，与 `uv.lock` 一致。
+
+**探针**：`scratchpad/kd19/probe/sitecustomize.py`，只在临时目录里，不进仓库。`PYTHONPATH` 指向它并设置 `KD19_PROBE_DIR` 时，它在导入 `openai_segment` 时包住插件，逐段记录：
+- 推入 STT 流的 PCM（摘要与长度），以及 `_SegmentJob` 的 PCM、采样率、时长；
+- 编码出的 WAV（另存一份，供直连重发），以及 httpx 实际发出的 multipart 里文件部分的摘要和表单字段；
+- 每个流事件，以及 delta 拼接、`transcript.text.done.text` 和发布的 FINAL_TRANSCRIPT。
+
+Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
+
+**离线自检**：`scratchpad/kd19/selfcheck.py` 用真实插件、求和样本按 10 ms 一帧推入，端点换成只返回第一句的 `MockTransport`。`analyze.py` 的结论：
+- 推入的 PCM、job、WAV 和上传文件逐字节一致，16 kHz、单声道、16 位，52,102 帧；
+- 两段有声都在上传的音频里，位置分别为 0.220 s 和 1.760 s；
+- delta 拼接、done 和发布的终稿都是 "What is two plus three?"。
+
+也就是说，探针能把丢失定位到具体某一个边界。
+
+**直连对照**（`scratchpad/kd19/direct.py`，计费，待确认）：用探针保存的同一个 WAV、同一模型和参数，直接调用 transcription 端点，流式与非流式各若干次；原始样本文件作对照。
+
+真实部分见第 8 节：丢失发生在端点返回的文字里，插件的各个边界都如实传递了结果。真实安装里探针要经 `.pth` 加载，因为启动器用 `-I` 运行。两句样本和严格判定保留。
+
+### 4. KD-17：硬期限之后的恢复
+
+- 保留默认 0.75 s / 3 s 的两项用例。
+- 新增 `test_speech_transcription.py::test_after_the_deadline_the_source_speaks_again_and_the_late_final_stays_its_own`，在同一个会话里：
+  - 第一段在 3 s 硬期限被取消；
+  - 同一输入源的第二段按时出终稿并提交；
+  - 第一段的终稿晚到，以 `retired_segment` 拒收，归属第一段的片段，不进入第二段的提交；
+  - 全程只有一次取消。
+- **变异**：
+  - 不记住退役片段：迟到终稿未被拒收，用例失败；
+  - 硬期限后把该输入源标为已取消：第二段无法提交，用例失败。
+  - 另试过「不恢复同源的其他候选」，在这个场景里等价（取消时没有其他候选），不计入。
+- **状态同步**（`docs/bugs-zh.md` 与 2A 日志）：
+  - KD-17：软观察点已真实复验，硬期限离线通过，硬期限的真实链路待验证。
+  - KD-19：改为「可重复的多句转录遗漏，待定位的边界」。
+  - KD-20：新增，见第 6 节。
+
+### 5. 证据入库与归因修正
+
+- **位置**：`docs/agent-logs/2026-11/2026-11-07/doctor-baseline/`，共 908 KB（第六批已移出仓库，见文末「证据目录清理」）：
+  - 2026-11-07 四份真实报告的脱敏 JSON：临时目录替换为 `$RUN`，按值检索四个凭据都不在；
+  - 每份的 `doctor_compare.py` 重算，退出 0、stderr 为空；
+  - 分段两份的对照 `compare-segment.txt` 和完整表格 `full-tables-segment.md`；
+  - `kd17-real.txt`。
+- **独立复算**：`python3 scripts/quality/doctor_compare.py vision=…/vision-segment.json blind=…/blind-segment.json`。
+- **配置标识**：在每份报告的 `configuration` 与 `sample` 字段里。构建为 `alphaavatar-0.6.8-d5080d5f168b-dirty.20261107072333`（tar 包 sha256 前缀 `096d2fda98c98df4`）。
+- **归因修正**：第一批第 7 节「慢在服务端」改为「慢在请求交给传输层之后，包含建连、网络往返和服务端处理，不能单独归因于服务端」。样本第二句的原文改正为 "Answer with just the number."。
+
+### 6. 分段 STT 按请求计时；发现 KD-20
+
+- **计时**（`plugins/voice/stt/openai_segment.py`）：
+  - 插件自建的客户端换成 SDK 默认的 `DefaultAsyncHttpxClient`，加一个请求钩子，通过 ContextVar 给本次请求挂上 httpcore 的 trace 回调；
+  - 每个 job 记录提交时刻；
+  - 每次请求结束记一条 `stt.request`，字段有 `segment_id`、`outcome`、`queue_ms`（提交到请求开始）、`reused`、`connect_ms`、`tls_ms`、`upload_ms`（请求头到音频发完）、`wait_ms`（音频发完到应答头）、`first_event_ms` 和 `final_ms`（应答头到首个流事件、到 done）。
+  - 复用连接时没有建连可计，相应字段不出现。
+  - 真实运行发现 `first_event_ms` 和 `final_ms` 的起点取错了，取成了请求头写完的时刻，见第 8 节「新发现」。
+- **Doctor**：
+  - 取 Turn 所用终稿所在片段的那条 `stt.request`，按 trace 里的加盐片段号对应，同一 Turn 的其他片段不会混入；
+  - 给出 `stt_queue`、`stt_connect`、`stt_tls`、`stt_upload`、`stt_wait`、`stt_first_event`、`stt_stream`，只在 JSON 和 `doctor_compare.py` 里出现；
+  - 复用连接写 "none: the connection was reused"，插件不计时写 "not measured: its STT plugin times no request"。
+- **用例**：
+  - `avatar-plugins-voice/tests/test_openai_segment.py`：本机回环端点，经 `owned_endpoints` 放行。两个片段连续提交，端点每次先等 200 ms。断言首个请求新建连接并有 `connect_ms`、没有 TLS；两次的 `wait_ms` ≥ 200 ms；第二段在队列里等了第一段的应答（`queue_ms` ≥ 200 ms）。
+  - `test_measure.py::test_the_finals_stt_request_is_parted_into_queue_connection_and_exchange`：同一 Turn 另一个片段的计时不被取用；复用连接；不计时。
+- **变异**：
+  - T1：队列不计时；T2：不挂 trace。`test_openai_segment.py` 失败。
+  - D1：不按片段取；D2：不并入 Turn 的日志。`test_measure.py` 失败。
+- **KD-20**（写这个用例时发现，未修复，待决定）：插件读到 `transcript.text.done` 就 `break` 并关闭响应流，响应体没读完，httpx 因此丢弃连接。本地端点上连续 3 次请求：中断读取时 3 次都新建连接，读完响应后只有第 1 次新建。对真实端点来说，同一会话里每个语音段都要重新做 TCP 和 TLS。用例只断言计时与 trace 一致，不断言复用。
+
+### 7. 离线验证
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| 工作区全量 | `PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 pytest -p no:cacheprovider`，前后各取一次 `git status --porcelain --ignored` 对比 | **532 passed**，退出 0（上一批 525 + 本批 7）；没有新增 ignored 文件。对比命令退出 1，唯一的差异是测试期间我手动编辑的 Setup 日志 |
+| lint | `scripts/quality/check_workspace.py`、`ruff check .`、`ruff format --check .`、`uv lock --check --offline`、`pre-commit validate-config`、对全部改动和新增文件的 `pre-commit run --files`、`git diff --check` | 全部退出 0；pre-commit 第一次修正了 5 个文件末尾的空行，第二次通过 |
+| 受影响的套件 | Doctor、CLI、voice、loop、router、core | 186 passed |
+| 变异 | `scratchpad/mutate11.py`：S3、C1、CMP1～CMP3、T1、T2、D1、D2；`scratchpad/mutate_kd17b.py`：两项 | 全部被抓到。D1 第一次漏掉：用例里另一个片段不属于这个 Turn，在并入日志时就被滤掉了；改成同一 Turn 的第二个片段后被抓到 |
+| 证据复算 | 对 `doctor-baseline/` 里的每份 JSON 运行 `doctor_compare.py`，与保存的输出 `diff -B` | 5 份都一致（`-B` 只忽略 pre-commit 去掉的末尾空行）；`SHA256SUMS` 列出 11 个文件 |
+| KD-19 探针自检 | `KD19_PROBE_DIR=… PYTHONPATH=probe python selfcheck.py`，再运行 `analyze.py` | 均退出 0；结论见第 3 节 |
+
+### 8. 真实服务（用户确认后运行，2026-11-07）
+
+**构建与安装**
+- 构建：本批工作区，`alphaavatar-0.6.8-64a9de7610af-dirty.20261107101729`，tar 包 sha256 前缀 `9020f331421c45d0`。
+- 安装到会话临时目录的隔离前缀：
+  - `install.sh` 退出 0；
+  - `config init accept --avatar-id doctor-accept` 退出 0；
+  - `setup accept --artifacts <构建目录>` 退出 0：105 个包、514 MB，Validate PASS，8 个 runner。
+- 每条命令只带隔离 home、`PATH` 和四个凭据，从没有 `.env` 的目录运行。
+- 安装和 setup 的输出按值检索，三个凭据都不在。
+- 这些真实记录来自上面这个 dirty 构建（`64a9de7` 加当时未提交的改动），与提交后 `b1cc485` 的 CI 分开记录，后者见「Doctor 第三批」。
+
+**运行清单**
+
+每份报告的命令都是 `alphaavatar doctor accept host.doctor.external_services=true <覆盖项> --rounds 5 --json`。
+
+| 报告 | 覆盖项 | 时间 | 退出 | 结果 |
+|---|---|---|---|---|
+| `kd19-unprobed` | `vision.enabled=false`；环境带 `PYTHONPATH` 与 `KD19_PROBE_DIR` | 18:20–18:24 | 1 | `voice` 0/5，5 轮都停在 `stt.final`，第二句丢在 STT。探针没有加载，见下 |
+| `kd19-probed` | `vision.enabled=false`；探针经 `.pth` 加载 | 18:25–18:27 | 1 | `voice` 0/5，同上；探针记下 5 段 |
+| `vision-segment` | 无 | 18:28–18:30 | 0 | `voice_vision` 5/5 |
+| `blind-segment` | `vision.enabled=false` | 18:29–18:31 | 1 | `voice` 1/5（第 3 轮通过），另 4 轮停在 `stt.final` |
+
+- 退出 1 都是因为场景未通过：`session.scenarios` 为 FAIL，`services.external` 里语音识别样本也是 FAIL（"stopped at stt.final"）。四份的 stderr 都为空。
+- 此外还有 20 次直连 STT 调用。
+- 比计划多跑了一组 5 轮，因为第一组的探针没有加载。
+
+**第一组探针为什么没加载**
+- 安装后的 `alphaavatar` 启动器用 `python -I` 运行，`-I` 会忽略 `PYTHONPATH`。结果是 STT 所在的进程没有导入探针，也没有生成 `probe.jsonl`。
+- 第二组在临时安装环境的 site-packages 里放了一个 `kd19_probe.pth`。只有设置了 `KD19_PROBE_DIR`，它才把探针目录放到 `sys.path` 最前面，`site` 随后就会导入探针。
+- 没设这个变量时，`.pth` 什么也不做；已核对此时 `sitecustomize` 没有加载。
+- 跑基线前已删除该文件。
+- 第一组仍是一份有效的视觉关报告（探针没有生效），一并保存。
+
+**KD-19：定位结果**
+
+固定条件同第 3 节。安装环境里核对过 SDK 版本：openai 2.7.2、httpx 0.28.1、httpcore 1.0.9。
+
+探针（`kd19-probed` 的 5 段，见 `kd19/analysis.txt`）：
+- **上传的音频**：每段的 WAV 都是 16 kHz、单声道、16 位，61,120 帧（3.820 s，即样本加上前后的静音）。5 段逐字节相同，sha256 `a707eb1e…6c4bc135`，存为 `kd19/uploaded-segment.wav`。
+- **逐边界一致**：5 段都满足推入的 PCM = job 的 PCM = WAV 里的 PCM，且 WAV = multipart 里实际上传的文件部分。
+- **两句都在**：样本的两段有声都在上传的音频里，分别位于 0.220 s 和 1.760 s。
+- **表单**：只有 `model=gpt-4o-transcribe`、`response_format=json`、`stream=true`。
+- **文字**：5 段的端点 delta 拼接、`transcript.text.done`、发布的 FINAL_TRANSCRIPT 和 Turn 采用的文字，都是 "What is two plus three?"。
+
+直连（`kd19/direct.json`）：同一 SDK、同一模型和参数，每种 5 次；按 Doctor 自己的 `samples.VOICE.heard_sentences` 判定（`kd19/direct-scored.txt`）：
+
+| 输入 | 流式：两句都在 | 非流式：两句都在 |
+|---|---|---|
+| 上传的 WAV（`a707eb1e…`） | 1/5 | 2/5 |
+| 原始样本文件（`93ac1590…`，不经插件） | 1/5 | 1/5 |
+
+- 其余 15 次都只有第一句。
+- 10 次流式调用里，delta 拼接都等于 done，事件只有 `transcript.text.delta` 和 `transcript.text.done` 两种。
+- 同一份字节，每次的输出会在「两句」和「只有第一句」之间变化。
+
+**结论**
+- 第二句在端点对这段音频返回的文字里就已经缺失。
+- 插件如实传递了端点的结果：音频路径（PCM、job、WAV 编码、上传）、流的解析（delta、done、读到 done 即中断）、终稿发布和 Turn 采用都没有丢内容。
+- 非流式同样会丢；不经插件、直接发原始样本文件也会丢。
+- 所以修复点不在这些边界，而在请求本身：模型的选择，或请求参数，例如 `language`、`prompt`、`chunking_strategy`、`temperature`。
+- 具体选哪一项，要用同一 WAV 做一组固定输入的对照，每种若干次。这会计费，待用户决定。
+- 样本和严格判定不变。本批分段 STT 共 15 轮 `voice`，只有 1 轮通过。
+
+**新基线：本批构建，分段 STT**
+
+完整指标表原在证据 `doctor-batch-2/full-tables-segment.md`，会话与 runner 的数字在各份 JSON 的 `session.start` 和 `models.runners`（第六批已移出仓库，见文末「证据目录清理」）。
+
+**读数**
+- **Context built**：时刻改到 build 返回处之后，真实数据里 readiness → built 是 1.5～1.7 ms，built → 请求发出是 8.5～9.9 ms；每份的第 1 轮约 92 ms。
+  - 上一批按 `model.started` 取这个时刻，两者只差约 0.2 ms：真实运行里，Loop 在 build 返回到 `model.started` 之间的组装很短。
+  - 这次修复的意义在于归因正确（见第 1 节的注入延迟回归），当前的数字基本不变。
+- **与上一批对照**（`compare-batches-vision.txt`、`compare-batches-blind.txt`）：
+  - 视觉开：首音频帧中位数 4,055 → 3,461 ms；
+  - 视觉关（全体轮）：3,643 → 3,612 ms；
+  - 每份只有 5 轮，不把这些差异当作代码改动的效果。
+- **STT 拆解**：视觉开取后续 4 轮的中位数，括号里是视觉关全体轮。首个事件和 done 用下文的换算值。
+  - commit → final：725（726）ms；
+  - 排队：0.0（0.0）；TCP 建连：3.2（6.6）；TLS：5.9（6.6）；上传：5.1（5.7）；
+  - 音频发完 → 应答头：638（633）；
+  - 应答头 → 首个事件：约 0.3（0.3）；应答头 → done：约 88（48）。
+  - 逐轮来看，这几段相加等于 commit → final（例如视觉开第 2 轮：约 3 + 5 + 5.2 + 530.9 + 82.9 ≈ 629.8）。
+- **等待应答头占 commit → final 的 85%～90%**。
+  - TCP 建连大约是到 API 接入点的一次网络往返（3～7 ms）。
+  - 由此推断，等待的绝大部分发生在接入点之后，即接入点到服务端的网络加上服务端处理，客户端无法再往下拆。
+- **建连的代价**：新建一条连接，建连加 TLS 实测约 9～13 ms。KD-20 修好后同一会话后续各段能省下多少，是**待验证估算**：Doctor 每轮新建会话和 STT client，本来就要建连，要靠同一真实会话、同一 stream 连续多段的复用对照来验收。
+- **首段多出约 98 ms**：
+  - 三份没挂探针的报告里，第 1 轮 STT 各段之和比 commit → final 少约 98 ms（97.5～99.0），后续轮只差约 2 ms。
+  - 原因：SDK 在第一次访问 `client.audio.transcriptions` 时才导入音频资源模块。在安装环境里离线计时：保存的 3 次（`stt-first-access.txt`）首次访问为 168、94、93 ms，之前另测的 3 次为 93～101 ms；再次访问都是 0 ms。
+  - 挂探针的那份第 1 轮只差 3.9 ms：探针在计时开始前就访问过这个属性，正好构成对照。
+- **STT warmup 能省多少（待验证估算）**：
+  - 已证实 SDK 首次访问有约 95 ms 的耗时；但探针只是把这段耗时挪到了别的计时区间，本身不能证明端到端缩短了，要经 `start`/`dev` 与 Doctor 共用的路径实测首段收益；
+  - 预先建连每段约 9～13 ms，也要先修好 KD-20 连接才可能复用。
+
+**新发现：`stt_first_event` 与 `stt_stream` 的起点取错了（本批代码；已在「Doctor 第三批」修复）**
+- **原因**：`openai_segment.py` 的 `_transcribe` 按后缀 `headers.complete` 找第一个 trace 标记作起点。先命中的是 `http11.send_request_headers.complete`（请求头写完），而不是 `receive_response_headers.complete`（收到应答头）。
+- **影响**：
+  - 这两项比文档和 Doctor 标注的「应答头 → 首个事件 / done」多出了上传和等待两段，例如视觉开的中位数是 643 / 714 ms。
+  - 排队、建连、TLS、上传、等待这五项不受影响。
+- **换算**：首个事件 = `first_event_ms − upload_ms − wait_ms`，done 同理（`stt-derived.txt`）。换算值是下界，误差是请求头本身的写出时间，不到 1 ms。上文用的就是换算值。
+- **为什么没被抓到**：离线用例只断言了 `final_ms ≥ first_event_ms ≥ 0`，没有约束起点。
+- **修复方向**：
+  - 起点改用 `receive_response_headers.complete`；
+  - 用例加一条断言：首个事件早于端点的等待时长。
+  - 修复后需要重跑基线，才能直接读出这两项。
+
+**另一处观察（已在「Doctor 第三批」修复）**
+- 启动器用 `-I` 运行，注释说它与调用方的设置隔离。
+- 但 `processes/process.py` 用 `sys.executable -m …` 启动执行子进程，不带 `-I`，子进程会继承 `os.environ`。
+- 已用安装环境的 Python 核对：`-I` 父进程的环境里仍有 `PYTHONPATH`，不带 `-I` 的子进程会把它放进 `sys.path`。
+- 也就是说，调用方的 `PYTHONPATH` 等 `PYTHON*` 变量能影响执行子进程。是否修改由用户决定。
+
+**KD-17**
+- 本批 20 轮里，0.75 s 观察点触发了 1 次：`kd19-unprobed` 第 1 轮，STT 用时 2.29 s。终稿随后到达并提交，没有取消。
+- 没有一轮到达 3 s 硬期限，所以硬期限的真实链路仍待验证。
+
+**证据**
+
+位置：`2026-11/2026-11-07/doctor-batch-2/`，1.2 MB，`SHA256SUMS` 列出 19 个文件（第六批已移出仓库，见文末「证据目录清理」）。
+- **报告**：四份脱敏 JSON。临时目录替换为 `$RUN`；按值检索四个凭据和 LiveKit URL，都不在。
+- **复算**：
+  - 每份的 `doctor_compare.py` 重算 `compare-*.txt`，都退出 0、stderr 为空；
+  - 视觉开与视觉关的对照 `compare-segment.txt`；
+  - 与上一批的对照 `compare-batches-vision.txt` 和 `compare-batches-blind.txt`。
+- **表格与换算**：`full-tables-segment.md`、`stt-derived.txt`、`stt-first-access.txt`。
+- **KD-19**（`kd19/`）：`probe.jsonl`、`analysis.txt`、`uploaded-segment.wav`、`direct.json`、`direct-scored.txt`。
+- **独立复算**：`python scripts/quality/doctor_compare.py vision=…/vision-segment.json blind=…/blind-segment.json`。
+
+复验结束后，已删除隔离前缀、home（含 1.7 GB 模型缓存）和凭据副本；`.pth` 在跑基线前已删除。探针、分析脚本和直连脚本留在会话临时目录。
+
+### 9. 仍待复验与延期
+
+- **KD-19 修复点**：在同一 WAV 上做单变量对照，再用独立多句样本验证（「Doctor 第三批」第 9 节，计费，待确认）。
+- **`stt_first_event` / `stt_stream` 的起点**：已在第三批修复；需重跑基线。
+- **KD-20**：已在第三批离线修复；每段约 9～13 ms 的节省是待验证估算。
+- **STT warmup**：第三批先做 SDK 资源的异步预备，网络预建连暂缓；首段约 95 ms 的收益是待验证估算。
+- **执行子进程不带 `-I`**：已在第三批修复。
+- **VAD 550/300/200 ms**：作为另一组固定输入的对照，没有开始。
+- **KD-17 硬期限的真实链路**：本批没有触发。
+- **未拆解的两项**：
+  - 每份第 1 轮「Context built → Model request sent」约 92 ms（其后各轮约 9 ms）。量级与 SDK 懒加载相近，但模型走的是另一条路径（langchain），没有核对；
+  - 视觉关「Final transcript → Turn commit」69～221 ms（视觉开约 2 ms），两批都有。
+
+## Doctor 第三批：STT 计时与连接收尾、SDK 预备、执行子进程隔离（基线 `b1cc485`）
+
+依据：`b1cc485` 审查的三处 P2 和建议的下一步。所有改动都在未暂存的工作区。
+
+**同 SHA 的 CI**：`b1cc485` 的 Quality 成功（run 42364975304），Linux package 成功（run 42364975290）。第二批的真实记录来自 dirty 构建，与这次 CI 分开记录。
+
+### 1. STT 首事件与终稿从应答头起算
+
+- **问题**：见第二批第 8 节「新发现」。起点按后缀 `headers.complete` 取，先命中的是请求头写完。审查独立回放时，本应为 2 ms / 45 ms 的两项被记成了 206 ms / 249 ms。
+- **修复**（`openai_segment.py`）：起点改为 `receive_response_headers.complete`。
+- **用例**：`test_each_segment_request_is_timed_by_its_queue_connection_and_exchange`。回环端点在应答头之前等 300 ms，应答头到首个事件、首个事件到 done 各隔 50 ms。断言：
+  - `wait_ms` ≥ 295；
+  - `first_event_ms` 在 45 与 300 之间；
+  - `final_ms` 至少比 `first_event_ms` 多 45，且小于 300。
+  也就是直接核对注入的服务等待没有进入这两项。
+- **变异 A1**：起点改回 `headers.complete`，用例失败。
+
+### 2. 未观测不等于复用
+
+- **问题**：调用方传入自己的 `client=` 时，插件不安装 trace；请求在交给传输层之前就失败时，也没有 trace。这两种情况 `marks` 为空，原来却记成 `reused=True`。
+- **插件的修复**：
+  - 看到请求头开始发送、又没有建连，才记 `reused=True`；
+  - 有建连（包括建连失败）就记 `False`；
+  - 两者都没看到，`reused` 和连接各项一律不记。
+- **Doctor 的修复**：没有 `reused` 的请求只给排队一行，其余各行写 "not observed: its transport traced no request"，既不写「复用」也不写「无 TLS」。`docs/cli/doctor.md` 已同步。
+- **用例**：
+  - `test_a_request_the_transport_did_not_trace_is_not_counted_as_reused`：自带 client 的请求和构造请求时就失败的请求，都不记 `reused`，也不记连接各项；连不上的请求记 `reused=False`。
+  - `test_measure.py` 的 STT 拆解用例加了未观测一例。
+- **变异**：R1（按「没有建连」推断复用）、DN1（Doctor 不区分未观测）、DN2（把未观测当作无 TLS），都被抓到。
+
+### 3. KD-20：终稿立即发布一次，再有界地读完
+
+- **修复**：
+  - 读到 `transcript.text.done` 就立即发布终稿，之后的事件一概不再处理，第二个 done 不会再发布；
+  - 继续把流读完，让连接回到连接池；
+  - 收尾的上限是 `_TAIL_SEC` = 0.25 s。超时或出错只记一条 debug 日志并关掉这条连接，不给该段再发 ERROR；下一段最多被拖住这个上限。
+- **用例**：
+  - 计时用例同时断言：两段连续提交，端点只见到 1 条连接，第二段 `reused=True`。
+  - `test_the_final_goes_out_once_and_the_streams_rest_never_holds_the_next_segment`，按收尾方式参数化：
+    - 又来一个 done：只发布第一个，连接被复用；
+    - 停住不发：终稿在请求结束之前至少 0.2 s 已经发出；下一段的排队时间在「应答时间 + 上限 + 150 ms」以内，并新建连接；
+    - 中途断开：不报错，下一段新建连接。
+- **变异**：K1（读到 done 即中断，即原行为）、K2（不设上限）、K3（把收尾失败报给该段）、K4（发布第二个 done），都被抓到。
+
+### 4. SDK 资源的异步预备（warmup 第一步）
+
+- **做法**：
+  - stream 创建时（第一帧语音到达时）在线程里访问 `client.audio.transcriptions`，让 SDK 的懒加载在语音还没说完时就完成；
+  - 请求循环在处理第一段之前等它完成，而不是在事件循环上自己导入，否则事件循环会卡在导入锁上；
+  - 预备失败时照旧由请求自己导入。
+  - 网络预建连暂缓。
+- **共用路径**：`start`/`dev` 和 Doctor 都经 router 的 `_create_source` 打开 STT stream，走的是同一条路径。
+- **用例**：`test_the_sdk_prepares_its_transcription_off_the_event_loop_before_any_request`。把预备放慢 0.3 s，断言：
+  - 预备只运行一次，而且不在事件循环线程里；
+  - 预备期间事件循环的心跳间隔都小于 100 ms；
+  - 端点收到请求的时刻晚于预备完成；
+  - 该段的排队时间 ≥ 250 ms。
+- **变异**：P1（不预备）、P2（在事件循环上预备）、P3（请求不等预备），都被抓到。
+- **离线试跑**（`scratchpad/batch3/stream.py`，本地端点，每次新进程，只有 1 次，仅证明脚本可用）：
+  - 预备开：commit → final 310 ms，没有落在任何一段里的时间 6.1 ms；
+  - 预备关：405 ms，没有落在任何一段里的时间 101.4 ms。
+- **收益待验证**：离线只证明导入挪到了线程里、并在第一段之前完成。真实首段的端到端是否缩短、会不会拖慢说话期间的输入处理，要靠真实对照（第 9 节）。
+
+### 5. 执行子进程跟随 Host 的隔离
+
+- **问题**：见第二批第 8 节「另一处观察」，审查也已离线复现。
+- **修复**（`processes/process.py` 的 `_interpreter()`）：Host 以 `-I` 运行时，子进程也加 `-I`；否则不变。环境变量照常继承，包括凭据、日志端点和 inference 端点。
+- **用例**（`test_host_lifecycle.py`）：
+  - `test_an_execution_child_is_isolated_exactly_when_its_host_is`，参数化为 installed（Host 带 `-I`）和 development 两种：
+    - 环境：工作区的 editable 环境加真实子进程，`PYTHONPATH` 指向一个带 `sitecustomize` 的目录，并设置虚构凭据、`ALPHAAVATAR_LOG_ENDPOINT` 和 `ALPHAAVATAR_INFERENCE_ENDPOINT`；
+    - installed：子进程 `isolated=1`，调用方的 `sitecustomize` 没有加载；
+    - development：子进程不隔离，`sitecustomize` 照常加载（执行测试自己的子进程替身就依赖这一点）；
+    - 两种情况下，子进程都收到这三个环境变量，入口模块都从工作区源码解析。
+  - `test_the_execution_child_starts_with_the_hosts_interpreter`：`ExecutionProcess` 用 `_interpreter()` 的结果启动入口。
+- **变异**：I1（从不隔离）、I2（总是隔离）、I3（启动时绕过 `_interpreter()`），都被抓到。
+- **单独运行的 teardown 报错**：单独运行 `test_host_lifecycle.py` 时，`test_host_reaps_execution_children_before_releasing_shared_inference` 的 teardown 报环境变量被修改（`LD_LIBRARY_PATH`、`QT_QPA_*`）。
+  - 原因：这是导入 `cv2` 时它自己设置的，已离线核对。
+  - 与本批无关：先导入 `cv2` 再运行该文件，8 项全部通过；全量运行时 `cv2` 早已导入。
+
+### 6. 两处耗时的来源（离线定位，未改代码）
+
+- **视觉关「Final transcript → Turn commit」69～221 ms**：
+  - 来源：`turn_taking/coordinator.py` 的 `_prepare_commit` 在等 `participants.wait_for_segments`，也就是 Turn 提交前等该段的说话人关联。
+  - 依据：第二批视觉关 5 轮的 `candidate.transcript → candidate.association` 是 67～219 ms，正好占满这一段；视觉开都是 0.2 ms。而且只有视觉关的报告里 `persona.speaker.attribute` 和 `persona.speaker.vector` 有调用。
+  - 关联为什么在终稿之后才完成还没定位：Doctor 的证据里没有 persona 一侧的计时。
+- **首轮「Context built → Model request sent」约 92 ms**（之后各轮约 9 ms）：首轮在发送之前要做两件只做一次的事：
+  - `ResponsesClient.get()` 第一次在线程里构建 client，离线约 28 ms；
+  - `client.responses.create` 第一次访问 `client.responses` 时，在事件循环上懒加载：新进程离线 120～124 ms，STT 已加载共享模块之后约 27 ms。
+  - 真实运行里多出的这约 83 ms 各占多少，需要一次计时运行才能确定。
+
+### 7. 文档与状态
+
+- **`docs/bugs-zh.md` 与 2A 日志**：
+  - KD-19：改为「该固定样本的遗漏发生于端点返回文字，缓解方案待验证」。已排除检查过的插件传递边界，但不据此选定默认模型，也不推广到所有多句输入。
+  - KD-20：曾移入已修复（离线通过）；真实对照证明未生效，已移回已知缺陷，见第 10.2 节。
+  - KD-17：3 s 硬期限及其后同源下一轮的恢复，真实链路仍缺命中证据。
+- **第二批第 8、9 节**：
+  - KD-20 每段 9～13 ms 和 warmup 约 95 ms 的节省，都改为待验证估算；
+  - 起点取错和子进程隔离两项，标为已在本批修复；
+  - 真实记录来自 dirty 构建，与 `b1cc485` 的 CI 分开记录。
+
+### 8. 离线验证
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| 工作区全量（第 1 次） | `PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 pytest -p no:cacheprovider`，前后各取一次 `git status --porcelain --ignored` 对比 | 539 passed、1 failed（退出 1）：`test_session.py::test_ctrl_c_and_cancellation_end_the_diagnostic_process_and_what_it_started` 的 `session.cleanup` 为 FAIL。这个用例的 STT 是脚本替身，不经过本批改动的插件；诊断进程由 multiprocessing 启动，也不经过 `ExecutionProcess`。之后单独运行 3 次、整个文件运行 2 次（28 passed ×2）、全量第 2 次都通过，没有复现。失败那次清理到底留下了什么，用例只断言状态，没有记录下来 |
+| 工作区全量（第 2 次） | 同上 | **540 passed**，退出 0（上一批 532，本批新增 8 项）；两次运行前后 ignored 文件都没有变化 |
+| lint | `scripts/quality/check_workspace.py`、`ruff check .`、`ruff format --check .`、`uv lock --check --offline`、`pre-commit validate-config`、对改动文件的 `pre-commit run --files`、`git diff --check` | 全部退出 0 |
+| 计时用例的稳定性 | `test_openai_segment.py` 连续 5 次 | 每次 6 passed |
+| 变异 | `scratchpad/mutate12.py`：先用未变异的代码跑选中的用例（10 passed），再逐项变异 A1、R1、K1～K4、P1～P3、DN1、DN2、I1～I3 | 14 项全部被抓到 |
+| 真实服务脚本试跑 | `scratchpad/batch3/stream.py`、`matrix.py`，对本地端点、虚构密钥 | 都能跑通；`--tail off` 时 3 段都新建连接，默认时后两段复用；预备的结果见第 4 节 |
+
+### 9. 真实服务计划（用户确认后运行，结果见第 10 节）
+
+1. **重建后重跑基线**：用本批工作区重建，分段 STT，视觉开、关各 5 轮。查看新的首事件与终稿两行、未观测说明，以及第 1 轮的 SDK 预备效果（共用路径）。
+2. **KD-20 复用对照**：`scratchpad/batch3/stream.py`。同一真实 stream 连续 3 段（上传的那个 WAV），当前代码与 `--tail off`（等同原行为）各跑 2 次，查看每段的 `reused`、建连、TLS 和 commit → final。约 12 次 STT 调用。
+3. **warmup 对照**：同一脚本，`--segments 1 --lead 1.5`，每次新进程，`--prepare on/off` 各 5 次，查看首段的 commit → final 和没有落在任何一段里的时间。约 10 次 STT 调用。
+4. **KD-19 单变量对照**：`scratchpad/batch3/matrix.py`。同一上传 WAV，默认、`language=en`、不含样本答案的通用转录提示，各 10 次，交错进行，流式与插件一致，共 30 次 STT 调用。候选方案再用独立的多句样本验证。这台机器没有带 flite 的 FFmpeg，样本来源待定：用 OpenAI TTS 生成两段（2 次 TTS 调用），或由用户提供录音或环境。
+5. **之后**：VAD 550/300/200 ms 的固定输入对照；KD-17 的 3 s 硬期限目前没有自然命中的办法，真实链路仍缺证据。
+
+### 10. 真实服务结果（用户确认后运行，2026-11-07）
+
+**构建与安装**
+- 构建：本批工作区，`alphaavatar-0.6.8-b1cc485ec870-dirty.20261107113657`，tar 包 sha256 前缀 `aa120810a14dfc10`。
+- 安装到会话临时目录的隔离前缀：`install.sh`、`config init accept --avatar-id doctor-accept`、`setup accept --artifacts <构建目录>` 都退出 0，105 个包、514 MB，Validate PASS，8 个 runner。
+- 安装的代码里已核对两处改动在位：应答头起点、`_interpreter()`。
+- 这些记录来自 dirty 构建，与 `b1cc485` 的 CI 分开。
+
+**计费调用**
+- Doctor 2 份 × 5 轮。
+- 直连或插件内的 STT 共 76 次：
+  - KD-20：12 次，另有 4 次用来查原因；
+  - warmup：10 次；
+  - KD-19：50 次。
+- TTS 2 次。
+- 每份输出都按值检索过，四个凭据和 LiveKit URL 都不在。
+
+#### 10.1 新基线（分段 STT）
+
+| 报告 | 覆盖项 | 时间 | 退出 | 结果 |
+|---|---|---|---|---|
+| `vision-segment` | 无 | 19:58–20:05 | 0 | `voice_vision` 5/5；空缓存，runtime 启动 365.12 s，模型缓存净增 1,731.9 MB |
+| `blind-segment` | `vision.enabled=false` | 20:05–20:06 | 1 | `voice` 1/5（第 3 轮通过），另 4 轮停在 `stt.final`，第二句丢在 STT |
+
+- 两份都由 `doctor_compare.py` 重算，退出 0，stderr 为空。`session.cleanup` 都是 PASS。
+完整指标表原在证据 `doctor-batch-3/full-tables-segment.md`，会话与 runner 的数字在各份 JSON 的 `session.start` 和 `models.runners`（第六批已移出仓库，见文末「证据目录清理」）。
+
+**读数**
+- **首事件与终稿两行**：从应答头起算后，首事件是 0.4～3.0 ms，应答头到 done 是 20～208 ms。逐轮相加后，与 commit → final 只差 1.5～6.9 ms。
+- **SDK 预备在共用路径上**：第 1 轮 STT 没有落在任何一段里的时间，视觉开 2.6 ms、视觉关 2.7 ms；上一批是 97.5～99.0 ms。
+  - 第 1 轮的输入帧延迟是 162 / 154 ms，上一批 165 / 152 ms：本次未观察到输入延迟增加（「Doctor 第四批」更正措辞）。
+  - 第 1 轮的会话就绪是 219 / 161 ms，上一批 204 / 117 ms。只有一个样本，不下结论。
+- **首轮请求准备**：「Context built → Model request sent」第 1 轮仍是 108 / 98 ms，之后各轮约 9～10 ms。模型这条路径本批没有动（`bugs-zh.md` O-15）。
+- **视觉开这一份整体偏慢**（STT 等待 1,032 ms、模型首个 delta 1,171 ms、TTS 首个 PCM 1,002 ms，上一批分别是 638、894、660 ms）。这是客户端观察到的等待变长，来源未定位：这些区间仍包含网络和本地调度，不能单独归于服务端，也不作为代码效果的证据（「Doctor 第四批」更正措辞）。与上一批的对照见 `compare-batches-*.txt`。
+- 真实运行里没有出现未 trace 的请求（插件自建的 client 都装了 trace），所以「not observed」说明没有出现。
+
+#### 10.2 KD-20：真实端点上仍然每段新建连接（新发现，未改代码）
+
+- **对照**：同一真实 stream 连续 3 段，当前代码与 `--tail off`（等同原行为）交替各 2 次。12 段**全部** `reused=False`，每段都重新建连和握手（建连 2.8～6.6 ms，TLS 5.0～8.4 ms）。离线的回环端点上是能复用的。
+- **原因**（又调用了 4 次查清）：
+  - `tail.py`，只用 SDK：应答是 HTTP/1.1、`connection: keep-alive`、chunked，done 之后 0.2 ms 流就结束，没有更多事件；即便如此，读完后连接池仍然是空的，第二个请求又新建了连接。所以 0.25 s 的上限不是原因。
+  - `raw.py`，绕开 SDK、用 httpx 原样读到结尾：流在 done 事件之后还有一行 `data: [DONE]`。读完后连接以 IDLE 留在池里，第二个请求复用了它（没有建连，Request Count 2）。
+  - 结论：SDK 的 `AsyncStream.__stream__` 读到 `[DONE]` 就 `break`，并立即 `aclose()` 响应，这时 chunked 的结束标记还没读，httpcore 就丢弃了连接。本批在插件里「读到流结束」走不到这一步，因为 SDK 自己先关了。
+  - 离线用例的端点不发 `[DONE]`，所以没有测出来。
+- **修复方向**（待用户决定，未改代码）：
+  - 插件不再经过 SDK 的 `AsyncStream`，例如改用 `with_streaming_response`，自己解析 SSE，并在上限内读到 body 结束；
+  - 回环端点要像真实端点一样发 `data: [DONE]`，用例直接断言第二段复用。
+- **对上一批估算的影响**：每段约 9～13 ms 的节省仍是待验证估算。这次没有测到复用，因为一直没有复用。
+- 证据：`kd20/summary.txt`。
+
+#### 10.3 SDK 预备（warmup 第一步）
+
+每次新进程，stream 在提交前 1.5 s 打开，预备开、关交替各 5 次（`warm/summary.txt`）：
+
+| | commit → final | 没有落在任何一段里的时间 | 排队 |
+|---|---|---|---|
+| 预备开 | 中位数 762 [715–808] | 5.8～5.9 | 都是 0.0 |
+| 预备关 | 中位数 896 [709–1,321] | 102.2～103.2 | 都是 0.0 |
+
+- 首段请求路径上的时间稳定少了约 97 ms，预备在 1.5 s 内就已完成，没有让请求等待。
+- commit → final 的中位数也低了约 134 ms，但两边范围重叠，服务端等待本身在 526～786 ms 之间波动。5 次只能说方向一致，端到端收益还不能算验收。
+- 共用路径上的效果见 10.1：第 1 轮没有落在任何一段里的时间从约 98 ms 降到约 2.7 ms，本次未观察到输入延迟增加；端到端收益仍待验证。
+
+#### 10.4 KD-19：单变量对照与独立样本
+
+固定样本，即上一批探针保存的上传 WAV（`a707eb1e…`）；三种方式交错各 10 次，流式，读到结尾；按 Doctor 自己的规则判定（`kd19/scored.txt`）：
+
+| 方式 | 两句都在 |
+|---|---|
+| 默认 | 1/10 |
+| `language=en` | 5/10 |
+| 通用转录提示（"The speaker may say more than one sentence; transcribe every sentence in full."，不含样本的任何判定词） | 8/10 |
+
+- 30 次里第一句都在；提示文字没有出现在任何一条转录里。
+
+独立的多句样本：
+- **来源**：用 OpenAI TTS（`gpt-4o-mini-tts`，voice `coral`）生成，内容、声音和引擎都不同于 Doctor 的 flite 样本。重采样为 16 kHz 单声道 16 位后保存在 `kd19/independent/`，摘要见 `samples.json`。
+- **两段样本**（默认与通用提示交错各 5 次）：
+  - `timer_oven`：两句，5.90 s，句间停顿 0.62 s；
+  - `lisbon_visit`：三句，6.55 s，停顿 0.54 / 0.76 s。
+
+| 样本 | 默认：每句都在 | 提示：每句都在 |
+|---|---|---|
+| `timer_oven` | 5/5 | 5/5 |
+| `lisbon_visit` | 5/5 | 5/5 |
+
+**结论**
+- 在固定样本上，通用提示把两句都在的比例从 1/10 提到 8/10，`language=en` 提到 5/10。
+- 独立样本本来就不丢句；提示在上面没有副作用，也没有混进转录。
+- 因此这些独立样本证明不了提示对一般多句输入的收益。遗漏更像与固定样本本身有关：flite 声音，加上只有 0.24 s 的句间停顿。
+- 是否采用提示、是否改默认配置，待用户决定；本批没有改任何默认值。样本和严格判定保留。
+
+#### 10.5 仍待复验与延期
+
+- **KD-20**：真实端点上未修复，修复方向见 10.2，待决定。
+- **warmup**：请求路径上的收益已在共用路径和新进程对照中测到；端到端收益需要更多轮次。网络预建连仍暂缓，而且依赖 KD-20。
+- **KD-19**：缓解方案待决定；如果采用，需在更多独立样本上验证（例如停顿更短的样本）。
+- **未定位的来源**：
+  - 首轮请求准备的约 90 ms（O-15），未拆；
+  - 视觉关「Final transcript → Turn commit」的说话人关联为什么在终稿之后才完成（O-16），未查。
+- **KD-17**：3 s 硬期限及同源恢复的真实链路仍缺证据。
+- **VAD 550/300/200 ms**：未开始。
+
+**证据**
+
+位置：`2026-11/2026-11-07/doctor-batch-3/`，约 1.1 MB，附 `SHA256SUMS`（第六批已移出仓库，见文末「证据目录清理」）。
+- 两份脱敏 JSON，临时目录替换为 `$RUN`；
+- 每份的重算、视觉开与关的对照、与上一批的对照、完整表格；
+- `kd20/`：4 份 stream 结果、`tail.json`、`raw.json`、`summary.txt`；
+- `warm/`：10 份结果、`summary.txt`；
+- `kd19/`：三份 matrix 结果、`scored.txt`、`independent/`（两段 16 kHz WAV 和 `samples.json`）。
+
+脚本留在会话临时目录（`batch3/`）。复验结束后，已删除隔离前缀、home（含模型缓存）和凭据副本。
+
+## Doctor 第四批：CI、STT 三处 P2、说话人关联观测、多语言与 KD-19、LID 核实（基线 `d43cc4c`）
+
+改动都在未暂存的工作区。测试脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch4/`、`scratchpad/real6/`），仓库里只留 `doctor-batch-4/` 下的结果数据和校验和（第六批已移出仓库，见文末「证据目录清理」）。
+
+### 1. CI
+
+- **`d43cc4c` 的 Quality 失败**：run 42380285226，558 passed、1 failed。测试辅助函数 `trace()` 的第三个参数 `sequence`，和调用时传入的窗口序号重名。参数改名为 `trace_sequence`，只改了测试。
+- 上一批 `490451b` 的失败是 `-I` 下字节码问题，已经修复；O-17 仍未定位。三件事分开记录。
+
+### 2. STT 与配置的三处 P2
+
+- **默认 delay**：`accepts()` 改为 `supports()`，只认构造参数里明确写出名字的选项。转发型第三方工厂不再被塞入 `delay`；它没声明支持的选项，在构造前报错。
+- **SSE 换行**：用 `iter_text()` 解码字符，按 CR、LF、CRLF 分行。没有用 `iter_lines()`，因为它会在 ` `、`\x85` 等字符处断行，而 JSON 字符串里允许出现这些字符。BOM、注释、多行 data、没有结尾空行、UTF-8 跨块都有用例覆盖。读取仍然到 body 结束。
+- **无效终稿**：只有有效终稿发出后才记录终稿时刻。请求日志的 `outcome` 与消费者收到的终态一致（`final`、`invalid_final`、`missing_final`、`no_final`）。
+- **变异 S1～S6**：全部被抓到。S4 第一次漏掉，改了用例后被抓到。
+
+### 3. 说话人关联的观测
+
+- **`participant.segment_ready`**：`ParticipantRuntime` 的 10 处释放路径都经过 `_settle()`，只在首次就绪时记录，带结果、原因，以及从登记到就绪的时刻；显式实体时可以早于语音段结束。
+- **persona**：删掉旧的 `speaker.association`，保留 `speaker.window`，新增 `speaker.identity`、`speaker.attribute` 两个区间。
+- **Doctor**：新增 `association_ready`、`association_wait` 两项；关联已提前就绪时注明 "none needed"。证据带 `started_ms` 和 `queued_ms`。
+- **变异 A1～A3、P1、D1、D2**：全部被抓到。
+
+### 4. 说话人处理的依赖边界（证据，策略未改）
+
+| 事项 | 在哪里做 | 谁在等 |
+|---|---|---|
+| 物理归属 | 显式实体时在首帧绑定；否则在最后一个窗口推理之后 | Router 提交前最多等 0.15 s，就绪后再核对 |
+| 身份匹配、属性提取 | 绑定之后，在同一串行队列上 | 无人等待 |
+| 声纹缓存与画像、annotation | 之后 | 各消费者自己读 |
+
+- **就绪不等于识别成功**：失败、超时、逐出、退役也会释放等待。
+- **离线证据**（真实处理器加推理替身）：
+  - 窗口推理慢 0.3 s 或 0.6 s，关联就晚 302 ms 或 602 ms；
+  - 前一段的身份检索占住队列 0.4 s，后一段的关联晚 402 ms；
+  - 两者都超过 0.15 s，提交会在没有关联的情况下放行。
+  - 真实运行里，关联在语音段结束后 73～89 ms 就已就绪，提交等待为 0（第 6 节）。
+- **建议**（待决定）：
+  - 窗口推理不要和身份匹配、属性推理共用一个串行队列；
+  - 本轮 LLM 只需要物理归属和已确认的身份，在 Context 冻结前就绪或明确超时；
+  - 属性和画像在记录收尾时有界汇合，迟到的结果不改写已冻结的 Context 和历史。
+
+### 5. LID：Whisper tiny int8 的核实（仓库内原型未实现）
+
+- **模型**：`csukuangfj/sherpa-onnx-whisper-tiny`（`65176e2d`），编码器 12.9 MB，解码器 89.9 MB。模型元数据里没有许可证，Whisper 权重本身是 MIT。
+- **语言检测**：解码器只跑一步 `sot`，在 99 个语言 token 上做 softmax，就得到全部语言的分布，不需要生成转录。分数没有校准。
+- **一致性**：log-mel 与 transformers 的最大差 2e-5；int8 与 fp32 相比，前三名一致，概率最大差 0.028。
+- **多语言样本**（补齐到 30 s）：
+  - 纯中文、纯英文 ≥ 0.997；
+  - 混说时只给主导语言，中文夹英文 zh 0.996、英文夹中文 en 0.90；
+  - 短句 0.81～0.91；
+  - 静音、噪声的分布很平（最高 0.24～0.47）。
+- **按原长截取**：快到 25～64 ms，但短句和「OK.」会判错。
+- **资源**：单线程约 220 ms；RSS 载入后 236 MB，峰值约 500 MB。
+- **方案**：voice 插件负责模型和 runner，router 负责按语音段调度推理并发布语言 annotation；默认关闭，只依赖 onnxruntime 和 numpy。契约待确认后再写。
+
+### 6. 真实服务
+
+费用估计约 2 美元：直接调用 STT 1,289 次（含误跑的 900 次），TTS 16 次，Doctor 30 轮（另有它自己的调用）。授权依据是本批审查第 7 项。记录来自 dirty 构建 `0.6.8-d43cc4c4d807-dirty.20261107150502` 和本地工作区，与提交后的 CI 分开。证据在 `doctor-batch-4/`（第六批已移出仓库，见文末「证据目录清理」）。
+
+| 项 | 次数 | 结果 |
+|---|---|---|
+| KD-20 复用 | 2 次 × 5 段 | 后 4 段都复用（8/8）；第 1 段建连 3.4～3.8 ms、TLS 7.3～11.1 ms；收尾 0.3～3.9 ms（`kd20/`） |
+| KD-17 | 3 次 × 3 段 | 3/3：+0.75 s 触发观察点；+1.5 s 的终稿并入原轮；+4 s 的终稿在 3 s 时被取消、按退役片段拒收，且在同源下一轮等待期间到达，没有串入（`kd17/`） |
+| 多语言矩阵 | 6 组配置 × 15 段 × 3 次（另有误跑的 10 次，见下） | 语音样本几乎全部完整：固定 `zh` 或 `en` 都没有翻译，混说保留两种文字，切换各轮都正确；唯一例外是固定 `zh` 的短停顿中文 8/10（「等」→「抖」）。静音和噪声全部编出文字（O-18）。加 prompt 后中位延迟多约 90～100 ms（`stt/`） |
+| KD-19 探针 | 10 种变体 × 10 次 | 只延长停顿 2/1/0/0，只换声线 0～2；被丢的总是第二句（`kd19/`） |
+| Doctor 基线与 VAD | 6 份 × 5 轮 | 下表（`doctor/`） |
+
+| VAD 静音阈值 | 视觉开通过 | 视觉关通过 | Final speech → VAD close（开／关） |
+|---|---|---|---|
+| 550 ms | 4/5（1 轮答案带了「white」） | 2/5（KD-19） | 721 / 681 |
+| 300 ms | 5/5 | 0/5（KD-19） | 462 / 421 |
+| 200 ms | 4/5（同上） | 0/5（KD-19） | 361 / 322 |
+
+- 三种阈值下，两句话都落在同一个语音段里。
+- **O-15**：第 1 轮请求准备 94～168 ms，其中 client 就绪 5～59 ms、编码约 0.2 ms，其余 62～162 ms 在 SDK 交给传输层之前；之后各轮约 8～9 ms。
+- **O-16**：视觉关时，关联在语音段结束后 73～89 ms 就已就绪，提交实际等关联的时间是 0.0 ms。终稿到提交之间的 36～155 ms 落在 hold 到 commit 的再判定上，不是说话人关联。第三批对这一段的定位有误，现予更正（`doctor/o15-o16.txt`）。
+- **误跑**：KD-19 探针脚本在导入矩阵脚本时，把整个矩阵按 10 次重复多跑了一遍，多出 900 次调用。数据保留为 `stt/matrix-10reps.json`，脚本已修正。
+
+### 7. 离线验证
+
+| 命令 | 结果 |
+|---|---|
+| 全量 `pytest`（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1`） | 587 passed，退出 0；ignored 文件前后没有变化 |
+| 干净克隆（`d43cc4c` 加本批改动，`uv sync --locked --offline`）里按 CI 命令跑全量 | 587 passed；测试前后 `git status --porcelain --ignored` 完全一致 |
+| `check_workspace`、`uv lock --check`、`ruff check`、`ruff format --check`、pre-commit、`git diff --check` | 都是 0 |
+| 变异（S1～S6、A1～A3、P1、D1、D2，以及 KD-20 的 M1～M9） | 全部被抓到 |
+
+### 8. 待复验与延期
+
+- **待决定**：
+  - 说话人处理的队列与收尾契约（第 4 节）；
+  - LID 仓库内原型的契约（第 5 节）；
+  - 是否采用 KD-19 的通用提示；
+  - O-15 的修法：是否在 provider 初始化时预先访问 `client.responses`。
+- **待定位**：
+  - O-16 的再判定：语义 addressing 还是轮次再评估，需要先补计时；
+  - KD-19：只改内容的对照；
+  - O-17：仍未定位。
+- **延期**：warmup 的端到端收益；静音和噪声幻觉（O-18）的处理。
+
+## Doctor 第五批：两处 P2、KD-17 正常配置验收、O-16 定位、说话人调度、O-15、VAD 300、KD-19 内容对照（基线 `cd5ad32`）
+
+改动都在未暂存的工作区。脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch5/`、`scratchpad/real7/`），仓库里只留 `doctor-batch-5/` 的结果数据和校验和（第六批已移出仓库，见文末「证据目录清理」）。LID 按审查暂缓，本批没有动。
+
+### 1. 代码修复
+
+- **SSE 的 CR**（KD-32）：`_sse()` 不再暂存块末尾的 `\r`，CR 立即结束一行；下一块以 `\n` 开头时跳过这个 LF，空块不改变这一状态。回归用例：终稿事件以 `\r\r` 结束，之后 body 挂起，终稿在应答后立即发出，请求在 0.25 s 收尾期限后结束，下一段不受影响。
+- **Doctor 关联等待**（KD-36）：汇总同一候选的全部 `candidate.association` 检查；候选的每段都在首次检查前就绪，才写 "none needed"。
+- **O-16 计时**：router 给三处等待各记一个区间，结果为 done、cancelled 或 failed：
+  - 端点模型评估（`candidate.assessment`，带排队时刻）；
+  - addressing 等待（`candidate.addressing_wait`）；
+  - hold 定时器（`candidate.hold`）。
+
+  Doctor 相应新增三项：评估从排队到开始的等待、终稿到提交之间的端点模型时间、同一段里的 hold 与 addressing 等待。每个区间只计落在这一段里的部分。
+- **说话人调度**（KD-35）：
+  - 窗口与关联一条队列，身份与属性另一条；
+  - Context 经 TurnRuntime 的 waiter 只等本轮语音段的身份，上限 `speaker.identity_wait_sec`（默认 0.1 s）；
+  - 属性不等，迟到的结果只进之后的轮；已构建的输入和历史不变，历史按构建时保存；
+  - 来源取消时，两条队列上正在跑的任务都取消；停止时两条都回收。
+- **O-15**：`ResponsesClient._build()` 本来就在线程里，现在同时访问一次 `client.responses`。Loop 的 `initialize()` 经 `ProviderGateway.prepare()` 提前启动这个任务，不等它完成；请求等同一个任务。`LLMBase.prepare()` 默认什么也不做。
+
+### 2. KD-17 正常配置验收（离线）
+
+`avatar-host/tests/test_transcript_deadline.py`，3 个用例：
+
+- **装配**：
+  - 配置文件经 `load_application`，会话经 `create_execution`；
+  - 真实的 Router（自己的 factory 传入 STT 的 `fallback_code`）、分段 STT（`openai_segment`，经 HTTP 到回环地址）、Context、Loop、Engine；
+  - 默认期限（0.75 s 观察点，3 s 硬期限）。
+- **替身**：
+  - 回环转写服务，按请求延迟给出终稿；
+  - VAD 输出，按 Audio Activity 的形式发布语音帧和段；
+  - 端点模型；
+  - 模型 provider，记录每个请求；
+  - TTS（实时静音）、Memory、Persona。
+- **结果**：
+  - 1.5 s 的终稿在观察点之后、期限之前提交，进入本轮输入。
+  - 4.5 s 的终稿：
+    - 3 s 时提交提示轮（`SYSTEM`），模型输入带 `voice.transcription_unavailable` 和「请对方重说」的指令；
+    - 下一轮的历史里有这条提示；
+    - 迟到的终稿按退役片段拒收，不出现在任何请求里；
+    - 下一轮的 STT 请求排在迟到请求之后，照常提交。
+  - 带说话人实体的两段轮：保留第一段文字，第二段标为 `<unavailable_speech segment_id="segment-b" position="2" />`。
+  - 不带实体的两段：成为两个 Turn，先回答第一段，期限到后再提交提示（O-20）。
+- **发现**：
+  - 提示在历史里仍是 `current="true"`（O-19）；
+  - 关会话时正在发布的终态输出会让关闭抛错（O-21）。测试改为等最后的转录 final 再关，之后 40/40 通过。
+- **变异 K1～K7** 全部被抓到：factory 不传提示码、Engine 丢掉提示、Context 不渲染、历史丢掉提示、不标缺失段、接收退役段的终稿、期限加长。
+
+### 3. 真实服务
+
+费用估计约 1.5 美元：TTS 9 次、STT 50 次、Doctor 两组各 28 轮，另有 1 轮冒烟。第一组跑完后，Doctor 的两项新指标改成只计终稿到提交这一段，于是重新构建，再跑一组；第一组只保留 VAD 结果（`doctor/vad-first-build.txt`）。表中其余数字来自构建 `0.6.8-cd5ad32094e1-dirty.20261107173958`。授权依据是本批审查第 5～7 项。
+
+| 项 | 次数 | 结果 |
+|---|---|---|
+| O-16 拆分 | 5 份 × 3～5 轮 | 后续轮终稿到提交 66～169 ms。端点模型在终稿后对同一段音频再跑 1～2 次，合计 65～80 ms；等 addressing 证据 0.6～88 ms；关联 0 ms；没有区间覆盖的 0.3～0.7 ms（`doctor/o16.txt`） |
+| 同一 WAV 视觉开关 | 2 × 5 轮 | 终稿到提交中位数 71 ms（关）对 92 ms（开）；首音频 3,534 对 3,704 ms；通过 1/5 和 2/5，其余都丢第二句（KD-19） |
+| O-15 | 第 1 轮 | built → sent 6.7 ms（第四批 122 ms），client 就绪 0.0 ms；第 1 轮首音频 4,276 ms，没有下降 |
+| 说话人 | 5 份 | 关联在段结束后 72～92 ms 就绪，提交等待为 0；身份在提交前 0.6～1.0 s 已完成。Context 就绪等待：关 271 [204–341] ms、开 205 [194–222] ms（第四批关 231 [219–239] ms），组成未单独计时，不在身份等待上 |
+| VAD 550 对 300 | 3 种样本 × 3 轮 × 2 组 | 550 ms 通过 17/18，300 ms 通过 1/18（`doctor/vad.txt`），见下 |
+| KD-19 只改内容 | 5 种 × 10 次 | 指令式第二句丢 4～10 次，陈述句 1 次，问句 0 次（`kd19/`） |
+
+- **VAD 300 ms 的失败方式**：0.40～0.48 s 的停顿把一句话切成几段、几个 Turn。
+  - `hesitate`：被下一轮取代；
+  - `multi`：只答了 "I have a quick question."，就被后续语音打断；
+  - `pause_in`：第三句到来之前就作答了。
+- **VAD 结论更正**：第四批视觉开时，300、200 ms 的首音频中位数比 550 ms 低约 603、583 ms，VAD close 本身提前约 259、360 ms。这是端到端改善的初步证据，但不能全部归于 VAD，也不能说明 200 优于 300。本批的自然停顿样本表明，这个改善只在句内停顿都短于 300 ms 时成立。默认仍为 550 ms。
+- **样本**：用 `gpt-4o-mini-tts`（coral）合成（`samples/samples.json`，不含 WAV）。
+  - VAD 样本只把第一处停顿调成 0.42 s；`pause_in` 的第二处停顿原为 1.0 s，调成 0.40 s。
+  - KD-19 样本共用同一个第一句和 0.24 s 停顿。
+- **O-16 第 1 轮**：addressing 等待另有 120～340 ms，第一组 5 份中 3 份等满了 0.5 s。
+
+### 4. 离线验证
+
+| 命令 | 结果 |
+|---|---|
+| 全量 `pytest`（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1`，短 `--basetemp`） | 610 passed，退出 0；ignored 文件前后没有变化 |
+| 干净克隆（`cd5ad32` 加本批改动，`uv sync --locked --offline`）里按 CI 命令跑全量 | 610 passed；测试前后 `git status --porcelain --ignored` 完全一致 |
+| `check_workspace`、`uv lock --check`、`ruff check`、`ruff format --check`、`pre-commit validate-config`、`git diff --check` | 都是 0 |
+| `pre-commit run --all-files` | 只有 end-of-file-fixer 失败，改的是本批没动的 4 个文件：两个 `__init__.py` 多一个空行，两张 banner SVG 缺末尾换行，自 v0.6.8 起就这样。已还原，留待决定；CI 不跑这些 hook |
+| KD-17 验收重复运行 | 等输出完成再关之前约 2/58 次关闭报错（O-21），之后 40/40 |
+| 变异 | 全部被抓到：SSE C1～C3、关联 W1～W4、KD-17 K1～K7、router 区间 O1～O6、Doctor 区段指标 R1～R5 与 A4、说话人 P1～P7、O-15 Q1～Q3。C3、P5 第一次漏掉，改了用例后被抓到 |
+
+- 长临时目录下，`test_check` 的一个用例因 workspace 一行折行而失败，默认和短路径下通过（O-22）。
+
+### 5. 待决定与待定位
+
+- **待决定**：
+  - KD-19 的修法；
+  - O-16 的修法：复用未变音频的端点评估、addressing 证据到达时不重跑模型、预热语义 addressing；
+  - O-19：历史里的提示是否改为重放 `current="false"`；
+  - O-20：同一来源的短停顿是否合并成一个候选（定了之后才能再评估 VAD 300）；
+  - O-21：关会话时取消终态发布，是否算正常关闭。
+- **待定位**：O-16 第 1 轮的 addressing 等待；O-17。
+- **延期**：LID。
+
+## Doctor 第六批：重构后的测试迁移、O-21、O-17、说话人属性队列、语义 addressing 时序窗口、O-16/VAD 复验（基线 `69b69ff`）
+
+基线 `69b69ff704c6`：在第五批（`b4f074ab`）之上合入了 ChatGPT 的 turn-taking 重构（`45ecf28`，开放的时序输入窗口、`input_id`/`revision`/`actors` 契约、真实 `TurnSnapshot` 推进、`AssessmentWork`、Smart Turn 复用）和双语 AGENTS 导航（`69b69ff`）。改动都在未暂存的工作区。脚本、样本和隔离安装在会话临时目录（`scratchpad/batch6/`、`scratchpad/real8/`），仓库里不再放证据目录。LID 继续暂缓。
+
+### 1. 测试迁移与新增覆盖
+
+`45ecf28` 的 Quality 为 27 failed、12 errors、571 passed（本地同样复现）。迁移到新契约后补了按新语义写的用例，不靠字符串替换让旧断言通过：
+
+- **router**：
+  - `test_turn_taking.py` 直接驱动 `TurnTakingCoordinator`（观测经 `take_pending_observations` 交给它，顺序由用例决定），覆盖：
+    - HOLD 后跨匿名、同一实体、不同实体的续接；
+    - 封闭输入等 STT 时，下一输入照常判定；
+    - 取消后仍返回的旧评估；
+    - 期限已过、定时回调还没跑时到达的终稿；
+    - 后来的片段有自己的转录预算；
+    - 来源取消、换代、感知缺口、容量回收；
+    - 提议被拒、确认延迟、过期后才确认；
+    - `AssessmentWork` 的替换与回收；
+    - Smart Turn 与 coordinator 合跑：转写和 addressing 更新不重跑模型，新音频才重跑。
+  - `test_smart_turn.py`：真实媒体时间、重叠混音、镜像轨只计一次、相隔一小时只取尾部、同一 PCM 单飞、取消后推理照常完成供下一次复用、关闭。
+- **Engine 与 Persona**：
+  - host 的 `test_turn_actors.py`：沿用 KD-17 的正常装配链路，共用 `configured_chain.py`。验证 actor 来自各段的关联，不来自设备或 primary participant：两人、已知加未知、标签与关联冲突、只有设备。另验证迟到的关联不改已提交的 Turn。
+  - `test_persona_runtime.py`：私有画像只给每个 actor 都是同一已接受用户的 Turn。
+- **Doctor**：trace 改为 `input.*`。router 已不再等关联，`association_wait` 删除，没有改名保留；`association_ready` 在关联晚于准入时注明。新增 `addressing_queue`、`addressing_inference`，来源是新的 `addressing.semantic` 区间。
+- **KD-17**：三种说话人标注的两段轮都并入同一 Turn，提交落在第二段关闭后 3 s 的期限处。
+- **O-22**：该用例改用 `COLUMNS=10000`，约 330 字符的临时路径下通过。
+- **Linux package**：在 `69b69ff` 上重新触发（run 42475439877），build 与 verify 都通过。上次失败是下载 CPython 时的 HTTP/2 `REFUSED_STREAM`。
+
+### 2. 代码修复
+
+- **O-21**（字幕同步）：
+  - 原因：关闭时 worker 被取消，如果它正在发布 final，取消会传进输出运行时的终态发布，实时投递随之失败；之后对同一输出再发 `transcript_stopping` 也失败。
+  - 修复：final 改由处理器自己的任务发布，每个输出只发一次。关闭时先回收 worker，再在输出运行时的终态期限内等已开始的 final；真实的超时和未送达照常报错。
+- **说话人**（KD-35）：拆成三条有界队列，窗口与关联、身份、属性各一条。身份完成即释放 Context 的等待，到期的属性才入队，队满只丢属性工作；迟到的属性只写回推理时的那个身份。
+- **O-17**（loop）：
+  - 复现：两个 Ctrl+C 用例 20 次中失败 3 次。诊断显示进程组已回收，失败在 Engine 关闭：run 的 watcher 收到 CancelledError，位置是 `execution.py` 的 `wait`。
+  - 原因：取消落在 `_run` 的 `finally` 回收身份监视任务那一步，run 自己以取消结束，没有给出结果。确定性用例复现了这一点。
+  - 修复：这一步的取消与其他收尾步骤一样处理。修复后 40/40 通过。
+- **语义 addressing**（KD-37，用户中途确定的方向）：
+  - 改为与 turn-taking 一致的时序窗口：上一次实际提交覆盖的输入之后的全部转录，按媒体时间排列，匿名、同一实体、不同实体同在。
+  - 每个转录一到即异步重评，读取到它为止的窗口；结果只标注它自己的 observation，证据记录实际读到的上下文，主体用它自己的实体或段关联；完成时校验上下文未变。
+  - 只在真实 `TurnSnapshot` 到达时回收其覆盖的片段，转为有界历史。
+  - 模型输入协议不变；不读取 coordinator 的私有状态。
+- **Smart Turn 预热**：本机直接计时 runner 后撤回。第一次请求慢是因为 KV 缓存只到常量前缀，Avatar 身份及其之后的部分要重新评估，用默认请求预热无效（见第 4 节）。
+
+### 3. 离线验证
+
+| 项 | 结果 |
+|---|---|
+| 全量 `pytest`（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1`） | 669 passed；`git status --ignored` 前后一致 |
+| `uv lock --check`、`check_workspace`、`ruff check`、`ruff format --check`、`git diff --check`、`pre-commit validate-config` | 都通过 |
+| 变异 | 全部被抓到：turn-taking 15、Smart Turn 10、Doctor/processor 5、Engine 4、Persona 2、O-21 4、说话人 7、Smart Turn 复用与 addressing 区间 4、语义窗口 17、O-17 1。O-21 的 O1、区间的 N1、语义窗口的 M14 第一次漏掉，补强用例后被抓到；语义窗口的 M10 漏掉，证明 `epoch` 多余，已删除 |
+
+### 4. 真实服务
+
+构建 `0.6.8-69b69ff704c6-dirty.20261108121757`（tar sha256 前缀 `e5e2ef2bfa5f9f89`），以及语义窗口改写之后的 `…20261108131849`（`90b0141beaa570e3`）。安装到会话临时目录的 prefix，`accept` bundle 由 `config init` 加 `setup --artifacts` 建立。模型为 `gpt-5.6-luna`，STT 为 `gpt-4o-transcribe`。样本沿用第五批（哈希见文末），另用第三、四批的多语言样本。
+
+| 项 | 规模 | 结果 |
+|---|---|---|
+| O-16 | 两轮，共 80 轮 | 终稿到提交中位数约 2 ms（1.7～3.3），终稿后的端点评估和等待为 0；第五批是 66～169 ms |
+| O-23（新） | 同上 | addressing 等待在 VAD 关闭时开始，0.5 s 后超时，这时还没有转写；终稿一到就提交，终稿所在段的语义判断两轮分别是 0/43、0/37 赶在提交之前 |
+| 第 1 轮 addressing | 真实首任务；本机 runner | 首个语义任务 131～191 ms，之后中位数 76～89 ms，排队 0.05～0.3 ms。本机首个请求 135～150 ms，同内容放在后面约 80 ms；用相同身份先请求一次，之后的首轮请求为 92～111 ms |
+| VAD | 550/300/200 × pause_in、hesitate、multi（视觉关开）× 3 轮，两轮 | 300 与 200 下 hesitate、multi 切成 2～3 段，都并入同一输入，30 轮没有边界错误（O-20 真实通过）。失败只有 pause_in 和求和样本的 STT 丢句（KD-19）。300 相比 550：输入段少 394～937 ms，首音频快 277～608 ms（第二轮 pause_in 慢 100 ms，原因是 STT 等待波动）。200 ms 有一次 "Um." 单独成段被转成 "Tom" |
+| O-18 | 静音、噪声各 1 轮 | 经真实 Silero VAD 都没有形成语音段，STT 没有被调用 |
+| KD-19 | 4 个模型 × 4 个样本 × 5 次；验证 3 种配置 × 9 段 × 3 次 | 默认 7/20，其余三个 20/20；验证中默认 27/27，`gpt-transcribe` 24/27，mini 21/27；`whisper-1` 慢约一倍。默认不变 |
+| O-19 | 3 个场景 × 3 次 | 9 次正常输入都直接作答，没有再要求重说 |
+| O-17 | 离线 20 + 40 次 | 修复前 3/20 失败，修复后 0/40 |
+
+费用约 2.5 美元：Doctor 84 轮，STT 直连 161 次，模型 21 次，外加 1 次模型列表。凭据只取 `.env.dev` 里的四个变量，所有输出都做了按值的泄漏检查，没有发现。
+
+### 5. 待决定与仍待定位
+
+- **待决定**：
+  - O-23：addressing 等待改为从所需转写到达后开始计时（终稿到提交约多一次语义推理），还是把语义 addressing 从必需来源中拿掉；
+  - VAD 默认值：本批数据支持把 300 ms 作为下一个默认候选，200 ms 样本太少，且有短段误识；
+  - KD-19 的修法：没有候选全部通过；
+  - 按会话身份预热语义 runner：先等 O-23 决定。
+- **仍待跟踪**：说话人短段（不足 3 s）没有声纹结果的问题另行跟踪；LID 暂缓。
+
+### 证据目录清理（第六批）
+
+按本批审查要求，下面五个 Doctor 临时证据目录（共 115 个文件，约 6.6 MB）已从工作区删除，没有移到仓库的其他目录。结论、命令、版本和验证边界以各批正文为准；原始报告、表格和音频不再随仓库提供。表中是删除前摘出的身份信息。
+
+| 目录 | 批次 | 文件 | 构建 | 样本 |
+|---|---|---|---|---|
+| `2026-11-07/doctor-baseline/` | 第一批真实基线（第二批入库） | 12，912 KB | `0.6.8-d5080d5f168b-dirty.20261107072333`（`096d2fda98c98df4`） | Doctor 自带的 flite 样本 |
+| `2026-11-07/doctor-batch-2/` | 第二批 | 20，1.2 MB | `0.6.8-64a9de7610af-dirty.20261107101729`（`9020f331421c45d0`） | KD-19 上传段 `a707eb1e961fcfb4` |
+| `2026-11-07/doctor-batch-3/` | 第三批 | 34，1.1 MB | `0.6.8-b1cc485ec870-dirty.20261107113657`（`aa120810a14dfc10`） | `gpt-4o-mini-tts` coral：`timer_oven` `362b49fa5edd3bc9`、`lisbon_visit` `c76130dace5cf2b1` |
+| `2026-11-07/doctor-batch-4/` | 第四批 | 29，2.1 MB | `0.6.8-d43cc4c4d807-dirty.20261107150502` | `gpt-4o-mini-tts`，24→16 kHz：`zh` `54249d8d9e283ca3`、`en` `f177aeae25cddc53`、`zh_en` `c15a63bf225cfd81`、`en_zh` `94bb0286193b33ae`、`switch_1`～`4` `440ef15d73507908`/`d0f29921149a024c`/`f9b272b4aa38a9ce`/`d337a65005b672d0`、`silence` `20eaebffe1816e0f`、`noise` `e78e248159646518`、`sum_onyx`/`nova`/`coral` `2ac7cbd5e3b01ef5`/`3242d2dde94f1562`/`d5ba1a0faddc44b4`；flite 变体 `flite_gap_0.24`/`0.5`/`0.8`/`1.2` `93ac159096acaf89`/`f278aa564e54c1b4`/`e44b64f3898a902c`/`df6e01ea983b4e38` |
+| `2026-11-08/doctor-batch-5/` | 第五批 | 20，1.6 MB | `0.6.8-cd5ad32094e1-dirty.20261107173958` | `gpt-4o-mini-tts` coral：`pause_in` `42fdd264ce21a680`、`hesitate` `855bdd6cce57416b`、`multi` `1dcd86c56a9a438a`、`c_orig` `c42694ae9ebf9748`、`c_please` `1bfb06903d04dcde`、`c_reply` `59b325756dc003aa`、`c_statement` `d98ebf01e06ec4fc`、`c_question` `e66a07d6ec7b59b7` |

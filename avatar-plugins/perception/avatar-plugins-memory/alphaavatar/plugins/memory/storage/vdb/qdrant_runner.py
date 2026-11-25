@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
-import os
+import logging
+from time import perf_counter
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -30,14 +31,23 @@ from qdrant_client.models import (
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
+from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
+
+from ...namespace import NAMESPACE
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.qdrant"
+    REQUIRES = (vdb_requirement("qdrant"),)
+    PROVIDERS = vdb_embeddings()
 
     _PAYLOAD_INDEX_FIELDS = (
         "doc_kind",
@@ -105,6 +115,7 @@ class QdrantRunner(InferenceRunner):
         doc_kind: str | None = None,
         owner_keys: list[str] | None = None,
         scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]] | None = None,
         memory_type: str | None = None,
         memory_kind: str | None = None,
         node_type: str | None = None,
@@ -130,6 +141,26 @@ class QdrantRunner(InferenceRunner):
         ):
             if values := self._as_str_list(values):
                 must.append(FieldCondition(key=key, match=MatchAny(any=values)))
+
+        if visibility is not None:
+            # What the readers read: each memory type through its kind of owner, any scope.
+            groups = [
+                Filter(
+                    must=[
+                        FieldCondition(key="memory_type", match=MatchAny(any=types)),
+                        FieldCondition(key="owner_keys", match=MatchAny(any=keys)),
+                    ]
+                )
+                for group in visibility
+                if (types := self._as_str_list(group.get("memory_types")))
+                and (keys := self._as_str_list(group.get("owner_keys")))
+            ]
+            # An empty should matches every point; readers who read nothing match none.
+            must.append(
+                Filter(should=groups)
+                if groups
+                else FieldCondition(key="doc_kind", match=MatchValue(value=""))
+            )
 
         return Filter(must=must) if must else None
 
@@ -262,34 +293,58 @@ class QdrantRunner(InferenceRunner):
         self,
         *,
         context_str: str,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         top_k: int = 10,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> dict[str, Any]:
         out = {"candidates": [], "error": None}
-
+        started = perf_counter()
+        embedding_wait = vector_wait = 0.0
+        memories, graph = [], []
+        phase, error_type = "embedding", None
         try:
-            vector = self._embeddings.embed_query(context_str)
-            common = {
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
-                "memory_type": memory_type,
-            }
-            memories = self._query_candidates(
-                vector,
-                query_filter=self._build_filter(doc_kind="memory_item", **common),
-                limit=top_k,
-            )
-            graph = self._query_candidates(
-                vector,
-                query_filter=self._build_filter(doc_kind="graph_node", **common),
-                limit=top_k,
-            )
+            try:
+                vector = self._embeddings.embed_query(context_str)
+            finally:
+                embedding_wait = perf_counter() - started
+            common = {"visibility": visibility, "memory_type": memory_type}
+            phase = "vector"
+            vector_started = perf_counter()
+            try:
+                memories = self._query_candidates(
+                    vector,
+                    query_filter=self._build_filter(doc_kind="memory_item", **common),
+                    limit=top_k,
+                )
+                graph = self._query_candidates(
+                    vector,
+                    query_filter=self._build_filter(doc_kind="graph_node", **common),
+                    limit=top_k,
+                )
+            finally:
+                vector_wait = perf_counter() - vector_started
             out["candidates"] = self._merge_candidates(memories, graph, limit=top_k)
         except Exception as exc:
+            error_type = type(exc).__name__
             out["error"] = str(exc)
-
+        finally:
+            logger.debug(
+                "MEMORY VECTOR RECALL request_id=%s turn_id=%s backend=qdrant phase=%s "
+                "embedding_ms=%.1f vector_ms=%.1f total_ms=%.1f memory_candidates=%d "
+                "graph_candidates=%d candidates=%d error_type=%s",
+                request_id,
+                trace_id,
+                phase,
+                embedding_wait * 1000,
+                vector_wait * 1000,
+                (perf_counter() - started) * 1000,
+                len(memories),
+                len(graph),
+                len(out["candidates"]),
+                error_type,
+            )
         return out
 
     def _search_by_graph_node(
@@ -297,8 +352,7 @@ class QdrantRunner(InferenceRunner):
         *,
         node_keys: list[str] | None = None,
         node_query: str | None = None,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         node_type: str | None = None,
         top_k: int = 50,
@@ -308,8 +362,7 @@ class QdrantRunner(InferenceRunner):
         try:
             common = {
                 "doc_kind": "graph_node",
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
+                "visibility": visibility,
                 "memory_type": memory_type,
                 "node_type": node_type,
             }
@@ -468,16 +521,16 @@ class QdrantRunner(InferenceRunner):
     def _get_memory_embeddings(config: dict[str, Any]):
         embedding_config = config.get("embedding")
         if not embedding_config:
-            raise ValueError("`embedding` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding` is required in memory.vdb_config")
 
         provider = embedding_config.get("provider")
         model = embedding_config.get("model")
         extra = embedding_config.get("extra") or {}
 
         if not provider:
-            raise ValueError("`embedding.provider` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding.provider` is required in memory.vdb_config")
         if not model:
-            raise ValueError("`embedding.model` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding.model` is required in memory.vdb_config")
 
         return create_embedding_model(
             ProviderTaskConfig(
@@ -486,15 +539,28 @@ class QdrantRunner(InferenceRunner):
         )
 
     def initialize(self) -> None:
-        config = json.loads(os.getenv("MEMORY_VDB_CONFIG", "{}"))
+        config = self.config_for(NAMESPACE)
         self._collection_name = config.get("collection_name")
         if not self._collection_name:
-            raise ValueError("collection_name is required in MEMORY_VDB_CONFIG")
+            raise ValueError("collection_name is required in memory.vdb_config")
 
         self._client = qdrant.get_client(**self._get_vdb_config(config))
         self._embeddings = self._get_memory_embeddings(config)
-        embedding_dim = len(self._embeddings.embed_query("dimension-probe"))
-        self._ensure_collection(self._collection_name, embedding_dim)
+        embedding_dim = probe_dimension(self._embeddings)
+        # Never vectors of two models in one collection: checked against its record first.
+        qdrant.claim_space(
+            self._client,
+            self._collection_name,
+            EmbeddingSpace.configured(config.get("embedding") or {}, embedding_dim),
+            setting="memory.vdb_config.collection_name",
+            ensure=lambda: self._ensure_collection(self._collection_name, embedding_dim),
+        )
+
+    def close(self) -> None:
+        client = getattr(self, "_client", None)
+        self._client = None
+        if client is not None:
+            client.close()
 
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)

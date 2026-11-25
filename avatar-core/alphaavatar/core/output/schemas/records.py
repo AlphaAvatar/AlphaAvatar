@@ -15,22 +15,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from alphaavatar.core.session.schemas import IdentityBasis
+
 from ..enums import ExecutionSignalKind
-
-
-@dataclass(frozen=True, slots=True)
-class OutputScope:
-    context_id: str
-    turn_id: str | None = None
-    run_id: str | None = None
-
-    def __post_init__(self) -> None:
-        for name in ("context_id", "turn_id", "run_id"):
-            value = getattr(self, name)
-            if value is None and name != "context_id":
-                continue
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"Output {name} must be a nonempty string")
+from .identity import OutputScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +36,7 @@ class OutputRecordBatch[T]:
     items: tuple[T, ...]
     digest: str
     size_bytes: int
+    identity_basis: IdentityBasis | None = None
 
     def __post_init__(self) -> None:
         for value in (self.batch_id, self.source, self.schema):
@@ -65,6 +54,8 @@ class OutputRecordBatch[T]:
             raise ValueError("Record digest must be SHA-256 hex")
         if type(self.size_bytes) is not int or self.size_bytes <= 0:
             raise ValueError("Record size_bytes must be positive")
+        if self.identity_basis is not None and not isinstance(self.identity_basis, IdentityBasis):
+            raise TypeError("Record identity basis must be IdentityBasis")
 
 
 @dataclass(frozen=True, slots=True)

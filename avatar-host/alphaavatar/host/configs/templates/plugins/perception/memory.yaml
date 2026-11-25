@@ -1,0 +1,122 @@
+plugin: default
+maximum_memory_num: 28
+
+vdb_config:
+  collection_name: memory
+  url: null  # null: LanceDB in the Avatar workspace; a Qdrant URL moves the vectors there.
+  embedding:
+    provider: openai
+    model: text-embedding-3-small
+
+init_config:
+  retrieval:
+    enabled: true
+    passive_timeout_sec: 3.0
+    max_pending_recalls: 8
+    max_retained_turns: 32
+    max_query_chars: 8192
+    search_context: 3
+    recall_num: 6
+
+  conversation:
+    enabled: true
+
+    provider:
+      task: memory.conversation_delta
+      gateway:
+        trace:
+          enabled: true
+          save_prompt: true
+          save_raw_response: false
+          max_pending: 256
+
+        tasks:
+          memory.conversation_delta:
+            kind: llm
+            backend: langchain
+            provider: openai
+            model: gpt-4o
+            temperature: 0.1
+            timeout: 30.0
+            prompt_version: null
+            input_adapter: null
+            input_options: {}
+            extra: {}
+
+    pipeline:
+      extraction:
+        session_gate: false
+        relations: false
+
+      consolidation:
+        mode: session_merge
+        resolve_superseded_items: null
+        item_ops: [add]
+        candidate_source: union
+        similarity_threshold: 0.4
+        max_candidates_per_item: 5
+        timeout: 30.0
+
+  tool:
+    enabled: true
+
+    provider:
+      task: memory.tool_delta
+      gateway:
+        trace:
+          enabled: true
+          save_prompt: true
+          save_raw_response: false
+          max_pending: 256
+
+        tasks:
+          memory.tool_delta:
+            kind: llm
+            backend: langchain
+            provider: openai
+            model: gpt-4o
+            temperature: 0.1
+            timeout: 30.0
+            prompt_version: null
+            input_adapter: null
+            input_options: {}
+            extra: {}
+
+  # Memories drawn from the session's audio and video by Google's Gemini: GOOGLE_API_KEY.
+  # false keeps these settings and processes nothing of the environment.
+  environment:
+    enabled: true
+    include_audio: true
+
+    provider:
+      task: memory.env_delta
+      gateway:
+        trace:
+          enabled: true
+          save_prompt: true
+          save_raw_response: false
+          max_pending: 256
+
+        tasks:
+          memory.env_delta:
+            kind: llm
+            backend: langchain
+            provider: google
+            model: gemini-2.5-flash
+            temperature: 0.1
+            timeout: 30.0
+            prompt_version: null
+            input_adapter: langchain_gemini  # Gemini's audio and video input.
+            input_options: {}
+            extra: {}
+
+    scheduler:
+      max_pending_batches: 2
+      max_batch_events: 2048
+      max_batch_payload_bytes: 67108864
+      max_batch_duration_sec: 30.0  # The longest stretch of events one extraction covers.
+      max_context_messages: 64
+      max_context_chars: 8192
+      process_timeout_sec: 45.0
+      max_attempts: 2
+      shutdown_timeout_sec: 5.0

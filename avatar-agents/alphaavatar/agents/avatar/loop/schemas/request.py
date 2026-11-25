@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphaavatar.agents.avatar.provider.schemas import ModelInput
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 type QueryDifficulty = Literal["simple", "moderate", "complex"]
 
@@ -50,11 +50,8 @@ class LoopLimits(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class LoopRequest:
-    input_id: str
-    turn_id: str
+    turn: TurnSnapshot
     context_id: str
-
-    input: ModelInput
 
     allowed_capabilities: tuple[str, ...] = ()
     limits: LoopLimits = field(default_factory=LoopLimits)
@@ -66,11 +63,10 @@ class LoopRequest:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not all(
-            isinstance(value, str) and value
-            for value in (self.turn_id, self.context_id, self.input_id)
-        ):
-            raise ValueError("Loop requests require turn_id, context_id and input_id")
+        if not isinstance(self.turn, TurnSnapshot):
+            raise TypeError("Loop requests require a TurnSnapshot")
+        if not isinstance(self.context_id, str) or not self.context_id:
+            raise ValueError("Loop requests require a context_id")
         if self.depth not in {"auto", "quick", "careful"}:
             raise ValueError("Unknown execution depth")
         if self.query_difficulty not in {None, "simple", "moderate", "complex"}:
@@ -83,5 +79,11 @@ class LoopRequest:
             raise ValueError("Reasoning effort must be a bounded nonempty string")
         if len(set(self.allowed_capabilities)) != len(self.allowed_capabilities):
             raise ValueError("Allowed capability identities must be unique")
-        if len({item.id for item in self.input.items}) != len(self.input.items):
-            raise ValueError("Loop input contains duplicate item identities")
+
+    @property
+    def input_id(self) -> str:
+        return self.turn.input_id
+
+    @property
+    def turn_id(self) -> str:
+        return self.turn.turn_id

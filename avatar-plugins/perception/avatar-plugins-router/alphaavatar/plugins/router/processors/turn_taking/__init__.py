@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .config import TurnTakingConfig
-from .processor import MultimodalTurnTakingProcessor
+from .processor import TurnTakingProcessor
 from .runner import SmartTurnV3Runner
 
-__all__ = ["TurnTakingConfig", "SmartTurnV3Runner", "MultimodalTurnTakingProcessor"]
+__all__ = ["TurnTakingConfig", "SmartTurnV3Runner", "TurnTakingProcessor"]

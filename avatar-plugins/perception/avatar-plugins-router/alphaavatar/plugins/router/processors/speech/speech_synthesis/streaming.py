@@ -94,10 +94,23 @@ class SpeechStreamer:
         reason, stage = "synthesis_completed", "prepare"
         preparing: asyncio.Task[PreparedSpeech | None] | None = None
         current: PreparedSpeech | None = None
-        alignments: asyncio.Queue[OutputTextAudioAlignment | None] = asyncio.Queue(maxsize=8)
+        alignments: dict[str, OutputTextAudioAlignment] = {}
+        alignment_changed, alignment_space = asyncio.Event(), asyncio.Event()
+        alignment_finished = False
 
         async def publish_alignments() -> None:
-            while (alignment := await alignments.get()) is not None:
+            published: OutputTextAudioAlignment | None = None
+            while True:
+                alignment_changed.clear()
+                alignment = next(iter(alignments.values()), None)
+                if alignment is None:
+                    if alignment_finished:
+                        return
+                    await alignment_changed.wait()
+                    continue
+                if alignment is published:
+                    await alignment_changed.wait()
+                    continue
                 async with asyncio.timeout(self._limits.timeout):
                     event = await output.publish(
                         EnvOutput(
@@ -112,8 +125,15 @@ class SpeechStreamer:
                     )
                 if event is None and not job.cancelled and output.is_active(identity.output_id):
                     raise RuntimeError("Speech alignment was not admitted")
+                if alignment.duration_final:
+                    del alignments[alignment.alignment_id]
+                    alignment_space.set()
+                    published = None
+                else:
+                    published = alignment
 
         publisher = asyncio.create_task(publish_alignments(), name="speech_alignments")
+        publisher.add_done_callback(lambda task: alignment_space.set())
 
         def check_publisher() -> None:
             if publisher.done():
@@ -122,28 +142,39 @@ class SpeechStreamer:
                 publisher.result()
                 raise RuntimeError("Speech alignment writer stopped unexpectedly")
 
+        async def reserve_alignment() -> None:
+            # Reserve a phrase before PCM starts. Its measured revision never needs another
+            # slot, even when caption delivery falls behind or audio is cancelled mid-phrase.
+            async with asyncio.timeout(self._limits.timeout):
+                while len(alignments) >= 8:
+                    alignment_space.clear()
+                    check_publisher()
+                    await alignment_space.wait()
+            check_publisher()
+
         def align(
             segment: PreparedSpeech, duration: float, *, final: bool, partial: bool = False
         ) -> None:
             check_publisher()
-            alignments.put_nowait(
-                OutputTextAudioAlignment(
-                    text=segment.text,
-                    alignment_id=f"{identity.output_id}:speech:{segment.index}",
-                    source_chunk_ids=segment.source_chunk_ids,
-                    start_time_sec=offset,
-                    end_time_sec=offset + duration,
-                    is_final=segment.final,
-                    partial=partial,
-                    timing_source="text_boundary"
-                    if segment.stream is None
-                    else "measured_audio"
-                    if final
-                    else "estimated_speech_rate",
-                    revision=int(final and segment.stream is not None),
-                    duration_final=final,
-                )
+            alignment = OutputTextAudioAlignment(
+                text=segment.text,
+                alignment_id=f"{identity.output_id}:speech:{segment.index}",
+                source_chunk_ids=segment.source_chunk_ids,
+                start_time_sec=offset,
+                end_time_sec=offset + duration,
+                is_final=segment.final,
+                partial=partial,
+                timing_source="text_boundary"
+                if segment.stream is None
+                else "measured_audio"
+                if final
+                else "estimated_speech_rate",
+                revision=int(final and segment.stream is not None),
+                duration_final=final,
             )
+            # A queued estimate is superseded in place; every final retains its own slot.
+            alignments[alignment.alignment_id] = alignment
+            alignment_changed.set()
 
         try:
             preparing = asyncio.create_task(self._handoff.first_segment(job), name="speech_prepare")
@@ -154,7 +185,12 @@ class SpeechStreamer:
                 except asyncio.CancelledError as error:
                     if preparing.cancelled():
                         preparing = None
-                    if not asyncio.current_task().cancelling() and not job.cancelled:
+                    # Preparation stops for a revoked output; anything else is Provider failure.
+                    if (
+                        not asyncio.current_task().cancelling()
+                        and not job.cancelled
+                        and output.is_active(identity.output_id)
+                    ):
                         raise RuntimeError("TTS preparation cancelled itself") from error
                     raise
                 except Exception:
@@ -170,6 +206,10 @@ class SpeechStreamer:
                     raise asyncio.CancelledError
                 if current.first is not None and job.phase == OutputMessagePhase.FINAL_ANSWER:
                     await self._handoff.supersede(job)
+                stage = "alignment_capacity"
+                await reserve_alignment()
+                if job.cancelled or not output.is_active(identity.output_id):
+                    raise asyncio.CancelledError
                 if not current.final and self._capacity > 1:
                     preparing = asyncio.create_task(
                         self._segments.prepare(job), name="speech_prepare"
@@ -202,23 +242,28 @@ class SpeechStreamer:
                             # No alignment, subtitle network or typing timer is awaited here.
                             stage = "audio_delivery"
                             job.audio_attempted = True
-                            async with asyncio.timeout(self._limits.timeout):
-                                event = await output.publish(
-                                    EnvOutput(
-                                        kind=OutputKind.AUDIO_FRAME,
-                                        output_id=identity.output_id,
-                                        lane=identity.lane,
-                                        scope=identity.scope,
-                                        source=job.source,
-                                        payload=frame,
-                                        metadata=job.metadata,
+                            admitted = output.audio_sequence(identity.output_id)
+                            try:
+                                async with asyncio.timeout(self._limits.timeout):
+                                    event = await output.publish(
+                                        EnvOutput(
+                                            kind=OutputKind.AUDIO_FRAME,
+                                            output_id=identity.output_id,
+                                            lane=identity.lane,
+                                            scope=identity.scope,
+                                            source=job.source,
+                                            payload=frame,
+                                            metadata=job.metadata,
+                                        )
                                     )
-                                )
+                            finally:
+                                # An admitted frame may reach one consumer before interruption
+                                # withholds it from another; alignment covers it like the barrier.
+                                if output.audio_sequence(identity.output_id) != admitted:
+                                    samples += frame.samples_per_channel
+                                    job.published_audio_seconds += frame.duration_sec
                             if event is None:
                                 raise asyncio.CancelledError
-
-                            samples += frame.samples_per_channel
-                            job.published_audio_seconds += frame.duration_sec
                             if frames == 1:
                                 current.first = None
                                 logger.debug(
@@ -272,7 +317,18 @@ class SpeechStreamer:
         finally:
 
             async def settle() -> None:
+                nonlocal alignment_finished
                 errors: list[Exception] = []
+                if reason != "synthesis_completed":
+                    # Stop queued PCM before awaiting caption reconciliation or Provider close.
+                    try:
+                        await output.interrupt(output_id=identity.output_id, reason=reason)
+                    except asyncio.CancelledError as error:
+                        failure = RuntimeError("Speech interruption cancelled itself")
+                        failure.__cause__ = error
+                        errors.append(failure)
+                    except Exception as error:
+                        errors.append(error)
                 abandoned = current
                 try:
                     await self._handoff.reap(job, cancel=reason != "synthesis_completed")
@@ -295,10 +351,11 @@ class SpeechStreamer:
                     except Exception as error:
                         errors.append(error)
                 try:
-                    # Only source settlement waits for timing publication; PCM never does.
+                    # Source completion drains all final revisions. Phrase admission is the
+                    # only backpressure point; the PCM frame loop never waits for captions.
+                    alignment_finished = True
+                    alignment_changed.set()
                     async with asyncio.timeout(self._limits.timeout):
-                        if not publisher.done():
-                            await alignments.put(None)
                         await asyncio.shield(publisher)
                 except BaseException as error:
                     if not publisher.done():

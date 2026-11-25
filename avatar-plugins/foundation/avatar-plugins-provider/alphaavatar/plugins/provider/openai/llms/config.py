@@ -35,9 +35,20 @@ class OpenAIClientConfig(BaseModel):
     def validate_base_url(cls, value: str) -> str:
         parsed = urlparse(value)
         if parsed.scheme not in {"https", "http"} or not parsed.hostname:
-            raise ValueError("OpenAI base_url must be an HTTP(S) endpoint")
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("OpenAI base_url must be an HTTP(S) URL")
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("OpenAI base_url cannot embed credentials, queries, or fragments")
+        try:
+            port = parsed.port
+        except ValueError:
+            port = 0
+        if port == 0:
+            raise ValueError("OpenAI base_url needs a port from 1 to 65535, or none")
         return value.rstrip("/")
 
 

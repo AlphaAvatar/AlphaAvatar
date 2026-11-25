@@ -19,10 +19,22 @@ from typing import Literal
 
 @dataclass(frozen=True, slots=True)
 class InferenceRunnerStatus:
-    """Startup history is separate from current readiness; neither proves tool success."""
+    """Startup history is separate from current readiness; neither proves tool success.
+
+    ``ready`` means every configured worker is ready; fewer ``ready_workers`` is degraded
+    service that still admits requests. Counters never carry request or model content.
+    """
 
     method: str
     startup_state: Literal["pending", "initializing", "ready", "failed", "cancelled"] = "pending"
     ready: bool = False
     startup_elapsed_seconds: float | None = None
     error_type: str | None = None
+    workers: int = 1
+    ready_workers: int = 0
+    executing: int = 0
+    waiting: int = 0
+    rejected: int = 0
+    queue_timeouts: int = 0
+    execution_timeouts: int = 0
+    restarts: int = 0

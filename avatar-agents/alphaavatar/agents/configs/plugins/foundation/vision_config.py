@@ -23,7 +23,7 @@ class VisionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    input_mode: ModelInputType = ModelInputType.TEXT
+    input_mode: ModelInputType = ModelInputType.VLM
     sample_interval_sec: float = Field(default=VIDEO_VISION_INTERVAL_SEC, gt=0, le=10.0)
     max_frames: int = Field(default=4, ge=1, le=32)
 

@@ -12,30 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
-import os
+from threading import RLock
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.agents.utils.vdb.config import lancedb_directory, vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
+from alphaavatar.agents.workspace import WorkspacePaths
 
+from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
 from ...processors.face.model_files import FACE_MODEL_CONFIG
-from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG
+from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG, speaker_vector_collection
 from ...processors.speaker.vector_runner import SpeakerVectorRunner
+from ...profile.serialization import merge_profile_items
 
 
 class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.vdb.lancedb"
+    REQUIRES = (vdb_requirement("lancedb"),)
+    PROVIDERS = vdb_embeddings()
 
     def __init__(self):
         super().__init__()
+        self._user_locks: dict[str, RLock] = {}
 
     def _ensure_table(self, table_name: str, seed_rows: list[dict]) -> None:
         if self._client.table_exists(table_name):
@@ -95,11 +102,6 @@ class LanceDBRunner(InferenceRunner):
     # speaker_vector <-> Lance rows
     #
 
-    def _speaker_to_row(
-        self, *, user_id: str, vector: list[float], row_id: str | None = None
-    ) -> dict:
-        return {"id": str(row_id or uuid4()), "user_id": str(user_id), "vector": vector}
-
     def _speaker_row_to_result(self, row: dict) -> dict:
         distance = float(row.get("_distance", float("inf")))
 
@@ -119,9 +121,6 @@ class LanceDBRunner(InferenceRunner):
     #
     # face_vector <-> Lance rows
     #
-
-    def _face_to_row(self, *, user_id: str, vector: list[float], row_id: str | None = None) -> dict:
-        return {"id": str(row_id or uuid4()), "user_id": str(user_id), "vector": vector}
 
     def _face_row_to_result(self, row: dict) -> dict:
         distance = float(row.get("_distance", float("inf")))
@@ -143,54 +142,28 @@ class LanceDBRunner(InferenceRunner):
     # LanceDB Operations
     #
 
+    @staticmethod
+    def _user_filter(user_id: str) -> str:
+        if not isinstance(user_id, str) or not user_id or "\0" in user_id:
+            raise ValueError("Invalid user identifier")
+        return "user_id = '" + user_id.replace("'", "''") + "'"
+
     def _load(self, *, user_id: str, **kwargs) -> dict:
-        # 1) load details_items
-        details_items: list[dict[str, Any]] = []
-
-        try:
-            rows = self._profiler_table.search().where(f"user_id = '{user_id}'").to_list()
-        except Exception:
-            # Some versions of LanceDB have incomplete where/search support, so we fall back to full table filtering
-            rows = [
-                r for r in self._profiler_table.to_list() if str(r.get("user_id", "")) == user_id
-            ]
-
-        for row in rows:
-            details_items.append(self._details_row_to_item(row))
-
-        # 2) load speaker_vector
-        speaker_vector = None
-        try:
-            spk_rows = (
-                self._speaker_table.search().where(f"user_id = '{user_id}'").limit(1).to_list()
-            )
-        except Exception:
-            spk_rows = [
-                r for r in self._speaker_table.to_list() if str(r.get("user_id", "")) == user_id
-            ][:1]
-
-        if spk_rows:
-            speaker_vector = spk_rows[0].get("vector")
-
-        # 3) load face_vector
-        face_vector = None
-        try:
-            face_rows = self._face_table.search().where(f"user_id = '{user_id}'").limit(1).to_list()
-        except Exception:
-            face_rows = [
-                r for r in self._face_table.to_list() if str(r.get("user_id", "")) == user_id
-            ][:1]
-
-        if face_rows:
-            face_vector = face_rows[0].get("vector")
-
+        predicate = self._user_filter(user_id)
+        details = self._profiler_table.search().where(predicate).limit(None).to_list()
+        speakers = self._speaker_table.search().where(predicate).limit(1).to_list()
+        faces = self._face_table.search().where(predicate).limit(1).to_list()
         return {
-            "details_items": details_items,
-            "speaker_vector": speaker_vector,
-            "face_vector": face_vector,
+            "details_items": [self._details_row_to_item(row) for row in details],
+            "speaker_vector": speakers[0].get("vector") if speakers else None,
+            "face_vector": faces[0].get("vector") if faces else None,
         }
 
-    def _save(
+    def _save(self, *, user_id: str, **updates) -> dict:
+        with self._user_locks.setdefault(user_id, RLock()):
+            return self._save_user(user_id=user_id, **updates)
+
+    def _save_user(
         self,
         *,
         user_id: str,
@@ -198,116 +171,53 @@ class LanceDBRunner(InferenceRunner):
         speaker_vector: list[float] | None,
         face_vector: list[float] | None = None,
     ) -> dict:
-        result = {
-            "user_id": user_id,
-            "deleted": False,
-            "inserted": 0,
-            "error": None,
-            "speaker_deleted": False,
-            "speaker_inserted": 0,
-            "speaker_error": None,
-            "face_deleted": False,
-            "face_inserted": 0,
-            "face_error": None,
-        }
-
-        # 1) save details_items
+        self._user_filter(user_id)
         if details_items:
-            try:
-                # First, delete the old data for this user_id, keeping it consistent with the Qdrant version: full group replacement
-                try:
-                    self._profiler_table.delete(f"user_id = '{user_id}'")
-                except Exception:
-                    old_rows = [
-                        r
-                        for r in self._profiler_table.to_list()
-                        if str(r.get("user_id", "")) == user_id
-                    ]
-                    old_ids = [str(r["id"]) for r in old_rows if "id" in r]
-                    if old_ids:
-                        quoted_ids = ",".join(f"'{x}'" for x in old_ids)
-                        self._profiler_table.delete(f"id IN ({quoted_ids})")
-
-                result["deleted"] = True
-
-                texts = [it.get("page_content", "") for it in details_items]
-
-                # As a fallback to prevent missing metadata fields
-                normalized_items = []
-                for it in details_items:
-                    metadata = dict(it.get("metadata", {}) or {})
-                    metadata["user_id"] = user_id
-                    normalized_items.append(
-                        {
-                            "id": str(it.get("id") or uuid4()),
-                            "page_content": it.get("page_content", ""),
-                            "metadata": metadata,
-                        }
-                    )
-
-                vectors = self._profiler_embeddings.embed_documents(texts)
-                rows = [
-                    self._details_to_row(item, vector)
-                    for item, vector in zip(normalized_items, vectors, strict=True)
-                ]
-
-                self._profiler_table.add(rows)
-                result["inserted"] = len(rows)
-
-            except Exception as e:
-                result["error"] = str(e)
-
-        # 2) save speaker_vector
-        if speaker_vector:
-            try:
-                try:
-                    self._speaker_table.delete(f"user_id = '{user_id}'")
-                except Exception:
-                    old_rows = [
-                        r
-                        for r in self._speaker_table.to_list()
-                        if str(r.get("user_id", "")) == user_id
-                    ]
-                    old_ids = [str(r["id"]) for r in old_rows if "id" in r]
-                    if old_ids:
-                        quoted_ids = ",".join(f"'{x}'" for x in old_ids)
-                        self._speaker_table.delete(f"id IN ({quoted_ids})")
-
-                result["speaker_deleted"] = True
-
-                row = self._speaker_to_row(user_id=user_id, vector=speaker_vector)
-                self._speaker_table.add([row])
-                result["speaker_inserted"] = 1
-
-            except Exception as e:
-                result["speaker_error"] = str(e)
-
-        # 3) save face_vector
-        if face_vector:
-            try:
-                try:
-                    self._face_table.delete(f"user_id = '{user_id}'")
-                except Exception:
-                    old_rows = [
-                        r
-                        for r in self._face_table.to_list()
-                        if str(r.get("user_id", "")) == user_id
-                    ]
-                    old_ids = [str(r["id"]) for r in old_rows if "id" in r]
-                    if old_ids:
-                        quoted_ids = ",".join(f"'{x}'" for x in old_ids)
-                        self._face_table.delete(f"id IN ({quoted_ids})")
-
-                result["face_deleted"] = True
-
-                row = self._face_to_row(user_id=user_id, vector=face_vector)
-                self._face_table.add([row])
-                result["face_inserted"] = 1
-
-            except Exception as e:
-                result["face_error"] = str(e)
-
-        return result
+            normalized = []
+            for item in details_items:
+                metadata = dict(item.get("metadata") or {})
+                metadata["user_id"] = user_id
+                normalized.append({**item, "metadata": metadata})
+            normalized = merge_profile_items(
+                self._load(user_id=user_id)["details_items"], normalized
+            )
+            vectors = (
+                self._profiler_embeddings.embed_documents(
+                    [item.get("page_content", "") for item in normalized]
+                )
+                if normalized
+                else []
+            )
+            rows = [
+                self._details_to_row(item, vector)
+                for item, vector in zip(normalized, vectors, strict=True)
+            ]
+            # The backend commits a field update atomically; there is no delete/insert gap.
+            if rows:
+                (
+                    self._profiler_table.merge_insert("id")
+                    .when_matched_update_all(where="source.updated_at >= target.updated_at")
+                    .when_not_matched_insert_all()
+                    .execute(rows)
+                )
+        for kind, table, vector in (
+            ("speaker", self._speaker_table, speaker_vector),
+            ("face", self._face_table, face_vector),
+        ):
+            if vector is None:
+                continue
+            row = {
+                "id": str(uuid5(NAMESPACE_URL, f"{kind}:{user_id}")),
+                "user_id": user_id,
+                "vector": vector,
+            }
+            (
+                table.merge_insert("user_id")
+                .when_matched_update_all()
+                .when_not_matched_insert_all()
+                .execute([row])
+            )
+        return {"user_id": user_id, "inserted": len(details_items or []), "error": None}
 
     def _search_speaker_vector(
         self,
@@ -430,16 +340,16 @@ class LanceDBRunner(InferenceRunner):
         embedding_config = config.get("embedding")
 
         if not embedding_config:
-            raise ValueError("`embedding` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`embedding` is required in persona.vdb_config")
 
         provider = embedding_config.get("provider")
         model = embedding_config.get("model")
         extra = embedding_config.get("extra") or {}
 
         if not provider:
-            raise ValueError("`embedding.provider` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`embedding.provider` is required in persona.vdb_config")
         if not model:
-            raise ValueError("`embedding.model` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`embedding.model` is required in persona.vdb_config")
 
         task_config = ProviderTaskConfig(
             kind=ProviderKind.EMBEDDING, provider=provider, model=model, extra=extra
@@ -449,35 +359,32 @@ class LanceDBRunner(InferenceRunner):
 
     def initialize(self) -> None:
         # get config
-        config = os.getenv("PERSONA_VDB_CONFIG", "{}")
-        config = json.loads(config)
+        config = self.config_for(NAMESPACE)
 
         self._profiler_collection_name = config.get("profiler_collection_name")
         self._speaker_collection_name = config.get("speaker_collection_name")
         self._face_collection_name = config.get("face_collection_name")
 
         if not self._profiler_collection_name:
-            raise ValueError("`profiler_collection_name` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`profiler_collection_name` is required in persona.vdb_config")
         if not self._speaker_collection_name:
-            raise ValueError("`speaker_collection_name` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`speaker_collection_name` is required in persona.vdb_config")
         if not self._face_collection_name:
-            raise ValueError("`face_collection_name` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`face_collection_name` is required in persona.vdb_config")
+        self._speaker_collection_name = speaker_vector_collection(
+            self._speaker_collection_name, SpeakerVectorRunner.MODEL_TYPE
+        )
 
         # init client
         vdb_config = self._get_vdb_config(config)
-        if not vdb_config.get("client_path"):
-            vdb_config["client_path"] = str(
-                WorkspacePaths.from_env()
-                .data.indexes.namespace(AvatarModule.PERSONA.value)
-                .backend("lancedb")
-                .root
-            )
+        workspace = WorkspacePaths.from_root(self.launch.workspace_root)
+        vdb_config["client_path"] = str(lancedb_directory(vdb_config, workspace, NAMESPACE))
 
         self._client = lancedb.get_client(**vdb_config)
 
         # init embeddings for details_items
         self._profiler_embeddings = self._get_profiler_embeddings(config)
-        profiler_dim = len(self._profiler_embeddings.embed_query("dimension-probe"))
+        profiler_dim = probe_dimension(self._profiler_embeddings)
 
         # init profiler table
         profiler_seed = [
@@ -492,7 +399,13 @@ class LanceDBRunner(InferenceRunner):
                 "raw_metadata": "{}",
             }
         ]
-        self._ensure_table(self._profiler_collection_name, profiler_seed)
+        # Never vectors of two models in one table: checked against its record first.
+        self._client.claim_space(
+            self._profiler_collection_name,
+            EmbeddingSpace.configured(config.get("embedding") or {}, profiler_dim),
+            setting="persona.vdb_config.profiler_collection_name",
+            ensure=lambda: self._ensure_table(self._profiler_collection_name, profiler_seed),
+        )
         self._profiler_table = self._client.open_table(self._profiler_collection_name)
 
         # init speaker table

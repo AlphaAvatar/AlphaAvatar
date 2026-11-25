@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import logging
 
 import cv2
 import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.plugin import plugin_requirement
+from alphaavatar.agents.utils.vector import VectorOps
 
-from ...log import logger
+from ...namespace import NAMESPACE
 from .model_files import FACE_MODEL_CONFIG, FaceModelType, resolve_face_model_root
+
+logger = logging.getLogger(__name__)
 
 
 class FaceAnalysisRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.face.analysis"
+    REQUIRES = (plugin_requirement(NAMESPACE, "face"),)
     MODEL_TYPE: FaceModelType = "buffalo_l"
 
     def __init__(self):
@@ -34,7 +40,7 @@ class FaceAnalysisRunner(InferenceRunner):
         from insightface.app import FaceAnalysis
 
         self._model_config = FACE_MODEL_CONFIG[self.MODEL_TYPE]
-        model_root = resolve_face_model_root(self.MODEL_TYPE)
+        model_root = resolve_face_model_root(self.MODEL_TYPE, models_dir=self.launch.models_dir)
 
         available = ort.get_available_providers()
 
@@ -85,10 +91,9 @@ class FaceAnalysisRunner(InferenceRunner):
 
             if embedding is not None:
                 embedding = np.asarray(embedding, dtype=np.float32)
-                norm = float(np.linalg.norm(embedding))
-
-                if norm > 0:
-                    embedding = embedding / norm
+                normalized = VectorOps.norm(embedding)
+                if normalized is not None:
+                    embedding = normalized
 
             bbox = getattr(face, "bbox", None)
             keypoints = getattr(face, "kps", None)

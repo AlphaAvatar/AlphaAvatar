@@ -29,14 +29,20 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelImagePart,
     ModelInput,
     ModelInputMessage,
+    ModelInputPart,
     ModelTextPart,
 )
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnSnapshot
+
+from .renderer.input.notice import render_timed_notices
+from .renderer.input.xml import replace_current
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
 
-    from ..renderer import RendererRegistry
+    from .renderer import RendererRegistry
 
 
 class ContextBuilder:
@@ -49,12 +55,12 @@ class ContextBuilder:
 
     def _renderers(self) -> RendererRegistry:
         if self._registry is None:
-            from ..renderer import RealtimeRenderer, RendererRegistry, TextRenderer, VLMRenderer
+            from .renderer import RealtimeRenderer, RendererRegistry, XMLInputRenderer
 
             self._registry = RendererRegistry()
             for kind, renderer in (
-                (ModelInputType.TEXT, TextRenderer()),
-                (ModelInputType.VLM, VLMRenderer()),
+                (ModelInputType.TEXT, XMLInputRenderer(include_images=False)),
+                (ModelInputType.VLM, XMLInputRenderer(include_images=True)),
                 (ModelInputType.REALTIME, RealtimeRenderer()),
             ):
                 self._registry.register(input_type=kind, renderer=renderer)
@@ -69,45 +75,23 @@ class ContextBuilder:
         )
 
     @staticmethod
-    def _historical_media_placeholder(*, image_count: int, audio_count: int) -> ModelTextPart:
-        return ModelTextPart(
-            '<historical_media omitted="true" current="false" '
-            f'image_count="{image_count}" audio_count="{audio_count}">'
-            "This media belonged to an earlier message and is not current input."
-            "</historical_media>"
+    def _pinned(part: ModelInputPart) -> ModelInputPart:
+        if (
+            not isinstance(part, ModelImagePart | ModelAudioPart)
+            or part.observation.payload is None
+        ):
+            return part
+        observation = part.observation
+        return replace(
+            part, observation=replace(observation, payload=observation.payload.snapshot())
         )
-
-    def _compact_historical_message(self, message: ModelInputMessage) -> ModelInputMessage:
-        parts = []
-        image_count = audio_count = 0
-        for part in message.parts:
-            if isinstance(part, ModelImagePart):
-                image_count += 1
-            elif isinstance(part, ModelAudioPart):
-                audio_count += 1
-            else:
-                parts.append(part)
-        if image_count or audio_count:
-            parts.append(
-                self._historical_media_placeholder(image_count=image_count, audio_count=audio_count)
-            )
-        return replace(message, parts=tuple(parts))
-
-    def _prepare_base_input(self, model_input: ModelInput, *, current_input_id: str) -> ModelInput:
-        items = []
-        for item in model_input.items:
-            if self._is_runtime_context_item(item):
-                continue
-            if isinstance(item, ModelInputMessage) and item.id != current_input_id:
-                item = self._compact_historical_message(item)
-            items.append(item)
-        return replace(model_input, items=tuple(items))
 
     def _with_system_prompt(self, model_input: ModelInput, *, system_prompt: str) -> ModelInput:
         items = tuple(
             item
             for item in model_input.items
-            if not (isinstance(item, ModelInputMessage) and item.role == ModelRole.SYSTEM)
+            if not self._is_runtime_context_item(item)
+            and not (isinstance(item, ModelInputMessage) and item.role == ModelRole.SYSTEM)
         )
         message = ModelInputMessage(
             id=self.SYSTEM_MESSAGE_ID, role=ModelRole.SYSTEM, parts=(ModelTextPart(system_prompt),)
@@ -168,6 +152,7 @@ class ContextBuilder:
         self,
         *,
         request: ContextBuildRequest,
+        snapshot: TurnSnapshot,
         system_prompt: str,
         runtime_context: str,
         contributions: tuple[ContextContribution, ...] = (),
@@ -175,15 +160,51 @@ class ContextBuilder:
     ) -> ContextBuildResult:
         from alphaavatar.agents.avatar.context.schemas import ContextBuildResult
 
-        base = self._prepare_base_input(request.base_input, current_input_id=request.input_id)
-        base = self._with_system_prompt(base, system_prompt=system_prompt)
-        rendered = (
-            self._renderers()
-            .resolve(request.model_input_type)
-            .render(replace(request, base_input=base))
-        )
+        base = self._with_system_prompt(request.base_input, system_prompt=system_prompt)
+        if base.get(request.input_id) is None:
+            message = ModelInputMessage(
+                id=request.input_id,
+                role=ModelRole.USER,
+                parts=(),
+                created_at=snapshot.committed_at.unix_seconds,
+                metadata=MappingProxyType(
+                    {"turn_id": snapshot.turn_id, "input_modality": snapshot.modality.value}
+                ),
+            )
+            base = base.append(message)
+            notices = render_timed_notices(snapshot, current=True)
+            if notices and snapshot.modality == TurnInputModality.SYSTEM:
+                base = replace_current(
+                    base, request.input_id, tuple(notice.part for notice in notices)
+                )
+            else:
+                base = (
+                    self._renderers()
+                    .resolve(request.model_input_type)
+                    .render(replace(request, base_input=base), notices=notices)
+                    .model_input
+                )
+                current = base.get(request.input_id)
+                assert isinstance(current, ModelInputMessage)
+                # Media as selected now: a later annotation of the same payload changes neither
+                # this request nor the history that replays it.
+                parts = tuple(map(self._pinned, current.parts))
+                if snapshot.text and not any(
+                    isinstance(part, ModelTextPart)
+                    and ("<text_input " in part.text or "<transcript>" in part.text)
+                    for part in parts
+                ):
+                    fallback = ModelTextPart(
+                        f"  <committed_text>{escape(snapshot.text)}</committed_text>"
+                    )
+                    if parts and parts[-1] == ModelTextPart("</turn_input>"):
+                        parts = (*parts[:-1], fallback, parts[-1])
+                    else:
+                        parts = (*parts, fallback)
+                base = replace_current(base, request.input_id, parts)
+
         model_input = self._inject_runtime_context(
-            rendered.model_input,
+            base,
             input_id=request.input_id,
             runtime_context=runtime_context,
             contributions=contributions,

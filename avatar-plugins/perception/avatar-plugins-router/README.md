@@ -14,7 +14,7 @@ The factory orders consumers according to their dependencies. A processor is an 
 | SpeechTranscriptionProcessor | Routed speech | Transcript observations with segment provenance. |
 | SemanticAddressingProcessor | Transcripts and conversation focus | Typed semantic addressing evidence. |
 | VisualAddressingProcessor | Face annotations | Face-orientation addressing evidence. |
-| MultimodalTurnTakingProcessor | Speech, transcripts and addressing evidence | Turn decisions. |
+| TurnTakingProcessor | Speech, transcripts and addressing evidence | Turn decisions. |
 | SpeechSynthesisProcessor | AUDIO_SYNCED source text | AudioFrame and text/audio alignment. |
 | TranscriptSynchronizationProcessor | Source text, alignment, playback and control | Playback-derived transcript chunks. |
 
@@ -30,9 +30,9 @@ Each source owns independent VAD/segmentation state. Pre-roll and bounded queues
 
 ## 🎯 Addressing and conversation focus
 
-Semantic Addressing uses configured Avatar aliases, accumulated transcript context and per-speaker focus to classify AVATAR, NON_AVATAR or UNKNOWN. UNKNOWN is abstention, not evidence of another addressee.
+Semantic Addressing uses configured Avatar aliases and the temporal transcript window since the last committed Turn (every speaker's segments in media order, with a bounded history of committed Turns) to label each transcript POSITIVE (directed at the Avatar), NEGATIVE (not directed at it) or UNKNOWN. Each result annotates its own transcript and cites the context it read; only a committed `TurnSnapshot` retires the input it owns. UNKNOWN is abstention, not evidence of another addressee.
 
-Explicit AVATAR/NON_AVATAR evidence updates the speaker's focus; UNKNOWN preserves it. Audio-only interaction can start with an Avatar-directed conversational prior, which explicit non-Avatar evidence overrides. Model implementation stays behind the SemanticAddressingModelBase contract.
+Explicit POSITIVE/NEGATIVE evidence updates the conversation focus; UNKNOWN preserves it. Audio-only interaction can start with an Avatar-directed conversational prior, which explicit non-Avatar evidence overrides. Model implementation stays behind the SemanticAddressingModelBase contract.
 
 VisualAddressingProcessor consumes FACE_DETECTION annotations, smooths orientation scores and publishes subject-scoped evidence. Ambiguous multi-face observations are skipped when the subject cannot be resolved. Face orientation is a heuristic, not a measurement of eye gaze. Gaze, gesture and other future evidence producers can use the same annotation contract.
 
@@ -40,7 +40,7 @@ Addressing fusion preserves provenance, detects conflicting targets and prioriti
 
 ## 🔀 Turn decisions and Engine admission
 
-MultimodalTurnTakingProcessor coordinates candidate state, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
+TurnTakingProcessor coordinates one open temporal input window and the sealed inputs awaiting STT or admission, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. A segment's speaker label adds to the input's `input_devices`, never sets its boundary. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
 
 ```text
 Speech + transcripts + addressing
@@ -94,7 +94,7 @@ router.init_config.addressing.visual    -> VisualAddressingConfig
 router.init_config.turn_taking          -> TurnTakingConfig
 ```
 
-Addressing owns observation/model settings. Turn Taking owns evidence fusion, coordination, interruption and deadlines. `addressing_wait_sec`, `transcript_wait_sec`, `unsegmented_alignment_sec`, `max_hold_sec` and `fusion` belong directly to turn_taking, not its policy subtree.
+Addressing owns observation/model settings. Turn Taking owns evidence fusion, coordination, interruption and deadlines. `addressing_wait_sec`, `transcript_wait_sec`, `transcript_timeout_sec`, `unsegmented_alignment_sec`, `speech_completion_wait_sec`, `commit_timeout_sec`, `max_pending_inputs`, `max_window_segments` and `fusion` belong directly to turn_taking, not its policy subtree. `transcript_wait_sec` only reports a pending transcript; `transcript_timeout_sec` is the hard deadline that retires it. The schema's `transcript_wait_sec` is 0.75 s; `demo.yaml` and the profiles `config init` and Setup write set it to 3.0 s, equal to the deadline, so no pending transcript is reported before the deadline.
 
 `interruption.enabled` controls supported Turn interruption; `interruption.audio_only_speech_start` additionally selects immediate audio-only speech-start interruption. There is no parallel `voice.allow_interruptions` switch.
 
@@ -109,7 +109,7 @@ Router does not own database persistence, transport-specific types, Provider cli
 ## 📦 Installation
 
 ```bash
-pip install alpha-avatar-plugins-router
+pip install "alpha-avatar-plugins-router[semantic,turn-taking]"
 ```
 
-The plugin is selected through Agent configuration. SDK worker/vendor adapters still present elsewhere are not alternative Router generation paths.
+The plugin is selected through Agent configuration. The `semantic` and `turn-taking` extras install the local Semantic Addressing and Smart Turn runtimes the default configuration selects.

@@ -142,9 +142,9 @@ Rules:
 - Do not output graph_nodes or graph_links.
 - Do not generate embeddings or final graph node IDs.
 - Do not write alias mappings.
-- Do not infer real user identity from face_id, speaker_id, voice_id, or appearance.
+- Do not infer real user identity from entity_id, device_id, or appearance.
 - Use stable global keys only when explicitly supported by the content or runtime context.
-- For local face, voice, speaker, or object IDs, raw local keys are allowed; runtime will scope them to the current context.
+- For local entities, use <type>:<JSON array of source_id, source_generation, entity_id>; runtime will scope it to the current context. Preserve identifiers exactly and omit keyed anchors when their source is missing.
 
 Stable key examples:
 - project:alphaavatar
@@ -155,9 +155,9 @@ Stable key examples:
 - user:<known_user_id> only if explicitly provided by runtime
 
 Local key examples:
-- face:tmp_1
-- voice:speaker_0
-- object:cup_1
+- face:["camera",1,"tmp_1"]
+- voice:["microphone",1,"speaker_0"]
+- object:["camera",1,"cup_1"]
 
 If no stable key is obvious, omit key and provide type/content.
 
@@ -257,8 +257,8 @@ CONVERSATION_DELTA_PROMPT = ModelPrompt.from_messages(
             "- Do not output graph_nodes or graph_links.\n"
             "- Do not output embeddings.\n"
             "- Do not write aliases or canonical identity mappings.\n"
-            "- Do not infer real identity from face_id, speaker_id, voice_id, visual appearance, or ENV observations.\n"
-            "- If local face/voice/object ids appear, you may include them as raw local node_mentions keys such as face:tmp_1, voice:speaker_0, or object:cup_1. The runtime will scope them to the current context.\n"
+            "- Do not infer real identity from entity_id, device_id, visual appearance, or ENV observations.\n"
+            "- If local face/voice/object ids and their sources appear, preserve source_id, source_generation, and entity_id as a JSON array after the node type in each local key. The runtime will scope them to the current context.\n"
             "- Do not invent details not supported by the session content.\n"
             "- Avoid duplication: only record new durable facts, decisions, corrections, preferences, or context from this session content.\n",
         ),

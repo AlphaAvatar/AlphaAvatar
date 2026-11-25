@@ -14,25 +14,168 @@
 from __future__ import annotations
 
 import argparse
+import re
 from collections.abc import Sequence
 
 from alphaavatar.host.version import __version__
 
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?")  # As install.sh takes one
+
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="alphaavatar", description="Run an AlphaAvatar Host.")
+    parser = argparse.ArgumentParser(
+        prog="alphaavatar", description="Run and configure an AlphaAvatar Host."
+    )
     parser.add_argument("--version", action="version", version=f"AlphaAvatar {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    def configured(command: argparse.ArgumentParser, *, json_output: bool) -> None:
+        command.add_argument(
+            "config",
+            nargs="?",
+            help="Bundle name, or a YAML/JSON file path; omitted: the default bundle",
+        )
+        command.add_argument("overrides", nargs="*", metavar="KEY=VALUE")
+        if json_output:
+            command.add_argument("--json", action="store_true", help="Print JSON for tools")
+
     for command in ("dev", "start"):
-        run = commands.add_parser(command, help=f"Run the Host in {command} mode")
-        run.add_argument("config", help="Application YAML or JSON file")
-        run.add_argument("overrides", nargs="*", metavar="KEY=VALUE")
+        configured(
+            commands.add_parser(command, help=f"Run the Host in {command} mode"), json_output=False
+        )
+    config = commands.add_parser("config", help="Create or check application configuration")
+    actions = config.add_subparsers(dest="action", required=True)
+    init = actions.add_parser("init", help="Create a minimal bundle and its profiles")
+    init.add_argument("name", help="Bundle name: lowercase letters, digits, '-' or '_'")
+    init.add_argument("--avatar-id", required=True, help="Stable Avatar identifier")
+    configured(
+        actions.add_parser("check", help="Validate a configuration without starting anything"),
+        json_output=True,
+    )
+    setup = commands.add_parser(
+        "setup",
+        help="Install what a bundle needs, check it, then enable it: an existing bundle, or "
+        "one asked for part by part from the reference configuration",
+    )
+    setup.add_argument(
+        "bundle",
+        nargs="?",
+        help="An existing bundle, as config init makes it or as edited: no questions, the "
+        "credentials from the environment. Omitted: asked in a terminal",
+    )
+    setup.add_argument("--name", help="The new bundle's name, when asked (default: avatar)")
+    setup.add_argument("--avatar-id", help="The new bundle's Avatar ID (default: the name)")
+    setup.add_argument(
+        "--artifacts",
+        metavar="DIR|URL",
+        help="Where this build's own wheels are, if not its release: the CI build's directory",
+    )
+    setup.add_argument(
+        "--plan", action="store_true", help="Print the install plan as JSON; change nothing"
+    )
+    upgrade = commands.add_parser(
+        "upgrade",
+        help="Upgrade this installation to another build, the latest release by default: its "
+        "environment for the default bundle prepared and checked before current switches",
+    )
+    upgrade.add_argument(
+        "--check", action="store_true", help="Show the current and target builds; change nothing"
+    )
+    target = upgrade.add_mutually_exclusive_group()
+    target.add_argument("--version", metavar="X.Y.Z", help="That release's package")
+    target.add_argument(
+        "--file",
+        metavar="PACKAGE",
+        help="A downloaded package, such as a CI build: its own wheels are looked for beside it",
+    )
+    upgrade.add_argument(
+        "--sha256", metavar="HEX", help="The package's SHA-256 (default: the .sha256 beside it)"
+    )
+    upgrade.add_argument(
+        "--artifacts",
+        metavar="DIR|URL",
+        help="Where the target build's own wheels are, if neither beside --file nor its release",
+    )
+    cleanup = commands.add_parser(
+        "cleanup",
+        help="Remove the environments and builds current does not use, as upgrades leave them; "
+        "with every alphaavatar start of this installation stopped",
+    )
+    cleanup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List what would be removed, the space it takes, and what stays and why; change "
+        "nothing",
+    )
+    doctor = commands.add_parser(
+        "doctor",
+        help="Diagnose the installation and a configuration: static checks, then the runtime "
+        "diagnosis on fixed samples, each scenario in rounds (once agreed, or authorized)",
+    )
+    configured(doctor, json_output=True)
+    doctor.add_argument("--list", action="store_true", help="List the checks without running")
+    doctor.add_argument(
+        "--no-metrics",
+        action="store_true",
+        help="Static checks alone: no runtime diagnosis, no runner, nothing contacted",
+    )
+    doctor.add_argument(
+        "--rounds",
+        type=int,
+        default=5,
+        metavar="N",
+        help="How many times each scenario runs, each in a session of its own (default 5)",
+    )
 
     args = parser.parse_args(argv)
-    for item in args.overrides:
+    if "=" in (getattr(args, "config", None) or ""):
+        # KEY=VALUE is always an override, never a bundle or file: the default bundle applies.
+        args.overrides.insert(0, args.config)
+        args.config = None
+    for item in getattr(args, "overrides", ()):
         if "=" not in item or not item.partition("=")[0]:
             parser.error("Configuration overrides must use KEY=VALUE")
 
-    from .commands.run import run
+    if args.command == "doctor" and not 1 <= args.rounds <= 50:
+        parser.error("--rounds takes 1 to 50")
+    if args.command == "setup":
+        if args.bundle is not None and (args.name or args.avatar_id):
+            parser.error("--name and --avatar-id name a new bundle; an existing one has both")
+        from .commands.setup import setup as run_setup
 
-    return run(args.config, args.overrides, devmode=args.command == "dev")
+        return run_setup(args)
+    if args.command == "upgrade":
+        if args.version is not None and not VERSION.fullmatch(args.version):
+            parser.error("--version takes a release's X.Y.Z")
+        if args.sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", args.sha256):
+            parser.error("--sha256 takes 64 hex digits")
+        from .commands.upgrade import upgrade as run_upgrade
+
+        return run_upgrade(args)
+    if args.command == "cleanup":
+        from .commands.cleanup import cleanup as run_cleanup
+
+        return run_cleanup(args)
+    if args.command in ("dev", "start"):
+        from .commands.run import run
+
+        return run(args.config, args.overrides, devmode=args.command == "dev")
+    if args.command == "doctor":
+        if args.list and (args.config is not None or args.overrides):
+            parser.error("--list takes no configuration")
+        from .commands.doctor import doctor
+
+        return doctor(
+            args.config,
+            args.overrides,
+            as_json=args.json,
+            listing=args.list,
+            metrics=not args.no_metrics,
+            rounds=args.rounds,
+        )
+
+    from .commands import config as configuration
+
+    if args.action == "check":
+        return configuration.check(args.config, args.overrides, as_json=args.json)
+    return configuration.init(args.name, avatar_id=args.avatar_id)

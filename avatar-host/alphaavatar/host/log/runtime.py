@@ -21,7 +21,6 @@ import select
 import shutil
 import socket
 import sys
-import tempfile
 import threading
 import time
 from collections import deque
@@ -31,9 +30,10 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TextIO
 
+from alphaavatar.core.ipc import private_socket_path
 from alphaavatar.core.log.client import LogClient
 from alphaavatar.core.log.events import LABELS, TRACE_EVENTS, safe_fields
-from alphaavatar.core.log.records import LOG_ENDPOINT_ENV, MAX_PACKET_BYTES, LogEntry, Redactor
+from alphaavatar.core.log.records import LOG_CLIENT_ENV, MAX_PACKET_BYTES, LogEntry, Redactor
 from alphaavatar.host.version import __version__
 
 from .banner import render_banner
@@ -81,15 +81,16 @@ class HostLog:
         self._early_dropped = 0
         self._received = self._invalid = self._reported_dropped = self._sink_failures = 0
         self._failure: BaseException | None = None
-        self._saved_endpoint = os.environ.get(LOG_ENDPOINT_ENV)
-        self._directory = tempfile.mkdtemp(prefix="alphaavatar-log-")
-        self._path = str(Path(self._directory) / "events.sock")
+        self._saved_client_env = os.environ.get(LOG_CLIENT_ENV)
+        self._directory, self._path = private_socket_path("alphaavatar-log-", "events.sock")
         self._token = secrets.token_hex(32)
-        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.file_path: Path | None = None
         self._thread: threading.Thread | None = None
         self._client: LogClient | None = None
+        receiver = None
         try:
+            # Socket creation can fail (e.g. EPERM); the private directory must not outlive it.
+            self._socket = receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
             self._socket.bind(self._path)
             self._socket.setblocking(False)
             self._client = LogClient(
@@ -106,9 +107,10 @@ class HostLog:
         except BaseException:
             if self._client is not None:
                 self._client.close()
-            self._socket.close()
+            if receiver is not None:
+                receiver.close()
             shutil.rmtree(self._directory)
-            self._restore_endpoint()
+            self._restore_client_env()
             raise
 
     @property
@@ -125,7 +127,7 @@ class HostLog:
 
     def _export(self) -> None:
         level = self._config.level or ("DEBUG" if self._devmode else "INFO")
-        self._endpoint = json.dumps(
+        self._client_env = json.dumps(
             {
                 "path": self._path,
                 "token": self._token,
@@ -135,7 +137,7 @@ class HostLog:
             },
             separators=(",", ":"),
         )
-        os.environ[LOG_ENDPOINT_ENV] = self._endpoint
+        os.environ[LOG_CLIENT_ENV] = self._client_env
 
     def refresh_secrets(self) -> None:
         with self._lock:
@@ -296,6 +298,9 @@ class HostLog:
     def _listen(self) -> None:
         try:
             while True:
+                # Only an empty wait that began after close proves the queue drained: close
+                # sets the flag after its last record was queued, so read the flag first.
+                stopping = self._stop.is_set()
                 readable, _, _ = select.select((self._socket,), (), (), 0.05)
                 if readable:
                     # Drain a bounded batch so a noisy producer cannot prevent shutdown checks.
@@ -305,7 +310,7 @@ class HostLog:
                         except BlockingIOError:
                             break
                         self._receive(payload)
-                elif self._stop.is_set():
+                elif stopping:
                     break
         except BaseException as error:
             self._failure = error
@@ -320,13 +325,13 @@ class HostLog:
                 shutil.rmtree(self._directory, ignore_errors=True)
                 self._finished.set()
 
-    def _restore_endpoint(self) -> None:
-        if os.environ.get(LOG_ENDPOINT_ENV) != getattr(self, "_endpoint", None):
+    def _restore_client_env(self) -> None:
+        if os.environ.get(LOG_CLIENT_ENV) != getattr(self, "_client_env", None):
             return
-        if self._saved_endpoint is None:
-            os.environ.pop(LOG_ENDPOINT_ENV, None)
+        if self._saved_client_env is None:
+            os.environ.pop(LOG_CLIENT_ENV, None)
         else:
-            os.environ[LOG_ENDPOINT_ENV] = self._saved_endpoint
+            os.environ[LOG_CLIENT_ENV] = self._saved_client_env
 
     def close(self) -> None:
         if self._closed:
@@ -340,7 +345,7 @@ class HostLog:
                 errors.append(error)
         assert self._client is not None
         self._client.close()
-        self._restore_endpoint()
+        self._restore_client_env()
         self._stop.set()
         if self._thread is not None:
             deadline = time.monotonic() + self._config.shutdown_timeout

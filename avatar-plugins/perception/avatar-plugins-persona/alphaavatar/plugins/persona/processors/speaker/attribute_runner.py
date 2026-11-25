@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import math
 import os
 
@@ -22,13 +23,17 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
+from alphaavatar.agents.runtime.plugin import plugin_requirement
 
-from ...log import logger
+from ...namespace import NAMESPACE
 from .model_files import SpeakerModelType, resolve_speaker_model_path
+
+logger = logging.getLogger(__name__)
 
 
 class SpeakerAttributeRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.speaker.attribute"
+    REQUIRES = (plugin_requirement(NAMESPACE, "speaker"),)
     MODEL_TYPE: SpeakerModelType = "w2v2l6"
 
     @staticmethod
@@ -59,7 +64,7 @@ class SpeakerAttributeRunner(InferenceRunner):
     def initialize(self) -> None:
         import onnxruntime as ort
 
-        path = resolve_speaker_model_path(self.MODEL_TYPE)
+        path = resolve_speaker_model_path(self.MODEL_TYPE, models_dir=self.launch.models_dir)
         options = ort.SessionOptions()
         options.intra_op_num_threads = max(1, min(math.ceil(available_cpu_count()) // 2, 4))
         options.inter_op_num_threads = 1

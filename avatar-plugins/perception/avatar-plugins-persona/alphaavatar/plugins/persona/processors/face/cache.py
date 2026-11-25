@@ -19,6 +19,7 @@ from alphaavatar.agents.persona.enums import ProfileItemSource
 from alphaavatar.agents.persona.schemas import ProfileItemView
 
 from ...profile import UserProfileDetails
+from ...profile.serialization import can_update_profile_field
 
 
 class FaceCache:
@@ -104,9 +105,8 @@ class FaceCache:
             age_years = self._update_age(int(age))
             age_range = self._age_to_range(age_years)
 
-            if age_range is not None and (
-                profile_details.age is None
-                or profile_details.age.source in {ProfileItemSource.face, ProfileItemSource.speech}
+            if age_range is not None and can_update_profile_field(
+                profile_details, "age", ProfileItemSource.face, updated_at
             ):
                 profile_details.age = ProfileItemView(
                     value=age_range, source=ProfileItemSource.face, updated_at=updated_at
@@ -118,10 +118,9 @@ class FaceCache:
             if normalized_gender is not None:
                 gender_value = self._update_gender(normalized_gender)
 
-                if profile_details.gender is None or profile_details.gender.source in {
-                    ProfileItemSource.face,
-                    ProfileItemSource.speech,
-                }:
+                if can_update_profile_field(
+                    profile_details, "gender", ProfileItemSource.face, updated_at
+                ):
                     profile_details.gender = ProfileItemView(
                         value=gender_value, source=ProfileItemSource.face, updated_at=updated_at
                     )

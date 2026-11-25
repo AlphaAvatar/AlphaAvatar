@@ -161,7 +161,7 @@ class AiriCharacterSession(VirtualCharacterSession):
                 "query": {
                     "livekitUrl": connection.url,
                     "livekitToken": connection.token,
-                    "agentIdentity": connection.agent_identity,
+                    "agentIdentity": connection.agent_device_id,
                 },
             }
             # The pinned frontend reads route.query. Populate browser-local history before

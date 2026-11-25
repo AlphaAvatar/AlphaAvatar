@@ -1,0 +1,55 @@
+plugin: default
+
+init_config:
+  audio_activity:
+    enabled: true
+    pre_roll_sec: 0.3
+    max_buffer_sec: 2.0
+    close_timeout_sec: 1.0
+    max_sources: 64
+    event_batch_size: 64
+
+  addressing:
+    semantic:
+      enabled: true
+      avatar_identities: [AlphaAvatar, Alpha]  # Names people use to address the Avatar.
+      history_turns: 2
+      model:
+        name: qwen3_0_6b_q8_0
+
+    visual:
+      enabled: true
+      toward_threshold: 0.72
+      away_threshold: 0.35
+      ema_alpha: 0.55
+      min_samples: 2
+      republish_interval_sec: 0.75
+      yaw_scale: 0.28
+      roll_scale_deg: 25.0
+      min_face_area_ratio: 0.01
+
+  turn_taking:
+    enabled: true
+    addressing_wait_sec: 0.5
+    transcript_wait_sec: 3.0
+    transcript_timeout_sec: 3.0
+    unsegmented_alignment_sec: 0.75
+    speech_completion_wait_sec: 1.5
+    commit_timeout_sec: 3.0
+    max_pending_inputs: 128
+    max_window_segments: 128
+
+    fusion:
+      conflict_margin: 0.1
+
+    model:
+      name: smart_turn_v3
+      incomplete_threshold: 0.3
+      complete_threshold: 0.7
+
+    policy:
+      respond_to_group: false
+
+    interruption:
+      enabled: true
+      audio_only_speech_start: true

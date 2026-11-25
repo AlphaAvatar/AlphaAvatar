@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import replace
 
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import PerceptionSourceRef, SourceId
 from alphaavatar.core.time import RuntimeTime
 
 from .enums import MediaModality, MediaSourceKind
@@ -54,7 +54,7 @@ class MediaSourceRegistry:
             state=event.state,
             changed_at=at,
             changed_sequence=sequence,
-            transport_participant_id=event.transport_participant_id,
+            device_id=event.device_id,
             latest_observation_at=(previous.latest_observation_at if previous else None),
             latest_observation_sequence=(
                 previous.latest_observation_sequence if previous else None
@@ -102,7 +102,7 @@ class MediaSourceRegistry:
     def get(self, source: PerceptionSourceRef) -> MediaSourceSnapshot | None:
         return self._sources.get(source)
 
-    def next_source(self, source_id: str) -> PerceptionSourceRef:
+    def next_source(self, source_id: SourceId) -> PerceptionSourceRef:
         generation = self._generation_by_source.get(source_id, 0) + 1
         self._generation_by_source[source_id] = generation
 

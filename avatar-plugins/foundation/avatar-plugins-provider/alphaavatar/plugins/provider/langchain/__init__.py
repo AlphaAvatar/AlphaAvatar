@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from ..version import __version__
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.base import LLMBase, WorkerEmbeddingBase
-    from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
 
 class LangChainLLMPlugin(AvatarModulePlugin):
@@ -42,9 +42,3 @@ class LangChainEmbeddingPlugin(AvatarModulePlugin):
         from .embeddings import LangChainEmbedding
 
         return LangChainEmbedding(config)
-
-
-AvatarModulePlugin.register(AvatarModule.PROVIDER_LLM, "langchain", LangChainLLMPlugin())
-AvatarModulePlugin.register(
-    AvatarModule.PROVIDER_EMBEDDING, "langchain", LangChainEmbeddingPlugin()
-)

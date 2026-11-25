@@ -50,7 +50,7 @@ AvatarRuntime
 
 Host constructs Context, Voice and the required Loop, binds Foundation to the runtime, and then initializes Loop. Loop initialization resolves its shared services and checks streaming support; it is not a foreground model request. A `null` Loop is not a disabled operating mode.
 
-Context owns bounded native history and per-query preparation. Provider owns shared model clients and tracing, not conversation history or tool permissions. VoiceBundle owns reusable voice factories; Router owns the individual streams and synthesis jobs that borrow them.
+Context owns complete native history, request-local projection and per-query preparation. Provider owns shared model clients and tracing, not conversation history or tool permissions. VoiceBundle owns reusable voice factories; Router owns the individual streams and synthesis jobs that borrow them.
 
 The native main path is Engine -> Loop -> Context/Provider -> OutputRuntime. The OpenAI streaming backend and the LangChain structured-task backend have different capabilities; select `backend: openai` explicitly for the current native realtime Loop.
 
@@ -72,7 +72,7 @@ MCP owns native MCP client sessions in its isolated runner. One async task enter
 
 ## Registration and lifecycle
 
-`AvatarModulePlugin` registers module factories independently of LiveKit's plugin registry. Factories create configured instances; the registry does not own execution-specific state.
+A configuration selects each implementation by capability type and name: `voice.stt.plugin: openai_segment` selects `voice.stt` `openai_segment`. An installed package declares it as an entry point in the group `alphaavatar.<type>` under that name, naming its `AvatarModulePlugin` class; built-in plugins are declared the same way in their `pyproject.toml`, and no package is imported to find them. The factory validates its `init_config` (`settings`) and names the inference runners it uses (`inference_runners`); `config check`, Doctor and start resolve the selections, then plan workers from those runners, all before a session starts. A missing, duplicated or unloadable implementation fails at the setting that selects it. Factories create configured instances and own no execution-specific state.
 
 `alphaavatar.core.lifecycle.LifecycleComponent` defines `on_start()` and `on_stop()`. `LifecycleGroup` owns ordered startup phases, parallel independent components within a phase, and reverse-phase cleanup. Cleanup also covers partial and unstarted initialization. Repeated close requests share owned work, and a closed instance is not restarted.
 
@@ -84,7 +84,7 @@ A consuming plugin must not close borrowed Foundation services. Keep Core indepe
 
 ## Configuration and model initialization
 
-Examples use five sections: Avatar Identity & Workspace, Runtime, Foundation Plugins, Perception Plugins, and Tools Plugins. These headings organize authoring; the actual keys remain `avatar`, `runtime`, `loop`, `context`, `voice`, `vision`, `router`, `status`, `character`, `memory`, `persona`, and `tools`. `defaults` contains YAML anchors, not runtime configuration. An optional top-level `host` section configures application hosting and RTC; Host removes it before strict AvatarConfig validation.
+Examples use five sections: Avatar Identity & Workspace, Runtime, Foundation Plugins, Perception Plugins, and Tools Plugins, and the multimodal example a sixth, Host & RTC Access. These headings organize authoring; the actual keys remain `avatar`, `runtime`, `loop`, `context`, `voice`, `vision`, `router`, `status`, `character`, `memory`, `persona`, and `tools`. `defaults` contains YAML anchors, not runtime configuration. Optional top-level `host` (application hosting and RTC) and `application` (home and cache root) sections are read by Host, which removes them before strict AvatarConfig validation.
 
 Plugin configuration stays with its owning plugin or processor. The main model is configured under `loop.init_config.model`; temporal alignment belongs to `runtime.perception.temporal_alignment`. Conversation extraction and consolidation belong to `memory.init_config.conversation.pipeline`.
 

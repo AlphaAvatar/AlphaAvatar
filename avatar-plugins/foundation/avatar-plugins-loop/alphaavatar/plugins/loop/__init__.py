@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .version import __version__
 
@@ -23,16 +23,19 @@ if TYPE_CHECKING:
     from alphaavatar.agents.avatar.loop import Loop
     from alphaavatar.agents.runtime import AvatarRuntime
 
+    from .config import RealtimeLoopConfig
+
 
 class RealtimeLoopPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__("Realtime interaction loop", __version__, __name__)
 
-    def get_plugin(self, *, runtime: AvatarRuntime, init_config: Any) -> Loop:
+    def settings(self, init_config: Any) -> RealtimeLoopConfig:
         from .config import RealtimeLoopConfig
+
+        return RealtimeLoopConfig.model_validate(init_config)
+
+    def get_plugin(self, *, runtime: AvatarRuntime, init_config: Any) -> Loop:
         from .loop import AvatarLoop
 
-        return AvatarLoop(RealtimeLoopConfig.model_validate(init_config), runtime=runtime)
-
-
-AvatarModulePlugin.register(AvatarModule.LOOP, "realtime", RealtimeLoopPlugin())
+        return AvatarLoop(self.settings(init_config), runtime=runtime)

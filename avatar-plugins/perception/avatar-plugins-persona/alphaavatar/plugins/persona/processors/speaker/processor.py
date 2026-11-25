@@ -12,64 +12,97 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-import math
+import contextlib
+import logging
 import time
-from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import numpy as np
 
-from alphaavatar.agents.constants import SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
-from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.agents.utils.time import application_now
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
+from alphaavatar.agents.utils.vector import VectorOps
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
-from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
+from alphaavatar.core.media import AudioFrame, AudioSegmentPayload, PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.session.enums import EntityKind, IdentityOutcome, IdentitySource
+from alphaavatar.core.session.schemas import IdentityRequest, Participant
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from ...log import logger
 from ...runtime import PersonaRuntime
 from .attribute_runner import SpeakerAttributeRunner
 from .cache import SpeakerCache
 from .config import SpeakerConfig
 from .model_files import SPEAKER_MODEL_CONFIG
+from .tracking import SpeakerTracks
 from .vector_runner import SpeakerVectorRunner
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class SpeakerSourceState:
-    source: PerceptionSourceRef
-    sample_rate: int
-    num_channels: int
+class _ShortSpeech:
+    """A source's short speech not inferred yet: its consecutive short segments' audio in order,
+    their VAD seconds, and each one's association, for the segment that comes next to carry."""
+
+    pcm: bytes = b""
+    seconds: float = 0.0
+    segments: tuple[tuple[PerceptionSegmentRef, int], ...] = ()
+
+
+@dataclass(slots=True)
+class SpeakerSegmentState:
+    segment: PerceptionSegmentRef
+    entity: PerceptionEntityRef | None
+    participant: Participant | None  # Once identified, the participant its attributes are for
+    token: int
+    device_id: str | None = None
     pcm: bytearray = field(default_factory=bytearray)
+    recent: bytearray = field(default_factory=bytearray)
+    seen: dict[str, None] = field(default_factory=dict)  # Its frames' observations, oldest first
     window_index: int = 0
-    seen_observation_ids: set[str] = field(default_factory=set)
-    seen_order: deque[str] = field(default_factory=deque)
+    pending: int = 0
+    closed: bool = False
+    invalid: bool = False
+    inference_failed: bool = False
+    vector: np.ndarray | None = None
+    vector_sec: float = 0.0  # Seconds of audio its vector is from: a window's, or its own
+    speech_sec: float | None = None  # Its VAD length, once it closed; for the log alone
+    last_audio: bytes | None = None
+    identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
+    # The short speech of its source just before it, which leads its own audio; the segments it
+    # is from take the association its vector finds.
+    led: _ShortSpeech = field(default_factory=_ShortSpeech)
 
 
 @dataclass(slots=True, frozen=True)
 class SpeakerWindow:
-    source: PerceptionSourceRef
-    segment: PerceptionSegmentRef | None
-    window_index: int
+    state: SpeakerSegmentState
     audio_f32: bytes
+    index: int
+    queued_ns: int  # When it joined the inference queue, on the runtime clock
+    whole: bool = False  # A segment shorter than a window, at its own length
 
 
 @avatar_capability(
     name=AvatarCapabilityName.PERSONA_SPEAKER_RECOGNITION,
-    description=(
-        "Can recognize previously known users from their voice and infer speaker "
-        "attributes when speech audio is available."
-    ),
+    description="Can recognize known users from individually associated speech and infer speaker attributes.",
 )
 class SpeakerProcessor(PersonaProcessorBase):
     CONSUMER_ID = "persona.speaker"
-
     MAX_SEEN_OBSERVATIONS = 2048
+    MAX_RETIRED_SEGMENTS = 512
     ATTRIBUTE_INTERVAL_SEC = 5.0
 
     def __init__(
@@ -80,319 +113,674 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._config = config
         self._vector_config = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
         self._attribute_config = SPEAKER_MODEL_CONFIG[SpeakerAttributeRunner.MODEL_TYPE]
-
         if self._vector_config.sample_rate != self._attribute_config.sample_rate:
             raise ValueError("Speaker vector and attribute models must use the same sample rate")
 
         self._sample_rate = self._vector_config.sample_rate
-        self._window_samples = self._vector_config.window_size_samples
-        self._step_samples = self._vector_config.step_size_samples
-        self._window_bytes = self._window_samples * 2
-        self._step_bytes = self._step_samples * 2
-        self._step_sec = self._step_samples / self._sample_rate
-        self._attribute_every = max(1, math.ceil(self.ATTRIBUTE_INTERVAL_SEC / self._step_sec))
+        self._window_bytes = self._vector_config.window_size_samples * 2
+        self._step_bytes = self._vector_config.step_size_samples * 2
 
-        self._sources: dict[PerceptionSourceRef, SpeakerSourceState] = {}
+        self._segments: dict[PerceptionSegmentRef, SpeakerSegmentState] = {}
+        self._retired_segments: dict[PerceptionSegmentRef, None] = {}
         self._profile_caches: dict[str, SpeakerCache] = {}
-        self._inference_queue: asyncio.Queue[SpeakerWindow] = asyncio.Queue(
+        self._shorts: dict[PerceptionSourceRef, _ShortSpeech] = {}
+        self._tracks = SpeakerTracks(
+            threshold=config.track_match_threshold, margin=config.track_match_margin
+        )
+
+        # Three lanes: windows and the association a Turn's participants are read from; each
+        # bound segment's identity, which its Turn's Context waits for within its bound; and
+        # its speaker's attributes, which nothing waits for.
+        self._inference_queue: asyncio.Queue[SpeakerWindow | SpeakerSegmentState] = asyncio.Queue(
+            maxsize=config.inference_queue_size
+        )
+        self._identity_queue: asyncio.Queue[SpeakerSegmentState] = asyncio.Queue(
+            maxsize=config.inference_queue_size
+        )
+        self._attribute_queue: asyncio.Queue[SpeakerSegmentState] = asyncio.Queue(
             maxsize=config.inference_queue_size
         )
 
         self._consume_task: asyncio.Task[None] | None = None
-        self._inference_task: asyncio.Task[None] | None = None
+        self._lanes: tuple[asyncio.Task[None], ...] = ()
+        self._running: dict[str, tuple[SpeakerSegmentState, asyncio.Task[None]]] = {}
 
     @property
     def name(self) -> str:
         return "speaker"
 
-    """Observation helpers"""
+    @staticmethod
+    def _unbound_reason(state: SpeakerSegmentState) -> str:
+        """Why a segment found no speaker, for the diagnostics its association settles with."""
+        if state.inference_failed:
+            return "inference_failed"
+        return "no_vector" if state.vector is None else "no_match"
 
     def _extract_frame(self, observation: EnvObservation) -> AudioFrame | None:
         if observation.payload is None:
             return None
-
         try:
             frame = observation.payload.get(
                 PayloadFormat.AUDIO_FRAME, view=PayloadView.RAW, fallback_to_raw=False
             )
         except PayloadFormatUnavailable:
             return None
-
         return frame if isinstance(frame, AudioFrame) else None
 
-    def _remember_observation(self, state: SpeakerSourceState, observation_id: str) -> bool:
-        if observation_id in state.seen_observation_ids:
-            return False
-
-        state.seen_observation_ids.add(observation_id)
-        state.seen_order.append(observation_id)
-
-        while len(state.seen_order) > self.MAX_SEEN_OBSERVATIONS:
-            removed = state.seen_order.popleft()
-            state.seen_observation_ids.discard(removed)
-
-        return True
-
-    def _enqueue_window(self, window: SpeakerWindow) -> None:
+    def _segment_pcm(self, observation: EnvObservation) -> bytes | None:
+        """A segment's canonical audio, the payload its transcription reads, when it is shorter
+        than a window."""
+        payload = observation.payload
+        if (
+            not isinstance(payload, AudioSegmentPayload)
+            or payload.sample_rate != self._sample_rate
+            or payload.num_channels != 1
+        ):
+            return None
         try:
-            self._inference_queue.put_nowait(window)
-            return
-        except asyncio.QueueFull:
-            pass
-
-        try:
-            self._inference_queue.get_nowait()
-        except asyncio.QueueEmpty:
-            pass
-
-        try:
-            self._inference_queue.put_nowait(window)
-        except asyncio.QueueFull:
-            logger.warning(
-                "Speaker inference queue is full source_id=%s generation=%s window_index=%s",
-                window.source.source_id,
-                window.source.source_generation,
-                window.window_index,
+            pcm = payload.get(
+                PayloadFormat.AUDIO_PCM16_BYTES, view=PayloadView.RAW, fallback_to_raw=False
             )
+        except PayloadFormatUnavailable:
+            return None
+        return pcm if isinstance(pcm, bytes) and 0 < len(pcm) < self._window_bytes else None
+
+    def _is_current(self, state: SpeakerSegmentState) -> bool:
+        return self._segments.get(
+            state.segment
+        ) is state and self.runtime.participants.segment_is_current(state.segment, state.token)
+
+    def _retire(self, state: SpeakerSegmentState) -> None:
+        self.runtime.participants.finish_segment_resolution(
+            state.segment,
+            token=state.token,
+            reason=self._unbound_reason(state),
+            speech_sec=state.speech_sec,
+        )
+        if self._segments.get(state.segment) is state:
+            self._segments.pop(state.segment)
+
+        state.pcm.clear()
+        state.recent.clear()
+        state.last_audio = None
+        state.seen.clear()
+        state.identified.set()
+        self._retired_segments[state.segment] = None
+        if len(self._retired_segments) > self.MAX_RETIRED_SEGMENTS:
+            self._retired_segments.pop(next(iter(self._retired_segments)))
+
+    def _invalidate(self, state: SpeakerSegmentState) -> None:
+        state.invalid = True
+        self.runtime.participants.bind_segment(state.segment, None, token=state.token)
+
+    def _abandon(self, state: SpeakerSegmentState) -> None:
+        """Stop a segment's remaining work: its source ended, a gap lost its speech, or the
+        table needs its place. An association it settled bound is a fact of speech already heard
+        and stays, read for its Turn from then on; one not settled yet is invalidated. Once
+        retired, no late identity or attribute is taken."""
+        if self.runtime.participants.segment_association(state.segment) != "bound":
+            self._invalidate(state)
+        self._retire(state)
+
+    def _discard_job(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
+        state = job.state if isinstance(job, SpeakerWindow) else job
+        if isinstance(job, SpeakerWindow):
+            state.pending -= 1
+        if self._segments.get(state.segment) is state:
+            state.inference_failed = True
+            self.runtime.participants.finish_segment_resolution(
+                state.segment,
+                token=state.token,
+                reason=self._unbound_reason(state),
+                speech_sec=state.speech_sec,
+            )
+            if state.closed and state.pending == 0:
+                self._retire(state)
+
+    def _enqueue(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
+        if self._inference_queue.full():
+            self._discard_job(self._inference_queue.get_nowait())
+        self._inference_queue.put_nowait(job)
+
+    def _enqueue_identity(self, state: SpeakerSegmentState) -> None:
+        if self._identity_queue.full():
+            self._retire(self._identity_queue.get_nowait())  # Bound, never identified
+        self._identity_queue.put_nowait(state)
+
+    def _enqueue_attribute(self, state: SpeakerSegmentState) -> None:
+        if self._attribute_queue.full():
+            self._retire(self._attribute_queue.get_nowait())  # Identified, never described
+        self._attribute_queue.put_nowait(state)
+
+    def _enqueue_pcm(
+        self, state: SpeakerSegmentState, pcm16: bytes, *, whole: bool = False
+    ) -> None:
+        audio = np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
+        state.window_index += 1
+        state.pending += 1
+        queued = self.runtime.clock.now().monotonic_ns
+        self._enqueue(SpeakerWindow(state, audio.tobytes(), state.window_index, queued, whole))
+
+    def _state(self, observation: EnvObservation) -> SpeakerSegmentState | None:
+        segment = observation.segment
+        if segment is None or segment in self._retired_segments:
+            return None
+
+        if not self.runtime.participants.observe_source(segment.source):
+            return None
+
+        for current in tuple(self._segments.values()):
+            if (
+                current.segment.source.source_id == segment.source.source_id
+                and current.segment.source.source_generation < segment.source.source_generation
+            ):
+                self._invalidate(current)
+                self._retire(current)
+
+        for source in tuple(self._shorts):
+            if (
+                source.source_id == segment.source.source_id
+                and source.source_generation < segment.source.source_generation
+            ):
+                del self._shorts[source]
+
+        state = self._segments.get(segment)
+        if state is not None:
+            if state.device_id is None:
+                state.device_id = observation.device_id
+            elif observation.device_id is not None and state.device_id != observation.device_id:
+                self._invalidate(state)
+                self._retire(state)
+                return None
+
+        if state is not None and not self.runtime.participants.segment_is_current(
+            segment, state.token
+        ):
+            self._retire(state)
+            return None
+
+        if state is None:
+            if len(self._segments) >= self._config.max_segments:
+                self._abandon(next(iter(self._segments.values())))
+
+            token = self.runtime.participants.observe_segment(segment)
+            state = SpeakerSegmentState(
+                segment=segment,
+                entity=None,
+                participant=None,
+                token=token,
+                device_id=observation.device_id,
+            )
+            self._segments[segment] = state
+            # Its source's short speech leads it.
+            if (led := self._shorts.pop(segment.source, None)) is not None:
+                state.led = led
+                state.pcm.extend(led.pcm)
+                state.recent.extend(led.pcm[-self._window_bytes :])
+
+        return state
 
     def _append_frame(self, observation: EnvObservation, frame: AudioFrame) -> None:
-        source = observation.source
         if frame.sample_rate != self._sample_rate or frame.num_channels != 1:
-            logger.warning(
-                "Speaker received unsupported audio "
-                "source_id=%s generation=%s sample_rate=%s channels=%s",
-                source.source_id,
-                source.source_generation,
-                frame.sample_rate,
-                frame.num_channels,
-            )
             return
 
-        state = self._sources.get(source)
-        if state is None:
-            state = SpeakerSourceState(
-                source=source, sample_rate=frame.sample_rate, num_channels=frame.num_channels
-            )
-            self._sources[source] = state
+        state = self._state(observation)
+        if state is None or state.closed or state.invalid or state.inference_failed:
+            return
 
-        # Adjacent speech segments may reuse the same raw pre-roll observation.
-        # Persona Speaker should consume that source observation only once.
-        source_observation_id = str(
+        observation_id = str(
             observation.metadata.get("source_observation_id") or observation.observation_id
         )
-        if not self._remember_observation(state, source_observation_id):
+        if observation_id in state.seen:
             return
 
+        state.seen[observation_id] = None
+        if len(state.seen) > self.MAX_SEEN_OBSERVATIONS:
+            state.seen.pop(next(iter(state.seen)))
+
         state.pcm.extend(frame.data)
-
+        state.recent.extend(frame.data)
+        del state.recent[: -self._window_bytes]
         while len(state.pcm) >= self._window_bytes:
-            pcm16 = bytes(state.pcm[: self._window_bytes])
-            audio = np.frombuffer(pcm16, dtype="<i2").astype(np.float32)
-            audio /= 32768.0
-
-            state.window_index += 1
-
-            self._enqueue_window(
-                SpeakerWindow(
-                    source=source,
-                    segment=observation.segment,
-                    window_index=state.window_index,
-                    audio_f32=audio.tobytes(),
-                )
-            )
-
+            self._enqueue_pcm(state, bytes(state.pcm[: self._window_bytes]))
             del state.pcm[: self._step_bytes]
 
-    """Inference worker"""
+    def _close_segment(self, observation: EnvObservation) -> None:
+        state = self._state(observation)
+        if state is None or state.closed:
+            return
+        state.speech_sec = observation.time_range.duration_sec
 
-    async def _resolve_speaker_vector(
-        self, speaker_vector: np.ndarray, *, timeout: float | None = None
-    ) -> str | None:
-        vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+        # Include the final tail in a full window: after a window, its buffer keeps that window
+        # less a step, and anything beyond is tail. Speech that never filled one is inferred
+        # once at its own length, after the short speech that leads it. Neither is padded.
+        if not state.invalid and not state.inference_failed:
+            if (
+                len(state.recent) == self._window_bytes
+                and len(state.pcm) > self._window_bytes - self._step_bytes
+            ):
+                self._enqueue_pcm(state, bytes(state.recent))
+            elif state.window_index == 0 and (pcm := self._segment_pcm(observation)) is not None:
+                seconds = observation.time_range.duration_sec
+                if seconds < self._config.short_segment_sec:
+                    self._add_short(state, state.led.pcm + pcm, state.led.seconds + seconds)
+                else:
+                    self._enqueue_pcm(state, state.led.pcm + pcm, whole=True)
 
-        uid = NumpyOP.best_cosine_match(
-            vector,
-            {
-                uid: cache.speaker_vector
-                for uid, cache in self.persona.persona_cache.items()
-                if cache.speaker_vector is not None
-            },
-            SPEAKER_MATCH_THRESHOLD,
+        state.closed = True
+        state.pcm.clear()
+        state.recent.clear()
+        if state.pending == 0:
+            if state.invalid or state.inference_failed or state.vector is None:
+                # No vector job to wait for; finish without joining the queue.
+                self._retire(state)
+            else:
+                self._enqueue(state)
+
+    def _add_short(self, state: SpeakerSegmentState, pcm: bytes, seconds: float) -> None:
+        """A short segment is not matched alone, and its Turn never waits on it. With the short
+        speech it carries, it is inferred once together they reach short_merge_sec, each of them
+        taking the association its vector finds; until then, it is carried on to lead the next
+        segment of its source."""
+        state.identified.set()
+        if seconds >= self._config.short_merge_sec:
+            self._enqueue_pcm(state, pcm, whole=True)
+            return
+        self._shorts[state.segment.source] = _ShortSpeech(
+            pcm, seconds, (*state.led.segments, (state.segment, state.token))
         )
 
-        if uid is None:
-            uid = await self.persona.store.search_speaker_vector(
-                speaker_vector=vector, threshold=SPEAKER_MATCH_THRESHOLD, timeout=timeout
+    def _cancel_source(self, source: PerceptionSourceRef) -> None:
+        self._shorts.pop(source, None)
+        for state in tuple(self._segments.values()):
+            if state.segment.source == source:
+                self._abandon(state)
+
+        # Its segments go with it; its voices stay the session's, for its other sources too.
+        self.runtime.participants.retire_source(source)
+        for state, job in self._running.values():
+            if state.segment.source == source:
+                job.cancel()
+
+    @contextlib.asynccontextmanager
+    async def _timed(
+        self, stage: str, state: SpeakerSegmentState, **fields: int | None
+    ) -> AsyncIterator[None]:
+        """A step's span on its lane, in the trace: done, timed out, cancelled or failed;
+        bounded, metadata only, never waited on."""
+        started, outcome = self.runtime.clock.now().monotonic_ns, "failed"
+        try:
+            yield
+            outcome = "done"
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                outcome = "cancelled"
+            elif isinstance(error, TimeoutError):
+                outcome = "timeout"
+            raise
+        finally:
+            segment = state.segment
+            self.perception_runtime.input_trace.record(
+                stage,
+                source_id=segment.source.source_id,
+                source_generation=segment.source.source_generation,
+                segment_id=segment.segment_id,
+                outcome=outcome,
+                start_time_ns=started,
+                end_time_ns=self.runtime.clock.now().monotonic_ns,
+                **fields,
             )
-            if uid is not None:
-                await self.persona.load_profile(uid=uid)
 
-        if uid is not None:
-            if cache := self.persona.persona_cache.get(uid):
-                cache.speaker_vector = vector
-            return uid
+    async def _infer_window(self, job: SpeakerWindow) -> None:
+        state = job.state
+        if not self._is_current(state) or state.invalid or state.inference_failed:
+            return
 
-        for uid, cache in self.persona.persona_cache.items():
-            if cache.speaker_vector is None:
-                cache.speaker_vector = vector
-                return uid
-
-        return None
-
-    async def _resolve_speaker(self, window: SpeakerWindow) -> str | None:
-        result = await asyncio.wait_for(
-            self.inference_executor.do_inference(
-                SpeakerVectorRunner.INFERENCE_METHOD, window.audio_f32
-            ),
-            timeout=self._vector_config.inference_timeout_sec,
+        # Each window's wait in the queue and its inference, for the association (O-16).
+        timed = self._timed(
+            "speaker.window", state, sequence=job.index, event_time_ns=job.queued_ns
         )
+        async with timed:
+            result = await asyncio.wait_for(
+                self.inference_executor.do_inference(
+                    SpeakerVectorRunner.INFERENCE_METHOD, job.audio_f32
+                ),
+                timeout=self._vector_config.inference_timeout_sec,
+            )
+        if not self._is_current(state) or state.invalid or state.inference_failed:
+            return
+
         if result is None:
             raise RuntimeError("Speaker vector runner returned no result")
 
-        return await self._resolve_speaker_vector(
-            np.frombuffer(result, dtype=np.float32),
+        vector = VectorOps.norm(np.frombuffer(result, dtype=np.float32))
+        if vector is None:
+            raise ValueError("Speaker vector must contain finite values and have a positive norm")
+
+        if state.vector is not None:
+            if state.vector.shape != vector.shape:
+                raise ValueError("Speaker vector shape changed within a segment")
+            if float(np.dot(state.vector, vector)) < self._config.segment_consistency_threshold:
+                self._invalidate(state)
+                return
+        else:
+            state.vector = vector
+            state.vector_sec = len(job.audio_f32) // 4 / self._sample_rate
+
+        # Attributes keep their own input: full windows only.
+        if not job.whole:
+            state.last_audio = job.audio_f32
+
+    def _speaks_as(self, state: SpeakerSegmentState, participant: Participant) -> bool:
+        """After an await: its segment is still current, and its participant still has the
+        identity it was accepted with. A bound entity never changes participant, so a current
+        segment is still heard as this one."""
+        return self._is_current(state) and self.runtime.participants.accepts_identity(participant)
+
+    async def _resolve_identity(
+        self, state: SpeakerSegmentState, participant: Participant
+    ) -> Participant | None:
+        if not self.runtime.participants.accepts_identity(participant):
+            return None
+
+        user_id = await self.persona.store.search_speaker_vector(
+            speaker_vector=state.vector,
+            threshold=self._config.identity_match_threshold,
             timeout=self._vector_config.inference_timeout_sec,
         )
+        if not self._speaks_as(state, participant):
+            return None
 
-    async def _infer_attribute(self, window: SpeakerWindow, uid: str) -> None:
+        if user_id is not None:
+            outcome = self.runtime.participants.bind_user(
+                IdentityRequest(
+                    participant_id=participant.participant_id,
+                    user_id=user_id,
+                    source=IdentitySource.PERCEPTION,
+                    expected_revision=participant.identity_revision,
+                    reason=(
+                        "Speaker vector matched the stored user above "
+                        f"{self._config.identity_match_threshold}"
+                    ),
+                )
+            )
+            if outcome not in (IdentityOutcome.APPLIED, IdentityOutcome.UNCHANGED):
+                return None
+
+        cache = self.persona.cache_for(participant.participant_id)
+        if cache is None:
+            return None
+
+        cache.add_speaker_vector(state.vector, state.vector_sec)
+        return cache.participant
+
+    def _attribute_due(self, state: SpeakerSegmentState, participant: Participant) -> bool:
+        profile = self._profile_caches.get(participant.participant_id)
+        last = profile.inferred_at if profile is not None else -float("inf")
+        return (
+            state.last_audio is not None and time.monotonic() - last >= self.ATTRIBUTE_INTERVAL_SEC
+        )
+
+    async def _infer_attribute(self, state: SpeakerSegmentState, participant: Participant) -> None:
+        if not self._attribute_due(state, participant):
+            return
+
+        now = time.monotonic()
+
         result = await asyncio.wait_for(
             self.inference_executor.do_inference(
-                SpeakerAttributeRunner.INFERENCE_METHOD, window.audio_f32
+                SpeakerAttributeRunner.INFERENCE_METHOD, state.last_audio
             ),
             timeout=self._attribute_config.inference_timeout_sec,
         )
+        if not self._speaks_as(state, participant):
+            return
 
         if result is None:
             raise RuntimeError("Speaker attribute runner returned no result")
 
-        speaker_attribute: dict[str, np.ndarray] = SpeakerAttributeRunner.decode(result)
-        persona_cache = self.persona.persona_cache.get(uid)
-        if persona_cache is None:
+        cache = self.persona.cache_for(participant.participant_id)
+        if cache is None:
             return
 
-        profile_cache = self._profile_caches.setdefault(uid, SpeakerCache())
-        persona_cache.profile_details = profile_cache.update_profile_detail(
-            persona_cache.profile_details, speaker_attribute, updated_at=application_now()
+        if (
+            participant.participant_id not in self._profile_caches
+            and len(self._profile_caches) >= self._config.max_speaker_caches
+        ):
+            self._profile_caches.pop(next(iter(self._profile_caches)))
+
+        profile = self._profile_caches.setdefault(participant.participant_id, SpeakerCache())
+        cache.profile_details = profile.update_profile_detail(
+            cache.profile_details,
+            SpeakerAttributeRunner.decode(result),
+            updated_at=datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC),
         )
+        profile.inferred_at = now
 
     """Processor Loop"""
 
-    async def _inference_loop(self) -> None:
+    async def _finish_segment(self, state: SpeakerSegmentState) -> None:
+        if not self._is_current(state) or not state.closed or state.pending:
+            return
+
+        identifying = False
+        try:
+            if state.invalid or state.vector is None or state.inference_failed:
+                return
+
+            state.entity = self._tracks.resolve(
+                state.segment.source, state.vector, state.vector_sec
+            )
+            if state.entity is None:
+                return
+
+            self.runtime.participants.ensure_entity(
+                state.segment.source,
+                state.entity,
+                kind=EntityKind.SPEAKER,
+                device_id=state.device_id,
+            )
+            if not self.runtime.participants.bind_segment(
+                state.segment, state.entity, token=state.token, speech_sec=state.speech_sec
+            ):
+                return
+            for segment, token in state.led.segments:
+                self.runtime.participants.bind_segment(segment, state.entity, token=token)
+
+            # Off this lane: the next segment's windows and association never wait on it.
+            self._enqueue_identity(state)
+            identifying = True
+        finally:
+            if not identifying:
+                self._retire(state)
+
+    async def _identify(self, state: SpeakerSegmentState) -> None:
+        """A bound segment's identity, which the Turn its speech is in waits for within its
+        bound; its speaker's attributes, when due, go to their own lane."""
+        describing = False
+        try:
+            if not self._is_current(state):
+                return
+
+            # Its participant as it is now, not when it finished: an identity an earlier segment
+            # settled meanwhile is the one it judges against, and a change while it searches stays.
+            participant = self.runtime.participants.resolve(segment=state.segment)
+            if participant is None:
+                return
+
+            async with self._timed("speaker.identity", state):
+                participant = await self._resolve_identity(state, participant)
+
+            if participant is not None and self._attribute_due(state, participant):
+                state.participant = participant
+                self._enqueue_attribute(state)
+                describing = True
+        finally:
+            state.identified.set()
+            if not describing:
+                self._retire(state)
+
+    async def _describe(self, state: SpeakerSegmentState) -> None:
+        """An identified segment's speaker attributes: they reach later Turns, never a Turn's
+        wait, and only the identity they were inferred for."""
+        try:
+            if self._is_current(state):
+                async with self._timed("speaker.attribute", state):
+                    await self._infer_attribute(state, state.participant)
+        finally:
+            self._retire(state)
+
+    async def _process(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
+        state = job.state if isinstance(job, SpeakerWindow) else job
+        try:
+            if isinstance(job, SpeakerWindow):
+                await self._infer_window(job)
+
+        except BaseException:
+            if self._is_current(state):
+                # Missing model evidence leaves the segment unattributed, not invalidated.
+                state.inference_failed = True
+                self.runtime.participants.finish_segment_resolution(
+                    state.segment,
+                    token=state.token,
+                    reason=self._unbound_reason(state),
+                    speech_sec=state.speech_sec,
+                )
+            raise
+
+        finally:
+            if isinstance(job, SpeakerWindow):
+                state.pending -= 1
+
+            if not self._is_current(state) or (
+                state.closed and state.pending == 0 and (state.invalid or state.inference_failed)
+            ):
+                self._retire(state)
+
+        await self._finish_segment(state)
+
+    async def _serve(
+        self, lane: str, queue: asyncio.Queue, process: Callable[..., Awaitable[None]]
+    ) -> None:
+        """One lane's jobs, one at a time: a cancelled source cancels the one it runs."""
         while True:
-            item = await self._inference_queue.get()
-
-            if not isinstance(item, SpeakerWindow):
-                continue
-
-            started = time.perf_counter()
+            job = await queue.get()
+            state = job.state if isinstance(job, SpeakerWindow) else job
+            running = asyncio.create_task(process(job), name=f"persona_speaker_{lane}")
+            self._running[lane] = (state, running)
 
             try:
-                uid = await self._resolve_speaker(item)
-
-                if uid is not None and (item.window_index - 1) % self._attribute_every == 0:
-                    await self._infer_attribute(item, uid)
-
-                duration = time.perf_counter() - started
-
-                if duration > self._step_sec:
-                    logger.warning(
-                        "Speaker inference is falling behind "
-                        "duration=%.3fs interval=%.3fs queue_size=%s "
-                        "source_id=%s generation=%s window_index=%s",
-                        duration,
-                        self._step_sec,
-                        self._inference_queue.qsize(),
-                        item.source.source_id,
-                        item.source.source_generation,
-                        item.window_index,
-                    )
-
+                await running
             except asyncio.CancelledError:
-                raise
+                if asyncio.current_task().cancelling():
+                    raise
             except Exception:
                 logger.exception(
-                    "Speaker window inference failed source_id=%s generation=%s segment_id=%s window_index=%s",
-                    item.source.source_id,
-                    item.source.source_generation,
-                    item.segment.segment_id if item.segment else None,
-                    item.window_index,
+                    "Speaker %s failed source=%s segment=%s",
+                    lane,
+                    state.segment.source,
+                    state.segment.segment_id,
                 )
+            finally:
+                self._running.pop(lane, None)
 
     async def _consume_loop(self) -> None:
+        stream = self.perception_runtime.speech
         while True:
             try:
-                await self.perception_runtime.wait_for_pending_observations(
-                    consumer_id=self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
-                )
-                window = self.perception_runtime.take_pending_observations(
-                    consumer_id=self.CONSUMER_ID,
-                    streams={PerceptionStreamKind.SPEECH},
-                    require_payload=True,
-                )
+                await stream.wait_for_pending(consumer_id=self.CONSUMER_ID)
+                batch = stream.read_pending(consumer_id=self.CONSUMER_ID)
+                if batch.has_gap:
+                    for state in tuple(self._segments.values()):
+                        self._abandon(state)
+                    self._shorts.clear()  # Their order is lost with what was missed
 
-                if window.has_gap:
-                    logger.warning(
-                        "Persona Speaker observed speech gap missed=%s", window.missed_count
-                    )
-                    self._sources.clear()
-
-                for observation in window.speech_frames:
-                    frame = self._extract_frame(observation)
-                    if frame is not None:
-                        self._append_frame(observation, frame)
-
-                self.perception_runtime.commit_observations(window)
-
+                for observation in batch.items:
+                    if observation.kind == ObservationKind.SPEECH_CANCELLED:
+                        self._cancel_source(observation.source)
+                    elif observation.kind == ObservationKind.SPEECH_SEGMENT:
+                        self._close_segment(observation)
+                    elif observation.kind == ObservationKind.SPEECH_FRAME:
+                        frame = self._extract_frame(observation)
+                        if frame is not None:
+                            self._append_frame(observation, frame)
+                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Persona Speaker failed to consume speech observations")
                 await asyncio.sleep(0.05)
 
+    async def _await_identities(self, snapshot: TurnSnapshot) -> None:
+        """What a Turn's answer needs of its speech before Context freezes: each segment's
+        speaker identity, settled within the bound or left as it is. Attributes go on unwaited,
+        reaching later Turns only."""
+        owned = set(snapshot.input_observation_ids)
+        segments = {
+            observation.segment
+            for event in snapshot.perception_events
+            if (observation := event.observation) is not None
+            and observation.observation_id in owned
+            and observation.segment is not None
+        }
+        pending = [
+            state.identified.wait()
+            for state in self._segments.values()
+            if state.segment in segments
+        ]
+        if pending:
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(self._config.identity_wait_sec):
+                    await asyncio.gather(*pending)
+
     """Runtime operations"""
 
     async def _start(self) -> None:
-        self._inference_task = asyncio.create_task(
-            self._inference_loop(), name="persona_speaker_inference"
+        self.runtime.turn.register_context_consumer(self.CONSUMER_ID, waiter=self._await_identities)
+        self._lanes = (
+            asyncio.create_task(
+                self._serve("window", self._inference_queue, self._process),
+                name="persona_speaker_inference",
+            ),
+            asyncio.create_task(
+                self._serve("identity", self._identity_queue, self._identify),
+                name="persona_speaker_identity",
+            ),
+            asyncio.create_task(
+                self._serve("attribute", self._attribute_queue, self._describe),
+                name="persona_speaker_attribute",
+            ),
         )
         self._consume_task = asyncio.create_task(
             self._consume_loop(), name="persona_speaker_consumer"
         )
-
         logger.info(
-            "Persona Speaker started "
-            "sample_rate=%s window_samples=%s step_samples=%s "
-            "step_sec=%.2f attribute_interval_sec=%.2f queue_size=%s",
+            "Persona Speaker started sample_rate=%s queue_size=%s",
             self._sample_rate,
-            self._window_samples,
-            self._step_samples,
-            self._step_sec,
-            self.ATTRIBUTE_INTERVAL_SEC,
             self._inference_queue.maxsize,
         )
 
     async def _stop(self, *, finalize: bool) -> None:
-        if self._consume_task is not None:
-            self._consume_task.cancel()
-            await asyncio.gather(self._consume_task, return_exceptions=True)
-            self._consume_task = None
+        self.runtime.turn.unregister_context_consumer(self.CONSUMER_ID)
+        tasks = tuple(task for task in (self._consume_task, *self._lanes) if task is not None)
+        for task in tasks:
+            task.cancel()
 
-        if self._inference_task is not None:
-            self._inference_task.cancel()
-            await asyncio.gather(self._inference_task, return_exceptions=True)
-            self._inference_task = None
-
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._consume_task, self._lanes = None, ()
         while not self._inference_queue.empty():
-            try:
-                self._inference_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+            self._discard_job(self._inference_queue.get_nowait())
+        for queue in (self._identity_queue, self._attribute_queue):
+            while not queue.empty():
+                self._retire(queue.get_nowait())
 
-        self._sources.clear()
+        self._segments.clear()
+        self._retired_segments.clear()
+        self._shorts.clear()
+        # The entities stay bound: Turns read their participants until the session closes.
+        self._tracks.clear()
         self._profile_caches.clear()
-
         self.perception_runtime.clear_observation_consumer(
             self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
         )
-
         logger.info("Persona Speaker stopped")

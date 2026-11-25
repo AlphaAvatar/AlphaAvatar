@@ -1,0 +1,59 @@
+rtc:
+  backend: livekit  # Session transport; LIVEKIT_* in the environment hold its credentials.
+  init_config:
+    connection_mode: dispatch
+    # Dispatch uses avatar.name; the assignment supplies the room and token.
+    room_name: null  # direct mode only: the room to join.
+    device_id: null
+    connect_timeout: 30.0
+    participant_timeout: 60.0
+    registration_timeout: 15.0
+    reconnect_attempts: 16
+    status_interval: 2.0
+    ping_interval: 5.0
+    pong_timeout: 30.0
+    max_message_bytes: 1048576
+
+execution:
+  on_session_end: finish_execution
+  # Finish affected executions before reconnecting for new dispatch jobs.
+  on_control_loss: finish_execution
+  max_session_seconds: 1800  # A session ends after this long; 0: no limit.
+  reservation_timeout: 15.0
+  ledger_capacity: 10000
+
+processes:
+  capacity: 5
+  startup_timeout: 120.0
+  shutdown_timeout: 180.0
+  terminate_timeout: 5.0
+  kill_timeout: 5.0
+  ipc_timeout: 5.0
+
+health:
+  bind: 127.0.0.1  # 0.0.0.0 would expose the unauthenticated status to the network.
+  port: null  # null: 8081 for start, a free port for dev.
+
+log:
+  level: null  # null: DEBUG for dev, INFO for start.
+  third_party_level: INFO
+  color: auto
+  banner: true
+  events: false
+  file: true  # Log files in the workspace's .logs/host.
+  directory: null
+  rotate_bytes: 10485760
+  backup_count: 3
+  shutdown_timeout: 3.0
+
+  conversation:
+    enabled: true
+    content: dev
+    max_chars: 2048
+    file_content: false
+
+doctor:
+  external_services: false  # true: doctor may call the model, speech and other paid services.
+  test_stores: false  # true: the remote vector stores named here hold test data doctor may write.
+
+inference_check_interval: 0.5

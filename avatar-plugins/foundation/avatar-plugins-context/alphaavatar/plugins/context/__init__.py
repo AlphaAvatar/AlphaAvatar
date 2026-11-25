@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .version import __version__
 
@@ -24,22 +24,23 @@ if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import AvatarRuntime
 
+    from .config import ContextConfig
+
 
 class ContextPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__("Query context manager", __version__, __name__)
 
+    def settings(self, init_config: Any) -> ContextConfig:
+        from .config import ContextConfig
+
+        return ContextConfig.model_validate(init_config)
+
     def get_plugin(
         self, *, runtime: AvatarRuntime, avatar_config: AvatarConfig, init_config: Any
     ) -> ContextManager:
-        from .config import ContextConfig
         from .manager import AvatarContextManager
 
         return AvatarContextManager(
-            runtime=runtime,
-            avatar_config=avatar_config,
-            config=ContextConfig.model_validate(init_config),
+            runtime=runtime, avatar_config=avatar_config, config=self.settings(init_config)
         )
-
-
-AvatarModulePlugin.register(AvatarModule.CONTEXT, "default", ContextPlugin())

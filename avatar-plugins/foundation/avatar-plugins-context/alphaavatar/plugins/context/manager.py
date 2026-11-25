@@ -16,34 +16,39 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.avatar.context import ContextManager
+from alphaavatar.agents.avatar.context import ContextIdentityChanged, ContextManager
 from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextPrepareRequest
 from alphaavatar.agents.avatar.provider.enums import ModelInputType
 from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
 from alphaavatar.agents.avatar.provider.schemas import ModelInput
-from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
+from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem, ModelInputMessage
 from alphaavatar.agents.avatar.vision import VisualFrameSelector
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.utils.time import ParticipantTimeContext, format_user_time
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.perception import PerceptionTemporalAligner, TemporalAlignmentMode
+from alphaavatar.core.session.schemas import IdentityBasis
 from alphaavatar.core.time import RuntimeTimeRange
+from alphaavatar.core.turn.enums import TurnInputModality
 
 from .builder import ContextBuilder
+from .builder.renderer.template.runtime import render_runtime_context
+from .builder.renderer.template.system import render_avatar_instructions
+from .compressor import ContextCompressor
 from .config import ContextConfig
 from .history import ContextHistory
 from .snapshot import snapshot_input
-from .template import AvatarSysPromptTemplate, RuntimeStateTemplate
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.memory import MemoryBase
     from alphaavatar.agents.persona import PersonaBase
     from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
-    from alphaavatar.core.turn import TurnSnapshot
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +67,15 @@ class AvatarContextManager(ContextManager):
         }
     )
 
+    _OWNED_INPUT_KINDS = frozenset(
+        {
+            ObservationKind.SPEECH_SEGMENT,
+            ObservationKind.TRANSCRIPT_SEGMENT,
+            ObservationKind.TEXT_INPUT,
+            ObservationKind.IMAGE_INPUT,
+        }
+    )
+
     def __init__(
         self, *, runtime: AvatarRuntime, avatar_config: AvatarConfig, config: ContextConfig
     ) -> None:
@@ -72,7 +86,8 @@ class AvatarContextManager(ContextManager):
         self._introduction = avatar_config.avatar.introduction
         self._memory: MemoryBase | None = None
         self._persona: PersonaBase | None = None
-        self._history = ContextHistory(output=runtime.output, config=config)
+        self._history = ContextHistory(output=runtime.output, turns=runtime.turn.events)
+        self._compressor = ContextCompressor()
         self._pending = 0
         self._work: set[asyncio.Task[ModelInput]] = set()
         self._close_task: asyncio.Task[None] | None = None
@@ -81,8 +96,11 @@ class AvatarContextManager(ContextManager):
     def initial_instructions(self) -> str:
         self._ensure_open()
         persona = self._persona.persona_content if self._persona is not None else None
-        return self._system_template(self._runtime.state).instructions(
-            stable_persona=persona or self._runtime.state.user_persona or DEFAULT_SYSTEM_VALUE
+        return render_avatar_instructions(
+            self._introduction,
+            interaction_method=self._runtime.state.interaction_method,
+            stable_persona=persona or self._runtime.state.user_persona,
+            stable_behavior_rules=self._config.behavior_rules,
         )
 
     @staticmethod
@@ -103,37 +121,25 @@ class AvatarContextManager(ContextManager):
             raise RuntimeError("Cannot bind Context sources during preparation")
         self._memory, self._persona = memory, persona
 
-    def accept_turn(self, snapshot: TurnSnapshot) -> ModelInput:
-        self._ensure_open()
-        context_id = self._runtime.state.context_id
-        if self._runtime.turn.get(snapshot.input_id) is not snapshot:
-            raise ValueError("Context can only accept a Turn owned by this runtime")
-        if context_id not in snapshot.context_ids:
-            raise ValueError("Committed input belongs to another context")
-        return self._history.accept_turn(snapshot, context_id)
-
-    def _system_template(self, state: StateRuntime) -> AvatarSysPromptTemplate:
-        return AvatarSysPromptTemplate(
-            self._introduction,
-            interaction_method=state.interaction_method,
-            internal_capabilities=self._runtime.capability_registry.capabilities,
-            stable_behavior_rules=self._config.behavior_rules,
-        )
-
-    def _state_snapshot(self) -> StateRuntime:
+    def _state_snapshot(self, snapshot: TurnSnapshot) -> StateRuntime:
         state = self._runtime.state
         times = {}
-        for identity, participant in self._runtime.session.participants.items():
+        for participant_id, participant in self._runtime.session.participants.items():
             time = format_user_time(
-                participant.user_time.timezone, participant.user_time.timezone_source
+                participant.timezone or self._runtime.timezone,
+                "participant" if participant.timezone else "application",
             )
-            times[identity] = ParticipantTimeContext(
-                participant_id=identity, user_id=participant.effective_user_id, user_time=time
+            times[participant_id] = ParticipantTimeContext(
+                participant_id=participant_id, user_id=participant.user_id, user_time=time
             )
 
         # Read sources once. Preparing a query must not write to shared State or participants.
-        memory = self._memory.memory_content if self._memory is not None else state.memory_content
-        persona = self._persona.persona_content if self._persona is not None else state.user_persona
+        memory = (
+            self._memory.content_for(snapshot) if self._memory is not None else state.memory_content
+        )
+        persona = (
+            self._persona.content_for(snapshot) if self._persona is not None else state.user_persona
+        )
         return replace(
             state,
             participant_time=times,
@@ -145,14 +151,35 @@ class AvatarContextManager(ContextManager):
             turn_behavior_rules="\n".join((state.global_behavior_rules, state.turn_behavior_rules)),
         )
 
+    def _check_identity(self, basis: IdentityBasis | None) -> None:
+        if basis is None:
+            return
+        if not isinstance(basis, IdentityBasis):
+            raise TypeError("Context identity evidence must be IdentityBasis")
+        if not self._runtime.participants.identity_basis_is_current(basis):
+            raise ContextIdentityChanged("Prepared context identity changed")
+
     def _compose(
         self,
-        request: ContextPrepareRequest,
         snapshot: TurnSnapshot,
-        system_prompt: str,
-        runtime_context: str,
+        base_input: ModelInput,
+        state: StateRuntime | None,
+        request: ContextPrepareRequest,
     ) -> ModelInput:
         events = snapshot.perception_events
+        if snapshot.system_notices and snapshot.modality == TurnInputModality.SYSTEM:
+            events = ()
+        elif snapshot.input_observation_ids:
+            # A candidate waiting for STT may overlap the next turn's speech.
+            owned = set(snapshot.input_observation_ids)
+            events = tuple(
+                event
+                for event in events
+                if (observation := event.observation) is None
+                or observation.kind not in self._OWNED_INPUT_KINDS
+                or observation.observation_id in owned
+            )
+
         if self._vision.input_mode != ModelInputType.REALTIME:
             events = tuple(
                 event
@@ -177,21 +204,85 @@ class AvatarContextManager(ContextManager):
             else None,
         )
         selection = VisualFrameSelector().select(alignment=alignment, config=self._vision)
+        if self._vision.input_mode != ModelInputType.TEXT:
+            # Which frames this Turn's model input carries: identities, positions, times.
+            trace = self._runtime.perception.input_trace
+            sequences = {
+                event.observation.observation_id: event.sequence
+                for event in events
+                if event.observation is not None
+            }
+            for frame in selection.frames:
+                observation = frame.observation
+                trace.record(
+                    "context.frame_selected",
+                    turn_id=snapshot.turn_id,
+                    observation_id=observation.observation_id,
+                    sequence=sequences.get(observation.observation_id),
+                    event_time_ns=observation.time_range.end.monotonic_ns,
+                )
+
+            trace.record(
+                "context.visual",
+                turn_id=snapshot.turn_id,
+                frame_count=len(selection.frames),
+                outcome="selected" if selection.frames else "none",
+            )
+
         result = ContextBuilder().build(
             request=ContextBuildRequest(
-                base_input=request.input,
-                input_id=request.input_id,
+                base_input=base_input,
+                input_id=snapshot.input_id,
                 alignment=alignment,
                 visual_selection=selection,
                 model_input_type=self._vision.input_mode,
             ),
-            system_prompt=system_prompt,
-            runtime_context=runtime_context,
-            contributions=request.contributions,
-            query_scope=f"{request.context_id}:{request.turn_id}",
+            snapshot=snapshot,
+            system_prompt=render_avatar_instructions(
+                self._introduction,
+                interaction_method=state.interaction_method,
+                stable_persona=state.user_persona,
+                stable_behavior_rules=self._config.behavior_rules,
+            )
+            if state is not None
+            else "",
+            runtime_context=render_runtime_context(state) if state is not None else "",
+            contributions=request.contributions if state is not None else (),
+            query_scope=f"{request.context_id}:{snapshot.turn_id}",
         )
 
         return snapshot_input(result.model_input)
+
+    def _compress_history(self, captured: ModelInput, input_id: str) -> ModelInput:
+        # The Builder prepends the system message. Only items before the current Turn are history.
+        items = captured.items
+        current_index = next(
+            (index for index, item in enumerate(items) if item.id == input_id), None
+        )
+        if current_index is None or current_index == 0:
+            raise ModelProtocolError(
+                "Captured context requires a current input after the system message"
+            )
+        if current_index == 1:
+            return captured
+
+        history = self._compressor.compress(items[1:current_index])
+        return replace(captured, items=(items[0], *history, *items[current_index:]))
+
+    async def _prepare_input(
+        self, request: ContextPrepareRequest, state: StateRuntime
+    ) -> ModelInput:
+        async def build(snapshot: TurnSnapshot, base_input: ModelInput) -> ModelInput:
+            return await asyncio.to_thread(
+                self._compose,
+                snapshot,
+                base_input,
+                state if snapshot is request.turn else None,
+                request,
+            )
+
+        captured = await self._history.capture(request.turn, request.context_id, build)
+        return await asyncio.to_thread(self._compress_history, captured, request.input_id)
 
     async def prepare(self, request: ContextPrepareRequest) -> ModelInput:
         self._ensure_open()
@@ -204,34 +295,42 @@ class AvatarContextManager(ContextManager):
         self._pending += 1
         reserved = True
         try:
-            request = replace(request, input=snapshot_input(request.input))
-            snapshot = self._runtime.turn.get(request.input_id)
-            if snapshot is None or snapshot.turn_id != request.turn_id:
-                raise ValueError("Context input does not identify the requested committed turn")
+            snapshot = request.turn
+            if self._runtime.turn.get(snapshot.input_id) is not snapshot:
+                raise ValueError("Context can only prepare a Turn owned by this runtime")
+
             if (
                 request.context_id not in snapshot.context_ids
                 or request.context_id != self._runtime.state.context_id
             ):
                 raise ValueError("Committed turn does not belong to the requested context")
 
-            # Standalone native Loop callers use the same acceptance path as the Engine.
-            self.accept_turn(snapshot)
+            started = asyncio.get_running_loop().time()
             ready = await self._runtime.turn.wait_context_ready(snapshot)
+            logger.debug(
+                "Context readiness turn_id=%s ready=%s wait_ms=%.1f",
+                snapshot.turn_id,
+                ready,
+                (asyncio.get_running_loop().time() - started) * 1000,
+            )
             self._ensure_open()
             if request.context_id != self._runtime.state.context_id:
                 raise ValueError("State no longer belongs to the requested context")
-            if not ready:
-                logger.debug("Context readiness timed out turn_id=%s", request.turn_id)
 
-            request = replace(
-                request, input=self._history.capture(snapshot, request.context_id, request.input)
-            )
-            state = self._state_snapshot()
-            system = self._system_template(state).instructions(stable_persona=state.user_persona)
-            text = RuntimeStateTemplate().render(state_runtime=state)
+            if not ready:
+                # What a Turn waits for is evidence it can answer without: prepare from what
+                # there is, never a time-out the Loop would take for its own budget (KD-46).
+                logger.warning(
+                    "Turn context not ready, prepared without it turn_id=%s pending=%s",
+                    snapshot.turn_id,
+                    self._runtime.turn.pending_context_consumers(snapshot),
+                )
+
+            basis = self._runtime.participants.identity_basis(snapshot)
+            state = self._state_snapshot(snapshot)
+            self._check_identity(basis)
             task = asyncio.create_task(
-                asyncio.to_thread(self._compose, request, snapshot, system, text),
-                name=f"context_prepare:{request.turn_id}",
+                self._prepare_input(request, state), name=f"context_prepare:{request.turn_id}"
             )
             self._work.add(task)
             self._pending -= 1
@@ -242,7 +341,17 @@ class AvatarContextManager(ContextManager):
             # Cancellation drops this request's delivery, not ownership of an in-flight worker.
             result = await asyncio.shield(task)
             self._ensure_open()
-            return result
+            self._check_identity(basis)
+            system_item = result.items[0]
+            return result.replace(
+                system_item.id,
+                replace(
+                    system_item,
+                    metadata=MappingProxyType(
+                        {**system_item.metadata, "alphaavatar_identity": basis}
+                    ),
+                ),
+            )
         finally:
             if reserved:
                 self._pending -= 1
@@ -253,6 +362,9 @@ class AvatarContextManager(ContextManager):
         self._ensure_open()
         if not isinstance(prefix, ModelInput):
             raise TypeError("ContextManager requires a captured ModelInput")
+
+        if prefix.items and isinstance(prefix.items[0], ModelInputMessage):
+            self._check_identity(prefix.items[0].metadata.get("alphaavatar_identity"))
 
         identities = {item.id for item in prefix.items}
         added = {item.id for item in continuation}

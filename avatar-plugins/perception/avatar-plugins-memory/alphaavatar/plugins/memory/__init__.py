@@ -11,17 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime.inference import register_inference_runner_bootstrap
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-
-from .factory import MemoryPlugin
-from .inference import configure_inference_runners
 from .version import __version__
 
 __all__ = ["__version__"]
-
-# Plugin register
-AvatarModulePlugin.register(AvatarModule.MEMORY, "default", MemoryPlugin())
-
-# Inference Runners
-register_inference_runner_bootstrap("alphaavatar.plugins.memory", configure_inference_runners)

@@ -17,7 +17,7 @@ import asyncio
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.capability.schemas import AvatarCapability
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import LifecycleComponent
 
@@ -62,7 +62,7 @@ class ToolBase(LifecycleComponent):
             await self.on_stop()
             raise
 
-    async def invoke(self, request: Any) -> Any:
+    async def invoke(self, request: Any, *, input_id: str | None = None) -> Any:
         if not self._ready or self._close_task is not None:
             raise ToolError("Tool is not running", code=ToolErrorCode.UNAVAILABLE)
 

@@ -13,9 +13,13 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
+import logging
 
-from .pcm import PCMHTTPProvider, PCMSettings
+from alphaavatar.agents.utils import credential
+
+from .codec.pcm import PCMHTTPProvider, PCMPayload, PCMSettings
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceAITTS(PCMHTTPProvider):
@@ -24,8 +28,10 @@ class VoiceAITTS(PCMHTTPProvider):
         *,
         model: str,
         speaker: str | None = None,
+        speed: float = 1.0,
         language: str = "en",
         api_key: str | None = None,
+        api_key_env: str = "VOICEAI_API_KEY",
         base_url: str | None = None,
         settings: PCMSettings | None = None,
     ) -> None:
@@ -36,18 +42,26 @@ class VoiceAITTS(PCMHTTPProvider):
         if not isinstance(language, str) or not language.strip():
             raise ValueError("Voice.ai TTS requires a language")
 
+        if type(speed) not in (int, float) or speed != 1.0:
+            raise ValueError("Voice.ai TTS does not support voice.tts.speed")
+
         self._model, self._speaker, self._language = model, speaker, language
         base = base_url if base_url is not None else "https://dev.voice.ai"
+        key = api_key if api_key is not None else credential(api_key_env)
+        if key is None:
+            raise ValueError(f"{api_key_env} is required for Voice.ai TTS")
         super().__init__(
             provider="voiceai",
             url=f"{base.rstrip('/')}/api/v1/tts/speech/stream",
-            api_key=api_key if api_key is not None else os.getenv("VOICEAI_API_KEY", ""),
+            api_key=key,
             sample_rate=32000,
             settings=settings or PCMSettings(),
         )
 
-    def _payload(self, text: str) -> dict[str, str]:
-        payload = {
+        logger.debug("TTS CONFIG provider=voiceai model=%r voice=%r speed=1.000", model, speaker)
+
+    def _payload(self, text: str) -> PCMPayload:
+        payload: PCMPayload = {
             "model": self._model,
             "text": text,
             "language": self._language,

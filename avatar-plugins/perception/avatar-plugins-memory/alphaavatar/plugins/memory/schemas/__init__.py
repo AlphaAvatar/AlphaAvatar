@@ -11,6 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .identity import MemoryIdentitySnapshot
 from .patch import EnvMemoryDelta, MemoryDelta, PatchOp, norm_token, norm_topic
 
-__all__ = ["EnvMemoryDelta", "MemoryDelta", "PatchOp", "norm_token", "norm_topic"]
+__all__ = [
+    "MemoryIdentitySnapshot",
+    "EnvMemoryDelta",
+    "MemoryDelta",
+    "PatchOp",
+    "norm_token",
+    "norm_topic",
+]

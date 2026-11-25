@@ -13,14 +13,15 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .config import DefaultMemoryConfig
-from .log import logger
+from .inference import configure_inference_runners, get_vdb_runner
 from .processors import (
     ConversationProcessor,
     EnvironmentProcessor,
@@ -31,10 +32,22 @@ from .runtime import MemoryRuntime
 from .storage import MemoryStore
 from .version import __version__
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
+    from alphaavatar.agents.runtime.inference import InferenceRunner
+
+logger = logging.getLogger(__name__)
+
 
 class MemoryPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
+
+    def settings(self, init_config: dict[str, Any]) -> DefaultMemoryConfig:
+        return DefaultMemoryConfig.model_validate(init_config)
+
+    def inference_runners(self, config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+        return configure_inference_runners(config)
 
     def get_plugin(
         self,
@@ -42,11 +55,14 @@ class MemoryPlugin(AvatarModulePlugin):
         runtime: AvatarRuntime,
         avatar_id: str,
         maximum_memory_num: int,
+        vdb_config: dict[str, Any] | None = None,
         init_config: dict[str, Any] | None = None,
     ) -> MemoryBase:
-        config = DefaultMemoryConfig.model_validate(init_config or {})
+        config = self.settings(init_config or {})
 
-        store = MemoryStore(runtime=runtime)
+        store = MemoryStore(
+            runtime=runtime, inference_method=get_vdb_runner(vdb_config or {}).INFERENCE_METHOD
+        )
         memory = MemoryRuntime(
             runtime=runtime, avatar_id=avatar_id, store=store, maximum_memory_num=maximum_memory_num
         )

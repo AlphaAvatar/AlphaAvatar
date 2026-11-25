@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from ..version import __version__
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.base import StreamingLLMBase
-    from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
 
 class OpenAIResponsesPlugin(AvatarModulePlugin):
@@ -32,6 +32,3 @@ class OpenAIResponsesPlugin(AvatarModulePlugin):
         from .llms.responses import OpenAIResponsesLLM
 
         return OpenAIResponsesLLM(config)
-
-
-AvatarModulePlugin.register(AvatarModule.PROVIDER_LLM, "openai", OpenAIResponsesPlugin())

@@ -14,21 +14,30 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
+from collections.abc import Callable, Coroutine
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from alphaavatar.agents.avatar.context import ContextIdentityChanged
 from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
 from alphaavatar.agents.avatar.loop import LoopHandle
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.enums import LoopState, ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import LoopIdentity, LoopRequest, LoopResult
-from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
-from alphaavatar.agents.avatar.provider.errors import ModelIncompleteError, ModelProtocolError
+from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole, ModelTextPartKind
+from alphaavatar.agents.avatar.provider.errors import (
+    ModelError,
+    ModelIncompleteError,
+    ModelProtocolError,
+)
 from alphaavatar.agents.avatar.provider.records import model_record_batch
 from alphaavatar.agents.avatar.provider.schemas import (
+    ModelAudioPart,
     ModelFunctionCall,
+    ModelImagePart,
     ModelInput,
     ModelInputMessage,
     ModelRefusalPart,
@@ -45,6 +54,7 @@ from alphaavatar.agents.avatar.provider.schemas.stream import (
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.log.diagnostics import format_error
 from alphaavatar.core.log.events import log_event
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output.enums import ExecutionSignalKind
 
 from .config import RealtimeLoopConfig
@@ -74,23 +84,43 @@ class LoopExecution(LoopHandle):
         unsafe_lock: asyncio.Lock,
         authorize: ToolAuthorizer | None = None,
     ) -> None:
+        # The run (its run, Turn and context IDs), its request and settings, and what it borrows.
         self._identity = LoopIdentity(uuid4().hex, request.turn_id, request.context_id)
         self._request = request
         self._config = config
         self._runtime = runtime
         self._gateway = gateway
-        self._context_manager = runtime.foundation.context
+
+        # The accepted identity its context and output are for, and whether it is still current.
+        participants = runtime.participants
+        self._identity_basis = participants.identity_basis(request.turn)
+
+        def delivery_guard() -> bool:
+            return participants.identity_basis_is_current(self._identity_basis)
+
+        self._delivery_guard = delivery_guard
+
+        # Its limits, and the options its model requests start from.
         self._budget = ExecutionBudget(request, asyncio.get_running_loop().time())
-        self._items: list[ModelInputItem] = list(request.input.items)
-        self._new_items: list[ModelInputItem] = []
+        self._generation_options = self._budget.options(config.reasoning, finalizing=False)
+
+        # The query: its prepared context, the items it has committed and how many record
+        # batches they took, and the calls still to settle.
+        self._context: ModelInput | None = None
+        self._items: list[ModelInputItem] = []
         self._commits = 0
         self._pending_calls: tuple[ModelFunctionCall, ...] = ()
-        self._context: ModelInput | None = None
-        self._generation_options = self._budget.options(config.reasoning, finalizing=False)
+
+        # Identity changes: the step the watch can cancel, and the interruption of its outputs.
+        self._watched_step: asyncio.Task[Any] | None = None
+        self._identity_cleanup: asyncio.Task[None] | None = None
+
+        # Lifecycle: why it is cancelled, whether its task has begun, and its one shared close.
         self._cancel_reason: str | None = None
         self._started = False
-        self._settled = False
         self._close_task: asyncio.Task[None] | None = None
+
+        # Its feedback and tools, whose definitions stay fixed for the run; then its task.
         self._feedback = LoopFeedback(
             self.identity,
             runtime,
@@ -105,6 +135,7 @@ class LoopExecution(LoopHandle):
             self._feedback,
             unsafe_lock,
             cancelled=lambda: self._cancel_reason is not None,
+            identity_is_current=self._delivery_guard,
             policies=config.tool_policies,
             authorize=authorize,
         )
@@ -115,6 +146,10 @@ class LoopExecution(LoopHandle):
     @property
     def identity(self) -> LoopIdentity:
         return self._identity
+
+    @property
+    def delivery_guard(self) -> Callable[[], bool]:
+        return self._delivery_guard
 
     @staticmethod
     def _observe(task: asyncio.Task[LoopResult]) -> None:
@@ -141,8 +176,73 @@ class LoopExecution(LoopHandle):
             )
         )
 
+    def _log(self, name: str, **fields) -> None:
+        log_event(
+            logger,
+            name,
+            session_id=self._runtime.session.session_id,
+            context_id=self.identity.context_id,
+            turn_id=self.identity.turn_id,
+            run_id=self.identity.run_id,
+            **fields,
+        )
+
+    def _trace_request(self, request: ModelRequest) -> None:
+        # What the request itself carries for this Turn, by identity, so a diagnosis can join
+        # it to the observations it published: its committed input; whether each of the
+        # Turn's input observations is in it, as its words or as an audio part; its frames.
+        current = request.input.get(self._request.input_id)
+        parts = current.parts if isinstance(current, ModelInputMessage) else ()
+        images = [part.observation for part in parts if isinstance(part, ModelImagePart)]
+        audio = {
+            part.observation.observation_id for part in parts if isinstance(part, ModelAudioPart)
+        }
+        # Rendered input may escape markup and wrap lines: the words are compared.
+        texts = " ".join(
+            part.text
+            for part in parts
+            if isinstance(part, ModelTextPart) and part.kind == ModelTextPartKind.TEXT
+        )
+        words = " ".join(html.unescape(texts).split())
+        trace = self._runtime.perception.input_trace
+        trace.record(
+            "model.request",
+            turn_id=self.identity.turn_id,
+            run_id=self.identity.run_id,
+            request_id=request.request_id,
+            input_id=self._request.input_id if current is not None else None,
+            frame_count=len(images),
+        )
+        timeline = self._runtime.perception.timeline
+        for observation_id in self._request.turn.input_observation_ids:
+            observation = timeline.get_observation(observation_id=observation_id)
+            payload = observation.payload if observation is not None else None
+            said = " ".join(payload.text.split()) if isinstance(payload, TextPayload) else ""
+            carried = observation_id in audio or bool(said) and said in words
+            trace.record(
+                "model.request_input",
+                request_id=request.request_id,
+                observation_id=observation_id,
+                outcome="carried" if carried else "missing",
+            )
+        for observation in images:
+            trace.record(
+                "model.request_frame",
+                request_id=request.request_id,
+                observation_id=observation.observation_id,
+            )
+
+    def _diagnose(self, error: BaseException, *, stage: str) -> None:
+        # Keep exception chains and code locations, never prompts, payloads or tool arguments.
+        logger.warning(
+            "Avatar loop failed run_id=%s stage=%s\n%s",
+            self.identity.run_id,
+            stage,
+            format_error(error, details=True),
+        )
+
     def cancel(self, *, reason: str = "interrupted") -> None:
-        if self.task.done() or self._settled or self._cancel_reason is not None:
+        if self.task.done() or self._cancel_reason is not None:
             return
         self._cancel_reason = reason
         self._runtime.output.revoke_run(self.identity.run_id)
@@ -182,6 +282,7 @@ class LoopExecution(LoopHandle):
             source="avatar.loop",
             scope=self._feedback.scope,
             items=records,
+            identity_basis=self._identity_basis,
         )
         if batch is not None:
             try:
@@ -190,7 +291,6 @@ class LoopExecution(LoopHandle):
                 raise LoopCommitError("Output record batch was not accepted") from exc
 
         self._items.extend(items)
-        self._new_items.extend(items)
         if calls:
             self._pending_calls = calls
 
@@ -230,7 +330,81 @@ class LoopExecution(LoopHandle):
 
         await wait_for_cleanup(asyncio.create_task(settle(), name="loop_call_settlement"))
 
+    def _check_identity(self) -> None:
+        if not self._delivery_guard():
+            raise ContextIdentityChanged("Execution identity changed")
+
+    async def _watch_identity(self) -> None:
+        stream = self._runtime.session.events
+        consumer_id = f"loop.identity:{self.identity.run_id}"
+        try:
+            while True:
+                sequence = stream.latest_sequence
+                if not self._delivery_guard():
+                    # Tool effects must settle; only preparation/generation can be restarted.
+                    if self._watched_step is not None and not self._watched_step.done():
+                        self._watched_step.cancel()
+
+                    await self._interrupt_identity()
+
+                # This consumer observes current state only; version checks also detect ABA/gaps.
+                stream.commit(consumer_id=consumer_id, cursor_seq=sequence)
+                if not await stream.wait_for_pending(consumer_id=consumer_id):
+                    return
+        finally:
+            stream.clear_consumer(consumer_id)
+
+    async def _interrupt_identity(self) -> None:
+        if self._identity_cleanup is None:
+            self._identity_cleanup = asyncio.create_task(
+                self._feedback.interrupt_outputs("identity_changed"), name="loop_identity_output"
+            )
+        await wait_for_cleanup(self._identity_cleanup)
+
+    async def _watched[T](self, step: Coroutine[Any, Any, T]) -> T:
+        """A step the identity watch can cancel: an identity change ends it as
+        ContextIdentityChanged, for its caller to redo under the new identity."""
+        task = self._watched_step = asyncio.create_task(step)
+        try:
+            return await task
+        except asyncio.CancelledError:
+            owner = asyncio.current_task()
+            if (
+                self._cancel_reason is None
+                and owner is not None
+                and not owner.cancelling()
+                and not self._delivery_guard()
+            ):
+                raise ContextIdentityChanged("Execution identity changed") from None
+            raise
+        finally:
+            self._watched_step = None
+
+    async def _prepare_context(self) -> None:
+        if self._context is not None and self._delivery_guard():
+            return
+
+        # Seal old outputs before a new guard can make this run deliverable again.
+        await self._interrupt_identity()
+        if self._cancel_reason is not None:
+            raise asyncio.CancelledError
+
+        self._context = None
+        self._identity_basis = self._runtime.participants.identity_basis(self._request.turn)
+        self._identity_cleanup = None
+        preparation = ContextPrepareRequest(
+            turn=self._request.turn,
+            context_id=self.identity.context_id,
+            contributions=(self._budget.contribution(),),
+        )
+        self._context = await self._watched(self._runtime.foundation.context.prepare(preparation))
+        if not isinstance(self._context, ModelInput):
+            raise TypeError("ContextManager.prepare must return ModelInput")
+
+        self._check_identity()
+
     async def _model(self, *, finalizing: bool, reason: str | None) -> ModelResponseCompleted:
+        self._check_identity()
         if self._context is None:
             raise RuntimeError("Query context was not prepared")
         if self._pending_calls:
@@ -248,8 +422,14 @@ class LoopExecution(LoopHandle):
                 update={"max_output_tokens": self._request.limits.final_output_tokens}
             )
 
+        request_id = uuid4().hex
+        context = self._runtime.foundation.context
+        built = context.build(self._context, continuation=tuple(self._items))
+        # Where the build returns, by the request it starts: what follows is assembly.
+        self._log("context.built", request_id=request_id)
         request = ModelRequest(
-            input=self._context_manager.build(self._context, continuation=tuple(self._new_items)),
+            request_id=request_id,
+            input=built,
             # Preserve schemas/order even when tool use is disabled for finalization.
             tools=self._definitions,
             tool_choice="auto" if tools_allowed and self._definitions else "none",
@@ -286,13 +466,14 @@ class LoopExecution(LoopHandle):
             model_step=budget.model_steps,
             state=state.value,
         )
+        self._trace_request(request)
         terminal = None
-        partial: dict[str, tuple[ModelMessagePhase | None, dict[int, list[str]]]] = {}
-        completed_messages: dict[str, ModelInputMessage] = {}
         order: dict[str, int] = {}
         try:
+            self._check_identity()
             async with self._gateway.stream(task_name="avatar.loop", request=request) as events:
                 async for event in events:
+                    self._check_identity()
                     if self._cancel_reason is not None:
                         raise asyncio.CancelledError
                     if event.request_id != request.request_id:
@@ -320,14 +501,14 @@ class LoopExecution(LoopHandle):
                                 elapsed_ms=first_text_ms,
                             )
                         order[event.item_id] = event.output_index
-                        entry = partial.setdefault(event.item_id, (event.phase, {}))
-                        entry[1].setdefault(event.content_index, []).append(event.text)
                         await self._feedback.text(event)
+
                     elif isinstance(event, ModelRefusalDelta):
                         pass  # Refusal is delivered as a complete typed message.
                     elif isinstance(event, ModelItemCompleted):
                         if not isinstance(event.item, ModelInputMessage):
                             continue
+
                         visible = replace(
                             event.item,
                             parts=tuple(
@@ -338,11 +519,11 @@ class LoopExecution(LoopHandle):
                         )
                         if visible.parts:
                             order[visible.id] = event.output_index
-                            completed_messages[visible.id] = visible
                             await self._feedback.message(visible)
                     elif isinstance(event, ModelResponseCompleted):
                         terminal = event
 
+            self._check_identity()
             if terminal is None:
                 raise ModelProtocolError("Loop model stream ended without completion")
 
@@ -356,40 +537,31 @@ class LoopExecution(LoopHandle):
             call_ids = [item.call_id for item in calls]
             if len(set(call_ids)) != len(call_ids) or prior_calls.intersection(call_ids):
                 raise ModelProtocolError("Model reused a tool call identity")
-        except BaseException:
-            # Complete visible messages include refusal/commentary; only truncated text is partial.
-            visible = []
-            for item_id in sorted(order, key=order.__getitem__):
-                if item_id in completed_messages:
-                    visible.append(completed_messages[item_id])
-                elif item_id in partial:
-                    phase, chunks = partial[item_id]
-                    if chunks:
-                        visible.append(
-                            ModelInputMessage(
-                                id=item_id,
-                                role=ModelRole.ASSISTANT,
-                                parts=tuple(
-                                    ModelTextPart("".join(chunks[i])) for i in sorted(chunks)
-                                ),
-                                phase=phase,
-                                interrupted=True,
-                            )
-                        )
 
-            if visible:
-                await self._commit(tuple(visible))
+            for index, item in enumerate(terminal.items):
+                if isinstance(item, ModelInputMessage):
+                    self._check_identity()
+                    order.setdefault(item.id, index)
+                    await self._feedback.message(item)
+
+            self._check_identity()
+            await self._commit(terminal.items)
+            if self._cancel_reason is not None:
+                raise asyncio.CancelledError
+        except BaseException:
+            # Keep locally admitted output, including cancellation during subscriber backpressure.
+            recorded = {item.id for item in self._items}
+            admitted = tuple(
+                message
+                for item_id in sorted(order, key=order.__getitem__)
+                if item_id not in recorded
+                if (message := self._feedback.accepted_message(item_id)) is not None
+            )
+            if admitted:
+                await self._commit(admitted)
 
             await self._feedback.interrupt_incomplete("model_stream_stopped")
             raise
-
-        for item in terminal.items:
-            if isinstance(item, ModelInputMessage):
-                await self._feedback.message(item)
-
-        await self._commit(terminal.items)
-        if self._cancel_reason is not None:
-            raise asyncio.CancelledError
 
         self._log(
             "model.completed",
@@ -424,7 +596,9 @@ class LoopExecution(LoopHandle):
 
             try:
                 async with asyncio.timeout_at(budget.exploration_deadline):
-                    response = await self._model(finalizing=False, reason=None)
+                    await self._prepare_context()
+                    response = await self._watched(self._model(finalizing=False, reason=None))
+                    self._check_identity()
                     calls = tuple(
                         item for item in response.items if isinstance(item, ModelFunctionCall)
                     )
@@ -448,6 +622,9 @@ class LoopExecution(LoopHandle):
                 reason = "time_budget"
             except ModelIncompleteError:
                 reason = "incomplete_response"
+            except ContextIdentityChanged:
+                # Accepted tool pairs and the original budgets survive identity correction.
+                self._context = None
             finally:
                 await self._settle_pending(
                     reason=reason or self._cancel_reason or "execution_stopped"
@@ -458,7 +635,14 @@ class LoopExecution(LoopHandle):
 
         # One answer-only request, using the same prefix, tools and reasoning profile.
         async with asyncio.timeout_at(budget.deadline):
-            response = await self._model(finalizing=True, reason=reason)
+            while True:
+                try:
+                    await self._prepare_context()
+                    response = await self._watched(self._model(finalizing=True, reason=reason))
+                    self._check_identity()
+                    break
+                except ContextIdentityChanged:
+                    self._context = None
 
         answers = self._answers(response)
         if not answers:
@@ -467,55 +651,28 @@ class LoopExecution(LoopHandle):
         refused = any(isinstance(p, ModelRefusalPart) for a in answers for p in a.parts)
         return LoopState.REFUSED if refused else LoopState.PARTIAL, answers, reason
 
-    def _log(self, name: str, **fields) -> None:
-        log_event(
-            logger,
-            name,
-            session_id=self._runtime.session.session_id,
-            context_id=self.identity.context_id,
-            turn_id=self.identity.turn_id,
-            run_id=self.identity.run_id,
-            **fields,
-        )
-
-    def _diagnose(self, error: BaseException, *, stage: str) -> None:
-        # Keep exception chains and code locations, never prompts, payloads or tool arguments.
-        logger.warning(
-            "Avatar loop failed run_id=%s stage=%s\n%s",
-            self.identity.run_id,
-            stage,
-            format_error(error, details=True),
-        )
-
     async def _run(self) -> LoopResult:
         self._started = True
         state = LoopState.FAILED
         answers: tuple[ModelInputMessage, ...] = ()
-        reason = error_type = None
+        reason = error_type = error_code = None
         stage = "prepare_context"
+        identity_watch = None
         try:
             if self._cancel_reason is not None:
                 raise asyncio.CancelledError
 
             await self._feedback.change(LoopState.ACCEPTED)
             self._log("run.started", input_id=self._request.input_id, state="accepted")
-            async with asyncio.timeout_at(self._budget.exploration_deadline):
-                preparation = ContextPrepareRequest(
-                    input=self._request.input,
-                    turn_id=self.identity.turn_id,
-                    context_id=self.identity.context_id,
-                    input_id=self._request.input_id,
-                    contributions=(self._budget.contribution(),),
-                )
-                self._context = await self._context_manager.prepare(preparation)
-
-            if not isinstance(self._context, ModelInput):
-                raise TypeError("ContextManager.prepare must return ModelInput")
-            if self._cancel_reason is not None:
-                raise asyncio.CancelledError
+            identity_watch = asyncio.create_task(
+                self._watch_identity(), name=f"loop_identity:{self.identity.run_id}"
+            )
 
             stage = "model_and_tools"
             state, answers, reason = await self._drive()
+        except ContextIdentityChanged:
+            self._runtime.output.revoke_run(self.identity.run_id)
+            state, reason = LoopState.CANCELLED, "identity_changed"
         except asyncio.CancelledError as exc:
             state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
             if exc.__cause__ is not None:
@@ -523,10 +680,21 @@ class LoopExecution(LoopHandle):
                 self._diagnose(exc, stage=stage)
         except Exception as exc:
             error_type = type(exc).__name__
+            # The provider's own classification, such as http_401 or image_input.
+            error_code = getattr(exc, "code", None) if isinstance(exc, ModelError) else None
             reason = "timeout" if isinstance(exc, TimeoutError) else "execution_failed"
             self._diagnose(exc, stage=stage)
 
         finally:
+            if identity_watch is not None:
+                identity_watch.cancel()
+                try:
+                    # A cancellation of this run while its watch is reaped settles like any
+                    # other (O-17): the watch finishes, and the run still reports its result.
+                    await asyncio.shield(asyncio.gather(identity_watch, return_exceptions=True))
+                except asyncio.CancelledError:
+                    state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
+                    await asyncio.gather(identity_watch, return_exceptions=True)
             try:
                 await self._settle_pending(
                     reason=self._cancel_reason or reason or "execution_stopped"
@@ -538,7 +706,7 @@ class LoopExecution(LoopHandle):
                     self._diagnose(exc, stage="record_settlement")
             except Exception as exc:
                 state, reason, error_type = LoopState.FAILED, "history_failed", type(exc).__name__
-                answers = ()
+                error_code, answers = None, ()
                 self._diagnose(exc, stage="record_settlement")
 
             try:
@@ -550,17 +718,19 @@ class LoopExecution(LoopHandle):
                 state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
             except Exception as exc:
                 state, reason = LoopState.FAILED, "output_cleanup_failed"
-                error_type = type(exc).__name__
+                error_type, error_code = type(exc).__name__, None
                 answers = ()
                 self._diagnose(exc, stage="output_cleanup")
+
         if self._cancel_reason is not None:
             state, reason, answers = LoopState.CANCELLED, self._cancel_reason, ()
 
-        self._settled = True
+        # Nothing awaits from here to its return: a cancel finds the run either still running
+        # or its task done, never a settled result it could revoke.
         result = LoopResult(
             identity=self.identity,
             state=state,
-            items=tuple(self._new_items),
+            items=tuple(self._items),
             final_messages=answers,
             tools=tuple(self._tools.records),
             model_steps=self._budget.model_steps,
@@ -576,6 +746,7 @@ class LoopExecution(LoopHandle):
             state=state.value,
             reason=reason,
             error_type=error_type,
+            error_code=error_code,
             model_steps=result.model_steps,
             tool_rounds=result.tool_rounds,
             elapsed_ms=result.elapsed_ms,

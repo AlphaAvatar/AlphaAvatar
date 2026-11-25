@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult, ImagePoint2D
+from alphaavatar.agents.persona.schemas import FaceDetection, FaceDetectionResult, ImagePoint2D
 
 
 @dataclass(frozen=True, slots=True)

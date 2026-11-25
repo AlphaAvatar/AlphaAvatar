@@ -18,11 +18,12 @@ import logging
 import time
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult
+from alphaavatar.agents.persona.schemas import FaceDetection, FaceDetectionResult
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
+    AssessmentLabel,
     InteractionEntityKind,
 )
 from alphaavatar.agents.router.schemas import InteractionAddressingEvidence, InteractionEntityRef
@@ -41,15 +42,14 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class VisualSubjectKey:
     source: PerceptionSourceRef
-    perception_entity_id: str | None
-    transport_participant_id: str | None
+    entity_id: str | None
 
 
 @dataclass(slots=True)
 class VisualOrientationState:
     score: float | None = None
     samples: int = 0
-    last_target: str | None = None
+    last_label: AssessmentLabel | None = None
     last_published_ns: int = 0
     last_logged_at: float = 0.0
     suppressed_logs: int = 0
@@ -72,8 +72,6 @@ class VisualAddressingProcessor(RouterProcessorBase):
         self._ema_alpha = config.ema_alpha
         self._min_samples = config.min_samples
         self._republish_interval_ns = int(config.republish_interval_sec * 1_000_000_000)
-        self._publish_away_evidence = config.publish_away_evidence
-
         self._states: dict[VisualSubjectKey, VisualOrientationState] = {}
 
         self._task: asyncio.Task[None] | None = None
@@ -83,88 +81,59 @@ class VisualAddressingProcessor(RouterProcessorBase):
         return "visual_addressing"
 
     @staticmethod
-    def _entity(observation: EnvObservation, face: FaceDetection) -> PerceptionEntityRef | None:
-        return face.entity or observation.entity
-
-    @staticmethod
     def _subject_key(
         observation: EnvObservation, entity: PerceptionEntityRef | None
     ) -> VisualSubjectKey:
         return VisualSubjectKey(
-            source=observation.source,
-            perception_entity_id=(entity.perception_entity_id if entity is not None else None),
-            transport_participant_id=(observation.transport_participant_id),
+            source=observation.source, entity_id=entity.entity_id if entity is not None else None
         )
 
-    def _select_face(
+    def _select_faces(
         self, *, observation: EnvObservation, result: FaceDetectionResult
-    ) -> FaceDetection | None:
-        if not result.faces:
-            return None
-
-        if len(result.faces) == 1:
-            return result.faces[0]
-
-        observation_entity = observation.entity
-
-        if observation_entity is not None:
-            matches = tuple(
-                face
-                for face in result.faces
-                if (
-                    face.entity is not None
-                    and face.entity.perception_entity_id == observation_entity.perception_entity_id
-                )
-            )
-
-            if len(matches) == 1:
-                return matches[0]
-
-        if result.selected_face_index is not None:
-            selected = result.faces[result.selected_face_index]
-
-            # In a multi-face frame, a selected bounding box alone does not
-            # prove which current speaker it belongs to.
-            if selected.entity is not None:
-                return selected
-
-        logger.debug(
-            "Skip ambiguous multi-face visual addressing observation_id=%s faces=%s",
-            observation.observation_id,
-            len(result.faces),
+    ) -> tuple[FaceDetection, ...]:
+        counts: dict[str, int] = {}
+        for face in result.faces:
+            if face.entity is not None:
+                key = face.entity.entity_id
+                counts[key] = counts.get(key, 0) + 1
+        return tuple(
+            face
+            for face in result.faces
+            if face.entity is not None and counts[face.entity.entity_id] == 1
         )
-        return None
 
-    def _target(self, score: float) -> str | None:
+    def _label(self, score: float) -> AssessmentLabel:
         if score >= self._toward_threshold:
-            return "avatar"
+            return AssessmentLabel.POSITIVE
 
-        if self._publish_away_evidence and score <= self._away_threshold:
-            return "away"
+        if score <= self._away_threshold:
+            return AssessmentLabel.NEGATIVE
 
-        return None
+        return AssessmentLabel.UNKNOWN
 
     def _publish(
-        self, *, observation: EnvObservation, face: FaceDetection, score: float, target: str
+        self,
+        *,
+        observation: EnvObservation,
+        face: FaceDetection,
+        score: float,
+        label: AssessmentLabel,
     ) -> None:
-        entity = self._entity(observation, face)
-
         speaker = InteractionEntityRef(
             kind=InteractionEntityKind.PERSON,
-            entity=entity,
-            transport_participant_id=(observation.transport_participant_id),
+            entity=face.entity,
+            device_id=observation.device_id,
+            source=observation.source,
         )
 
-        if target == "avatar":
+        if label == AssessmentLabel.POSITIVE:
             addressees = (InteractionEntityRef(kind=InteractionEntityKind.AVATAR),)
             addressing_mode = AddressingMode.DIRECT
             confidence = score
-            label = "camera_facing"
         else:
             addressees = ()
             addressing_mode = AddressingMode.UNKNOWN
-            confidence = 1.0 - score
-            label = "camera_away"
+            confidence = 1.0 - score if label == AssessmentLabel.NEGATIVE else 0.0
 
         evidence = InteractionAddressingEvidence(
             evidence_kind=AddressingEvidenceKind.VISUAL_ORIENTATION,
@@ -172,7 +141,8 @@ class VisualAddressingProcessor(RouterProcessorBase):
             addressees=addressees,
             addressing_mode=addressing_mode,
             confidence=confidence,
-            evidence_label=label,
+            label=label,
+            evidence_label="camera_facing",
             raw_score=score,
             evidence_observation_ids=(observation.observation_id,),
         )
@@ -180,6 +150,80 @@ class VisualAddressingProcessor(RouterProcessorBase):
         self._runtime.perception.publish_annotation(
             evidence.to_annotation(source=self.SOURCE, observation_id=observation.observation_id)
         )
+
+    """Processor Loop"""
+
+    def _handle_face(
+        self,
+        event: PerceptionEvent,
+        observation: EnvObservation,
+        result: FaceDetectionResult,
+        face: FaceDetection,
+    ) -> None:
+        estimate = self._estimator.estimate(face=face, result=result)
+        if estimate is None:
+            return
+
+        key = self._subject_key(observation, face.entity)
+        for previous in tuple(self._states):
+            if previous.source.source_id != key.source.source_id:
+                continue
+            if previous.source.source_generation > key.source.source_generation:
+                return
+            if previous.source.source_generation < key.source.source_generation:
+                self._states.pop(previous, None)
+
+        if key not in self._states and len(self._states) >= 256:
+            self._states.pop(next(iter(self._states)))
+
+        state = self._states.setdefault(key, VisualOrientationState())
+
+        state.score = (
+            estimate.frontal_score
+            if state.score is None
+            else (self._ema_alpha * estimate.frontal_score + (1.0 - self._ema_alpha) * state.score)
+        )
+        state.samples += 1
+
+        if state.samples < self._min_samples:
+            return
+
+        label = self._label(state.score)
+
+        published_at_ns = event.time_range.end.monotonic_ns
+        repeated_too_soon = label == state.last_label and (
+            published_at_ns - state.last_published_ns < self._republish_interval_ns
+        )
+        if repeated_too_soon:
+            return
+
+        # A fresh UNKNOWN replaces the preceding observation too; it does not prolong an
+        # old positive or negative judgment. Repeated labels retain their publication limit.
+        self._publish(observation=observation, face=face, score=state.score, label=label)
+
+        changed = label != state.last_label
+        state.last_label = label
+        state.last_published_ns = published_at_ns
+
+        # Evidence freshness is unchanged; only diagnostics are rate-limited.
+        now = time.monotonic()
+        if not changed and now - state.last_logged_at < 10.0:
+            state.suppressed_logs += 1
+            return
+
+        state.last_logged_at = now
+        logger.debug(
+            "Visual addressing evidence label=%s score=%.3f "
+            "yaw=%.3f pitch=%.3f roll=%.2f observation_id=%s suppressed=%d",
+            label.value,
+            state.score,
+            estimate.yaw_proxy,
+            estimate.pitch_proxy,
+            estimate.roll_deg,
+            observation.observation_id,
+            state.suppressed_logs,
+        )
+        state.suppressed_logs = 0
 
     def _handle(self, event: PerceptionEvent) -> None:
         annotation = event.annotation
@@ -198,64 +242,8 @@ class VisualAddressingProcessor(RouterProcessorBase):
             return
 
         result = FaceDetectionResult.from_annotation(annotation)
-        face = self._select_face(observation=observation, result=result)
-        if face is None:
-            return
-
-        estimate = self._estimator.estimate(face=face, result=result)
-        if estimate is None:
-            return
-
-        entity = self._entity(observation, face)
-        key = self._subject_key(observation, entity)
-        state = self._states.setdefault(key, VisualOrientationState())
-
-        state.score = (
-            estimate.frontal_score
-            if state.score is None
-            else (self._ema_alpha * estimate.frontal_score + (1.0 - self._ema_alpha) * state.score)
-        )
-        state.samples += 1
-
-        if state.samples < self._min_samples:
-            return
-
-        target = self._target(state.score)
-        if target is None:
-            return
-
-        published_at_ns = event.time_range.end.monotonic_ns
-        repeated_too_soon = target == state.last_target and (
-            published_at_ns - state.last_published_ns < self._republish_interval_ns
-        )
-        if repeated_too_soon:
-            return
-
-        self._publish(observation=observation, face=face, score=state.score, target=target)
-
-        changed = target != state.last_target
-        state.last_target = target
-        state.last_published_ns = published_at_ns
-
-        # Evidence freshness is unchanged; only diagnostics are rate-limited.
-        now = time.monotonic()
-        if not changed and now - state.last_logged_at < 10.0:
-            state.suppressed_logs += 1
-            return
-
-        state.last_logged_at = now
-        logger.debug(
-            "Visual addressing evidence target=%s score=%.3f "
-            "yaw=%.3f pitch=%.3f roll=%.2f observation_id=%s suppressed=%d",
-            target,
-            state.score,
-            estimate.yaw_proxy,
-            estimate.pitch_proxy,
-            estimate.roll_deg,
-            observation.observation_id,
-            state.suppressed_logs,
-        )
-        state.suppressed_logs = 0
+        for face in self._select_faces(observation=observation, result=result):
+            self._handle_face(event, observation, result, face)
 
     async def _consume_loop(self) -> None:
         while True:
@@ -291,6 +279,8 @@ class VisualAddressingProcessor(RouterProcessorBase):
             except Exception:
                 logger.exception("Visual addressing annotation consumer failed")
                 await asyncio.sleep(0.05)
+
+    """Runtime operations"""
 
     async def start(self) -> None:
         if self._task is not None:

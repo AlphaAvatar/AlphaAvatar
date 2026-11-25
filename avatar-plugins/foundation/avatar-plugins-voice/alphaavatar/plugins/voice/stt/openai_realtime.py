@@ -16,8 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -34,9 +33,11 @@ from alphaavatar.agents.avatar.voice import (
     TranscriptionEvent,
     TranscriptionEventType,
 )
+from alphaavatar.agents.utils import credential
 from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 
 from ..log import logger
+from .constants import TRANSCRIPTION_UNAVAILABLE
 
 _TARGET_SAMPLE_RATE = 24_000
 
@@ -73,6 +74,8 @@ class OpenAIRealtimeSTT(STTBase):
     long-lived WebSocket connection across multiple speech segments.
     """
 
+    fallback_code = TRANSCRIPTION_UNAVAILABLE
+
     def __init__(
         self,
         *,
@@ -80,6 +83,7 @@ class OpenAIRealtimeSTT(STTBase):
         language: str | None = None,
         delay: Literal["minimal", "low", "medium", "high", "xhigh"] = "low",
         api_key: str | None = None,
+        api_key_env: str = "OPENAI_API_KEY",
         base_url: str = "wss://api.openai.com/v1/realtime",
         safety_identifier: str | None = None,
         queue_size: int = 256,
@@ -98,7 +102,7 @@ class OpenAIRealtimeSTT(STTBase):
         self._model = model
         self._language = language
         self._delay = delay
-        self._api_key = api_key
+        self._api_key, self._api_key_env = api_key, api_key_env
         self._base_url = base_url.rstrip("/")
         self._safety_identifier = safety_identifier
         self._queue_size = queue_size
@@ -125,9 +129,9 @@ class OpenAIRealtimeSTT(STTBase):
         if not source_id:
             raise ValueError("OpenAI STT source_id cannot be empty")
 
-        api_key = self._api_key or os.getenv("OPENAI_API_KEY")
+        api_key = self._api_key or credential(self._api_key_env)
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for OpenAI STT")
+            raise RuntimeError(f"{self._api_key_env} is required for OpenAI STT")
 
         return OpenAIRealtimeSTTStream(
             source_id=source_id,
@@ -185,6 +189,12 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         self._item_to_segment: dict[str, str] = {}
         self._item_text: dict[str, str] = {}
         self._orphan_events: dict[str, list[dict[str, Any]]] = {}
+        self._retention_limit = max(32, queue_size * 4)
+        self._open_segments: set[str] = set()
+        self._pending_segments: set[str] = set()
+        # These bounded windows suppress recent replays; they are not permanent identity stores.
+        self._committed_segments: OrderedDict[str, None] = OrderedDict()
+        self._retired_items: OrderedDict[str, None] = OrderedDict()
 
         self._input_ended = False
         self._drained = asyncio.Event()
@@ -214,16 +224,50 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         if frame.num_channels != 1:
             raise ValueError(f"OpenAI STT requires mono audio, got {frame.num_channels} channels")
 
-        return self._put_input(_FrameCommand(frame=frame, segment_id=segment_id))
+        if segment_id in self._committed_segments or segment_id in self._pending_segments:
+            return False
+        if (
+            segment_id not in self._open_segments
+            and len(self._open_segments) + len(self._pending_segments) >= self._input_q.maxsize
+        ):
+            return False
+        if not self._put_input(_FrameCommand(frame=frame, segment_id=segment_id)):
+            return False
+        self._open_segments.add(segment_id)
+        return True
+
+    def _remember_commit(self, segment_id: str) -> None:
+        self._open_segments.discard(segment_id)
+        self._committed_segments[segment_id] = None
+        self._committed_segments.move_to_end(segment_id)
+        if len(self._committed_segments) > self._retention_limit:
+            self._committed_segments.popitem(last=False)
 
     def commit_segment(self, segment_id: str) -> bool:
         if not segment_id:
             raise ValueError("commit_segment requires a segment_id")
 
-        return self._put_input(_CommitCommand(segment_id=segment_id))
+        if not self._accepting_input or self._closed:
+            return False
+        if segment_id in self._committed_segments or segment_id in self._pending_segments:
+            return True
+        if (
+            segment_id not in self._open_segments
+            and len(self._open_segments) + len(self._pending_segments) >= self._input_q.maxsize
+        ):
+            return False
+        if not self._put_input(_CommitCommand(segment_id=segment_id)):
+            return False
+        self._remember_commit(segment_id)
+        self._pending_segments.add(segment_id)
+        return True
 
     def flush(self) -> bool:
-        return self._put_input(_FLUSH)
+        if not self._put_input(_FLUSH):
+            return False
+        for segment_id in tuple(self._open_segments):
+            self._remember_commit(segment_id)
+        return True
 
     def end_input(self) -> bool:
         if not self._accepting_input or self._closed:
@@ -231,6 +275,9 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         if not self._put_input(_END_INPUT):
             return False
 
+        for segment_id in tuple(self._open_segments):
+            self._remember_commit(segment_id)
+            self._pending_segments.add(segment_id)
         self._accepting_input = False
         return True
 
@@ -250,7 +297,17 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
 
             yield item
 
-    def _emit_error(self, segment_id: str, reason: str) -> None:
+    def _emit_error(
+        self,
+        segment_id: str,
+        reason: str,
+        *,
+        reason_code: str = "provider_error",
+        provider_item_id: str | None = None,
+    ) -> None:
+        self._pending_segments.discard(segment_id)
+        if segment_id != "unknown":
+            self._remember_commit(segment_id)
         self._event_q.put_nowait(
             TranscriptionEvent(
                 type=TranscriptionEventType.ERROR,
@@ -259,6 +316,8 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
                 provider="openai",
                 model=self._model,
                 reason=reason,
+                reason_code=reason_code,
+                provider_item_id=provider_item_id,
             )
         )
 
@@ -336,7 +395,9 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
             state.sent_audio = await self._send_pcm(ws, self._pcm_bytes(tail)) or state.sent_audio
 
         if not state.sent_audio:
-            self._emit_error(segment_id, "Cannot commit an empty STT audio segment")
+            self._emit_error(
+                segment_id, "Cannot commit an empty STT audio segment", reason_code="empty_segment"
+            )
             return
 
         self._pending_commits.append(segment_id)
@@ -375,6 +436,10 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
             if state is not None and state.sent_audio:
                 await ws.send_json({"type": "input_audio_buffer.clear"})
 
+        for segment_id in segments:
+            self._emit_error(
+                segment_id, "Buffered STT input was flushed", reason_code="input_flushed"
+            )
         segments.clear()
         order.clear()
 
@@ -404,7 +469,9 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
 
                 if state is None:
                     self._emit_error(
-                        command.segment_id, "STT segment committed without buffered audio"
+                        command.segment_id,
+                        "STT segment committed without buffered audio",
+                        reason_code="missing_audio",
                     )
                     continue
 
@@ -443,8 +510,16 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
             self._drained.set()
 
     def _emit_transcript(
-        self, *, event_type: TranscriptionEventType, segment_id: str, text: str
+        self,
+        *,
+        event_type: TranscriptionEventType,
+        segment_id: str,
+        text: str,
+        provider_item_id: str | None = None,
     ) -> None:
+        if event_type == TranscriptionEventType.FINAL_TRANSCRIPT:
+            self._pending_segments.discard(segment_id)
+            self._remember_commit(segment_id)
         self._event_q.put_nowait(
             TranscriptionEvent(
                 type=event_type,
@@ -454,10 +529,22 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
                 language=self._language,
                 provider="openai",
                 model=self._model,
+                provider_item_id=provider_item_id,
             )
         )
 
+    def _retire_item(self, item_id: str) -> None:
+        self._item_to_segment.pop(item_id, None)
+        self._item_text.pop(item_id, None)
+        self._orphan_events.pop(item_id, None)
+        self._retired_items[item_id] = None
+        if len(self._retired_items) > self._retention_limit:
+            self._retired_items.popitem(last=False)
+        self._update_drained()
+
     async def _emit_item_event(self, item_id: str, event: dict[str, Any]) -> None:
+        if item_id in self._retired_items:
+            return
         segment_id = self._item_to_segment.get(item_id)
 
         if segment_id is None:
@@ -475,32 +562,40 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
                 event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
                 segment_id=segment_id,
                 text=text,
+                provider_item_id=item_id,
             )
             return
 
         if event_type == "conversation.item.input_audio_transcription.failed":
             error = event.get("error") or {}
             self._emit_error(
-                segment_id, str(error.get("message") or error or "OpenAI transcription failed")
+                segment_id,
+                str(error.get("message") or error or "OpenAI transcription failed"),
+                provider_item_id=item_id,
             )
 
-            self._item_to_segment.pop(item_id, None)
-            self._item_text.pop(item_id, None)
-            self._update_drained()
+            self._retire_item(item_id)
             return
 
         if event_type != "conversation.item.input_audio_transcription.completed":
             return
 
-        self._emit_transcript(
-            event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-            segment_id=segment_id,
-            text=str(event.get("transcript") or self._item_text.get(item_id, "")),
-        )
-
-        self._item_to_segment.pop(item_id, None)
-        self._item_text.pop(item_id, None)
-        self._update_drained()
+        text = event.get("transcript")
+        if isinstance(text, str):
+            self._emit_transcript(
+                event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
+                segment_id=segment_id,
+                text=text,
+                provider_item_id=item_id,
+            )
+        else:
+            self._emit_error(
+                segment_id,
+                "OpenAI transcription final has no transcript field",
+                reason_code="invalid_final",
+                provider_item_id=item_id,
+            )
+        self._retire_item(item_id)
 
     async def _handle_server_event(self, event: dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -508,6 +603,8 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         if event_type == "input_audio_buffer.committed":
             item_id = str(event.get("item_id") or "")
 
+            if item_id in self._item_to_segment or item_id in self._retired_items:
+                return
             if not item_id or not self._pending_commits:
                 logger.warning(
                     "OpenAI STT received unmatched commit source_id=%s item_id=%s",
@@ -623,7 +720,9 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
 
             logger.exception("OpenAI realtime STT stream failed source_id=%s", self._source_id)
 
-            self._emit_error("unknown", str(error) or error.__class__.__name__)
+            self._emit_error(
+                "unknown", str(error) or error.__class__.__name__, reason_code="stream_error"
+            )
 
         finally:
             self._closed = True

@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, PrivateAttr
 
 from alphaavatar.agents.persona.schemas import DetailsBase, ProfileItemView
 
@@ -33,6 +35,8 @@ class UserProfileDetails(DetailsBase):
     - work, projects, responsibilities
     - preferences, constraints, goals, and assistant behavior preferences
     """
+
+    _field_metadata: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     # Identification & Demographics
     name: ProfileItemView | None = Field(

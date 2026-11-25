@@ -1,0 +1,236 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""A segment's speaker association settles once, however it is released; the trace and the log
+say when, how and why, recognized or not, and where it stands can be asked meanwhile."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+from alphaavatar.agents.workspace import WorkspacePaths
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
+from alphaavatar.core.media import TextPayload
+from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.session import EntityKind, SessionRuntime
+from alphaavatar.core.time import RuntimeTimeRange
+from alphaavatar.core.turn import TurnRuntime
+from alphaavatar.core.turn.enums import TurnInputModality
+
+SOURCE = PerceptionSourceRef("microphone", 1)
+VOICE = PerceptionEntityRef("voice-alice")
+
+
+def participants(
+    tmp_path: Path, session_id: str = "session-1", **limits: int
+) -> ParticipantRuntime:
+    session = SessionRuntime(session_id=session_id)
+    perception = PerceptionRuntime(
+        session_id=session_id,
+        stream_maxlens=dict.fromkeys(PerceptionStreamKind, 64),
+        clock=session.clock,
+    )
+    return ParticipantRuntime(
+        session=session,
+        workspace=WorkspacePaths.from_root(tmp_path / "workspace"),
+        turn=TurnRuntime(perception=perception),
+        **limits,
+    )
+
+
+def ready(runtime: ParticipantRuntime) -> list[dict]:
+    records = runtime.turn.perception.input_trace.snapshot().to_dict()["records"]
+    return [r for r in records if r["stage"] == "participant.segment_ready"]
+
+
+def bound(runtime: ParticipantRuntime, segment: PerceptionSegmentRef, token: int) -> None:
+    runtime.ensure_entity(SOURCE, VOICE, kind=EntityKind.SPEAKER, device_id="microphone")
+    assert runtime.bind_segment(segment, VOICE, token=token)
+
+
+@pytest.mark.parametrize(
+    ("release", "outcome", "reason"),
+    [
+        (bound, "bound", None),
+        (lambda r, s, t: r.finish_segment_resolution(s, token=t), "unbound", None),
+        (
+            lambda r, s, t: r.finish_segment_resolution(s, token=t, reason="no_match"),
+            "unbound",
+            "no_match",
+        ),
+        (lambda r, s, t: r.bind_segment(s, None, token=t), "invalid", "no_entity"),
+        (lambda r, s, t: r.invalidate_segment(s), "invalid", "invalidated"),
+        (lambda r, s, t: r.retire_source(SOURCE), "released", "source_retired"),
+        (lambda r, s, t: r.close(), "released", "closed"),
+    ],
+    ids=["bound", "unbound", "unbound-why", "no-entity", "invalidated", "retired", "closed"],
+)
+def test_an_association_settles_once_and_the_trace_and_log_say_how(
+    release: Callable,
+    outcome: str,
+    reason: str | None,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="alphaavatar.agents.runtime.modules.participants")
+    runtime = participants(tmp_path)
+    segment = PerceptionSegmentRef(SOURCE, "seg-1")
+    token = runtime.observe_segment(segment)
+    assert ready(runtime) == []  # Asked for, not ready yet.
+    release(runtime, segment, token)
+    # Released, whatever released it; and settled once: what follows changes no readiness.
+    runtime.finish_segment_resolution(segment, token=token)
+    runtime.invalidate_segment(segment)
+    (record,) = ready(runtime)
+    assert (record["outcome"], record.get("reason")) == (outcome, reason)
+    assert record["start_time_ns"] <= record["end_time_ns"]
+    (line,) = [r.getMessage() for r in caplog.records if "association settled" in r.getMessage()]
+    assert f"segment_id=seg-1 source_id=microphone source_generation=1 outcome={outcome} " in line
+    assert f" reason={reason} speech_ms=None wait_ms=" in line
+
+
+def test_speech_that_settled_unbound_and_is_bound_later_is_told_with_its_length(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The log gives each segment's speech length when its resolver knows it. Short speech
+    settles unbound as it closes; when the speech after it binds it, a line says so, since
+    that first settling stays. A segment bound when it settles is told once."""
+    caplog.set_level(logging.INFO, logger="alphaavatar.agents.runtime.modules.participants")
+    runtime = participants(tmp_path)
+    short, long = PerceptionSegmentRef(SOURCE, "short"), PerceptionSegmentRef(SOURCE, "long")
+    short_token, long_token = runtime.observe_segment(short), runtime.observe_segment(long)
+    runtime.finish_segment_resolution(short, token=short_token, reason="no_vector", speech_sec=0.8)
+    runtime.ensure_entity(SOURCE, VOICE, kind=EntityKind.SPEAKER, device_id="microphone")
+    assert runtime.bind_segment(long, VOICE, token=long_token, speech_sec=1.2)
+    assert runtime.bind_segment(short, VOICE, token=short_token)  # By the speech after it.
+    assert runtime.bind_segment(long, VOICE, token=long_token)  # Again: nothing new to tell.
+
+    lines = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Speaker association")
+    ]
+    assert len(lines) == 3
+    assert lines[0].startswith("Speaker association settled segment_id=short ")
+    assert " outcome=unbound reason=no_vector speech_ms=800 wait_ms=" in lines[0]
+    assert lines[1].startswith("Speaker association settled segment_id=long ")
+    assert " outcome=bound reason=None speech_ms=1200 wait_ms=" in lines[1]
+    assert lines[2].startswith(
+        "Speaker association bound late segment_id=short source_id=microphone "
+        "source_generation=1 wait_ms="
+    )
+
+
+def test_where_an_association_stands_is_told_until_it_is_released(tmp_path: Path) -> None:
+    """Pending once asked for; then how it settled, an invalidated one invalid even after it
+    was bound; unknown once released, or never asked for. A retired source releases only
+    its segments still pending: the settled ones are kept for the session."""
+    runtime = participants(tmp_path)
+    first, second, third = (PerceptionSegmentRef(SOURCE, f"seg-{n}") for n in (1, 2, 3))
+    assert runtime.segment_association(first) == "unknown"
+    tokens = [runtime.observe_segment(segment) for segment in (first, second, third)]
+    assert {runtime.segment_association(s) for s in (first, second, third)} == {"pending"}
+    bound(runtime, first, tokens[0])
+    runtime.finish_segment_resolution(second, token=tokens[1], reason="no_vector")
+    assert [runtime.segment_association(s) for s in (first, second, third)] == [
+        "bound",
+        "unbound",
+        "pending",
+    ]
+    runtime.invalidate_segment(first)
+    assert runtime.segment_association(first) == "invalid"
+    runtime.retire_source(SOURCE)
+    assert [runtime.segment_association(s) for s in (first, second, third)] == [
+        "invalid",
+        "unbound",
+        "unknown",
+    ]
+
+
+def test_past_the_bound_an_association_is_released(tmp_path: Path) -> None:
+    runtime = participants(tmp_path, max_segments=1)
+    runtime.observe_segment(PerceptionSegmentRef(SOURCE, "seg-1"))
+    runtime.observe_segment(PerceptionSegmentRef(SOURCE, "seg-2"))  # Evicts seg-1
+    assert [(r["outcome"], r["reason"]) for r in ready(runtime)] == [("released", "evicted")]
+
+
+def test_a_turns_participants_are_read_from_its_inputs_whenever_asked(tmp_path: Path) -> None:
+    """A segment's speech and transcript are one input, named by the segment's association
+    while it stands; a direct input by its device's participant; anything else anonymous.
+    identity_of names the accepted identity an entry stands for, and no other."""
+    runtime = participants(tmp_path)
+    perception = runtime.turn.perception
+    alice, bob = runtime.join(user_id="alice"), runtime.join(user_id="bob")
+    runtime.bind_device("phone-bob", bob.participant_id)
+    segment = PerceptionSegmentRef(SOURCE, "seg-1")
+    token = runtime.observe_segment(segment)
+    runtime.ensure_entity(
+        SOURCE, VOICE, kind=EntityKind.SPEAKER, participant_id=alice.participant_id
+    )
+    assert runtime.bind_segment(segment, VOICE, token=token)
+    now = perception.clock.now()
+    at = RuntimeTimeRange.point(now)
+    inputs = [
+        EnvObservation.speech_segment(time_range=at, source=SOURCE, segment=segment),
+        EnvObservation.transcript_segment(
+            time_range=at, source=SOURCE, segment=segment, payload=TextPayload.create(text="hi")
+        ),
+        *(
+            EnvObservation.text_input(
+                time_range=at,
+                source=PerceptionSourceRef(device, 1),
+                payload=TextPayload.create(text="hi"),
+                device_id=device,
+            )
+            for device in ("phone-bob", "phone-nobody")
+        ),
+    ]
+    for observation in inputs:
+        perception.publish_observation(observation)
+    turn = runtime.turn.commit_event_input(
+        input_id="input-1",
+        modality=TurnInputModality.MULTIMODAL,
+        text="hi",
+        started_at=now,
+        committed_at=now,
+        cutoff_sequence=perception.latest_event_sequence,
+        input_observation_ids=[observation.observation_id for observation in inputs],
+    )
+    entries = runtime.of_turn(turn)
+    assert [(e.participant_id, e.user_id) for e in entries] == [
+        (alice.participant_id, "alice"),
+        (bob.participant_id, "bob"),
+        (None, None),
+    ]
+    assert runtime.identity_of(entries[0]) == runtime.get(alice.participant_id)
+    assert runtime.identity_of(entries[2]) is None
+    assert runtime.identity_of(replace(entries[0], user_id="bob")) is None
+
+    # Invalidated, the segment names no one any more; each input keeps its place.
+    runtime.invalidate_segment(segment)
+    assert [e.participant_id for e in runtime.of_turn(turn)] == [None, bob.participant_id, None]
+
+    # Another session's Turn is not this runtime's to read.
+    other = participants(tmp_path / "other", session_id="session-2")
+    with pytest.raises(ValueError, match="this session's Turns"):
+        other.of_turn(turn)

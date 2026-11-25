@@ -13,7 +13,10 @@
 # limitations under the License.
 from collections.abc import Iterable
 
-from .schemas import ProvidersConfig, ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import (
+    ProvidersConfig,
+    ProviderTaskConfig,
+)
 
 
 class ProviderRegistry:

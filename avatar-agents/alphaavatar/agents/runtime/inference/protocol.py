@@ -18,7 +18,7 @@ import socket
 import struct
 from math import isfinite
 
-INFERENCE_ENDPOINT_ENV = "ALPHAAVATAR_INFERENCE_ENDPOINT"
+INFERENCE_SOCKET_ENV = "ALPHAAVATAR_INFERENCE_SOCKET"
 MAX_FRAME_BYTES = 64 * 1024 * 1024
 HEADER = struct.Struct("!I")
 _READY_BUDGETS = struct.Struct("!ddd")

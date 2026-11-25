@@ -13,16 +13,17 @@ participant identity is unique for each execution. Master service credentials ar
 not included in the connection object supplied to the renderer.
 
 The AIRI plugin owns its Playwright driver, browser, context and page, plus its
-injected transport lifecycle. HostExecution owns the Character session. No AIRI
+injected transport lifecycle. The session attachment owns the Character session as its
+presentation phase. No AIRI
 inference runner, loop thread, untracked browser task or shared fixed-port server
 is created by the realtime Host.
 
 ```text
-HostExecution start:
+Start:
     Character READY + video publication -> RTC outputs -> Engine -> RTC inputs
 
-HostExecution stop:
-    RTC inputs -> Engine/tool settlement -> RTC outputs -> Character -> AvatarRuntime
+Stop:
+    RTC inputs -> RTC outputs -> Character -> connection -> Engine -> AvatarRuntime
 ```
 
 Starting Character before the audio output matters for the pinned frontend: it
@@ -95,8 +96,8 @@ warning followed by success. The transport also rejects observed renderer audio
 publication instead of accepting a second playback path.
 
 The browser/page and transport are monitored after startup. A crash, renderer
-participant loss or video unpublication is reported to LiveKitConnection, which
-closes the current execution. There is no silent renderer retry or duplicate join.
+participant loss or video unpublication is reported through the session attachment's
+failure monitor, which ends the current execution. There is no silent renderer retry or duplicate join.
 Publication readiness is not proof of decoded frame quality, continuing frame
 liveness, or audio/video synchronization at a viewer.
 
@@ -123,7 +124,5 @@ Redirecting away from the configured origin/route is rejected. Browser contexts
 are isolated, service workers are blocked and automatic downloads are disabled.
 No TLS verification is disabled.
 
-The gitlink and frontend code are unchanged by this block. Real AIRI build,
-LiveKit server/client, canvas video and listening/synchronization tests remain
-required. SDK worker hosting is still separate work; this is not a claim of
-complete `livekit.agents` removal from the workspace.
+Real AIRI build, LiveKit server/client, canvas video and listening/synchronization
+tests remain required.

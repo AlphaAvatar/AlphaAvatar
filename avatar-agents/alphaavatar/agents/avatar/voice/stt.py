@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import TracebackType
 
+from alphaavatar.core.env.schemas import SourceId
 from alphaavatar.core.media import AudioFrame
 
 from .schema.transcription import TranscriptionEvent
@@ -54,6 +55,11 @@ class STTBase(ABC):
     def capabilities(self) -> STTCapabilities: ...
 
     @property
+    def fallback_code(self) -> str | None:
+        """System notice code for unusable transcription, or None to suppress the notice."""
+        return None
+
+    @property
     def streaming(self) -> bool:
         """
         Compatibility property.
@@ -63,7 +69,7 @@ class STTBase(ABC):
         return self.capabilities.input_mode == STTInputMode.REALTIME
 
     @abstractmethod
-    def stream(self, *, source_id: str) -> STTStreamBase:
+    def stream(self, *, source_id: SourceId) -> STTStreamBase:
         """Create one stateful transcription stream for an audio source."""
 
     async def aclose(self) -> None:

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from alphaavatar.agents.avatar.loop import Loop, LoopHandle
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.schemas import LoopRequest
-from alphaavatar.agents.avatar.provider.schemas import ProvidersConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProvidersConfig
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .config import RealtimeLoopConfig
@@ -64,6 +64,7 @@ class AvatarLoop(Loop):
             ProvidersConfig(trace=self._config.trace, tasks={"avatar.loop": self._config.model})
         )
         gateway.validate_tasks(("avatar.loop",), require_streaming=True)
+        gateway.prepare(("avatar.loop",))  # Its client builds while the session starts.
         # No await occurs during service binding; publish readiness only after validation succeeds.
         self._gateway = gateway
 
@@ -89,10 +90,9 @@ class AvatarLoop(Loop):
         if len(self._runs) >= self._config.max_retiring_runs + 1:
             raise RuntimeError("Previous execution cleanup is still pending")
 
-        snapshot = self._runtime.turn.get(request.input_id)
-        if snapshot is None or snapshot.turn_id != request.turn_id:
-            raise ValueError("Loop input must identify a committed turn")
-        if request.context_id not in snapshot.context_ids:
+        if self._runtime.turn.get(request.input_id) is not request.turn:
+            raise ValueError("Loop input must be a committed Turn owned by this runtime")
+        if request.context_id not in request.turn.context_ids:
             raise ValueError("Loop context does not own this turn")
         if self._current is not None and not self._current.task.done():
             if self._current.identity.turn_id == request.turn_id:
@@ -109,7 +109,9 @@ class AvatarLoop(Loop):
         )
 
         try:
-            self._runtime.output.activate_run(execution.identity.run_id)
+            self._runtime.output.activate_run(
+                execution.identity.run_id, guard=execution.delivery_guard
+            )
         except BaseException as original:
             try:
                 await execution.aclose()

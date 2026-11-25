@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from math import isfinite
 from types import MappingProxyType
@@ -23,6 +23,7 @@ from typing import Any
 
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 from alphaavatar.core.output.schemas import OutputRecordBatch, OutputScope
+from alphaavatar.core.session.schemas import IdentityBasis
 
 from .enums import ModelMessagePhase, ModelRole
 from .schemas.model_input import (
@@ -117,7 +118,12 @@ def _parts(parts: tuple) -> tuple[tuple, list[dict], int]:
 
 
 def model_record_batch(
-    *, batch_id: str, source: str, scope: OutputScope, items: Sequence[ModelInputItem]
+    *,
+    batch_id: str,
+    source: str,
+    scope: OutputScope,
+    items: Sequence[ModelInputItem],
+    identity_basis: IdentityBasis | None = None,
 ) -> OutputRecordBatch[ModelInputItem] | None:
     """Project immutable evidence; never publish private continuation, policy or user input.
 
@@ -191,7 +197,12 @@ def model_record_batch(
         return None
 
     encoded = json.dumps(
-        {"schema": MODEL_RECORD_SCHEMA, "source": source, "records": content},
+        {
+            "schema": MODEL_RECORD_SCHEMA,
+            "source": source,
+            "records": content,
+            "identity_basis": asdict(identity_basis) if identity_basis is not None else None,
+        },
         sort_keys=True,
         ensure_ascii=False,
         allow_nan=False,
@@ -206,4 +217,5 @@ def model_record_batch(
         items=tuple(records),
         digest=sha256(encoded).hexdigest(),
         size_bytes=len(encoded) + size,
+        identity_basis=identity_basis,
     )

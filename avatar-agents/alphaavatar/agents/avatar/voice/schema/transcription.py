@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from alphaavatar.core.env.schemas import SourceId
+
 
 class TranscriptionEventType(StrEnum):
     INTERIM_TRANSCRIPT = "interim_transcript"
@@ -26,7 +28,7 @@ class TranscriptionEventType(StrEnum):
 @dataclass(slots=True, frozen=True)
 class TranscriptionEvent:
     type: TranscriptionEventType
-    source_id: str
+    source_id: SourceId
     segment_id: str
     text: str = ""
 
@@ -39,3 +41,5 @@ class TranscriptionEvent:
     provider: str | None = None
     model: str | None = None
     reason: str | None = None
+    provider_item_id: str | None = None
+    reason_code: str | None = None

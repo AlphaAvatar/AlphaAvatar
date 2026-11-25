@@ -14,13 +14,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import numpy as np
 
-    from alphaavatar.agents.runtime.modules.session.runtime import ParticipantInfo
-    from alphaavatar.core.turn import TurnSnapshot
+    from alphaavatar.core.session.schemas import Participant
 
     from .schemas import DetailsBase, UserProfile, UserRuntimeState
 
@@ -28,23 +28,15 @@ if TYPE_CHECKING:
 class PersonaCache(ABC):
     @property
     @abstractmethod
-    def turns(self) -> list[TurnSnapshot]: ...
-
-    @property
-    @abstractmethod
-    def participant(self) -> ParticipantInfo: ...
+    def participant(self) -> Participant: ...
 
     @participant.setter
     @abstractmethod
-    def participant(self, participant: ParticipantInfo) -> None: ...
+    def participant(self, participant: Participant) -> None: ...
 
     @property
     @abstractmethod
     def profile(self) -> UserProfile | None: ...
-
-    @profile.setter
-    @abstractmethod
-    def profile(self, profile: UserProfile) -> None: ...
 
     @property
     @abstractmethod
@@ -53,6 +45,18 @@ class PersonaCache(ABC):
     @profile_details.setter
     @abstractmethod
     def profile_details(self, profile_details: DetailsBase | None) -> None: ...
+
+    @property
+    @abstractmethod
+    def detail_fields(self) -> frozenset[str]: ...
+
+    @property
+    @abstractmethod
+    def detail_operations(self) -> dict[str, list[dict[str, Any]]]: ...
+
+    @property
+    @abstractmethod
+    def detail_timestamps(self) -> dict[str, datetime]: ...
 
     @property
     @abstractmethod
@@ -70,17 +74,23 @@ class PersonaCache(ABC):
     @abstractmethod
     def speaker_vector(self) -> np.ndarray | None: ...
 
-    @speaker_vector.setter
-    @abstractmethod
-    def speaker_vector(self, vector: np.ndarray) -> None: ...
-
     @property
     @abstractmethod
     def face_vector(self) -> np.ndarray | None: ...
 
-    @face_vector.setter
     @abstractmethod
-    def face_vector(self, vector: np.ndarray) -> None: ...
+    def add_speaker_vector(self, vector: np.ndarray, seconds: float) -> None:
+        """Add a segment's speaker vector, weighted by the seconds of audio it is from."""
 
     @abstractmethod
-    def add_turn(self, snapshot: TurnSnapshot) -> None: ...
+    def add_face_vector(self, vector: np.ndarray) -> None:
+        """Add a frame's face vector; every frame counts once."""
+
+    @abstractmethod
+    def record_profile_operations(self, operations: dict[str, list[dict[str, Any]]]) -> None: ...
+
+    @abstractmethod
+    def mark_profile_fields(self, fields: set[str], *, updated_at: datetime) -> None: ...
+
+    @abstractmethod
+    def snapshot(self) -> PersonaCache: ...

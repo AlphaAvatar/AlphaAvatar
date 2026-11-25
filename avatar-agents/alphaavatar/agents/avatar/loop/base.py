@@ -50,7 +50,7 @@ class Loop(ABC):
     async def submit(
         self, request: LoopRequest, *, authorize: ToolAuthorizer | None = None
     ) -> LoopHandle:
-        """Accept quickly; publish execution facts, model records and delivery through Runtime."""
+        """Schedule a committed Turn; prepare context and publish results during execution."""
 
     @abstractmethod
     def interrupt(self, *, run_id: str | None = None, reason: str = "interrupted") -> None: ...

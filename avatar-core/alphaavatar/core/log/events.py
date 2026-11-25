@@ -28,9 +28,12 @@ LABELS = {
     "engine.ready": "READY",
     "input.committed": "USER INPUT",
     "run.started": "RUN START",
+    "context.built": "CONTEXT BUILT",
     "model.started": "MODEL START",
+    "stt.request": "STT REQUEST",
     "model.first_text": "FIRST TEXT",
     "model.first_event": "FIRST MODEL EVENT",
+    "model.request_sent": "MODEL REQUEST SENT",
     "model.completed": "MODEL COMPLETE",
     "assistant.message": "ASSISTANT OUTPUT",
     "tool.started": "TOOL START",
@@ -44,7 +47,8 @@ LABELS.update({"core.event": "CORE EVENT", "core.gap": "CORE GAP"})
 _FIELDS = frozenset(
     (
         "session_id context_id turn_id input_id run_id request_id response_id item_id output_id "
-        "call_id model backend provider modality state phase reason outcome error_type model_step "
+        "call_id model backend provider modality state phase reason outcome error_type error_code "
+        "model_step "
         "tool_round tool_name executed interrupted elapsed_ms model_steps tool_rounds stage "
         "refusal text_chars parts_truncated content_index output_items input_tokens output_tokens "
         "stream event_id sequence event_time_ns observed_time_ns event_kind observation_id "
@@ -53,7 +57,10 @@ _FIELDS = frozenset(
         "item_count batch_id schema missed_count first_sequence cutoff_sequence delivery "
         "measurement requested_reasoning_effort query_difficulty reasoning_output_tokens "
         "cached_input_tokens first_event_ms first_visible_text_ms "
-        "start_seconds end_seconds timing_source chunk_id source_chunk_id source_chunk_count"
+        "start_seconds end_seconds timing_source chunk_id source_chunk_id source_chunk_count "
+        "encode_ms frame_count request_bytes attempt "
+        "segment_id queue_ms reused connect_ms tls_ms upload_ms wait_ms final_ms "
+        "client_ms prepare_ms"
     ).split()
 )
 MAX_FIELDS = 24

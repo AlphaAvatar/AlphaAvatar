@@ -16,17 +16,27 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pydantic import SecretStr
 
-from alphaavatar.host.application.config import HostConfig
-from alphaavatar.host.sessions.factory import validate_session_config
+from alphaavatar.agents.workspace import WorkspacePaths
+from alphaavatar.host.service.application.config import HostConfig
+from alphaavatar.host.service.sessions.factory import validate_session_config
+from alphaavatar.host.workspace import ApplicationPaths
 
 from .application import ApplicationConfig
+from .bundles import ConfigReferenceError, ConfigSource, compose_profiles
+from .paths import platform_application_root, resolve_application_paths
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
+
+    from .bundles import Settings
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -49,20 +59,75 @@ def _snapshot_scalar(value: Any) -> Any:
     raise ValueError("Application configuration contains a non-serializable value")
 
 
-def _validate(value: Any, *, restored: bool) -> ApplicationConfig:
+def _avatar(data: dict[str, Any]) -> AvatarConfig:
+    """The Avatar settings, validated; a variable they read that holds no value, such as an MCP
+    server's ``<NAME>``, named at the setting that reads it (``MissingVariables``)."""
+    from pydantic import ValidationError
+
     from alphaavatar.agents.configs import AvatarConfig
+
+    from .problems import missing_variables
+
+    try:
+        return AvatarConfig.model_validate(data)
+    except ValidationError as error:
+        if (missing := missing_variables(error)) is not None:
+            raise missing from None
+        raise
+
+
+def _validate(
+    value: Any, *, paths: ApplicationPaths | None = None, source: ConfigSource | None = None
+) -> ApplicationConfig:
+    from alphaavatar.agents.runtime.inference import plan_inference_runners
+    from alphaavatar.agents.runtime.plugin import UnavailablePlugins
+
+    from .capabilities import unavailable
 
     data = _mapping(value)
     avatar_data = dict(data)
+    application = _mapping(avatar_data.pop("application", {}))
+    unknown = set(application) - {"home", "cache_root"}
+    if unknown:
+        raise ValueError("Unknown application path configuration")
+
+    # ApplicationPaths
+    if "home" in application:
+        paths = ApplicationPaths.from_root(
+            application["home"], cache_root=application.get("cache_root")
+        )
+    elif paths is None:
+        raise ValueError("An explicit application home or ApplicationPaths is required")
+    elif "cache_root" in application:
+        paths = ApplicationPaths.from_root(paths.root, cache_root=application["cache_root"])
+
+    # HostConfig
     host = HostConfig.model_validate(avatar_data.pop("host", {}))
     validate_session_config(host.rtc)
 
-    context = {"resolved_workspace": True} if restored else None
-    avatar = AvatarConfig.model_validate(avatar_data, context=context)
+    # AvatarConfig
+    avatar = _avatar(avatar_data)
+    # The selected plugins resolve with their settings and providers, then runtime.inference
+    # is checked against all their runners: pure, no process, model or environment.
+    try:
+        plan_inference_runners(avatar)
+    except UnavailablePlugins as error:
+        raise unavailable(error, source) from None
 
-    # Resolve defaults and Avatar identity once. Re-reading raw YAML in a fresh interpreter
-    # would create another default identity and append avatar_id to the workspace again.
-    resolved = {"host": host.model_dump(mode="python"), **avatar.model_dump(mode="python")}
+    # WorkspacePaths
+    workspace = (
+        WorkspacePaths.from_root(avatar.avatar.workspace_root)
+        if avatar.avatar.workspace_root is not None
+        else paths.workspace(avatar.avatar.id)
+    )
+    avatar.avatar.workspace_root = str(workspace.root)
+    resolved = {
+        "application": {"home": str(paths.root), "cache_root": str(paths.cache.root)},
+        "host": host.model_dump(mode="python"),
+        **avatar.model_dump(mode="python"),
+    }
+
+    # payload
     payload = json.dumps(
         resolved,
         default=_snapshot_scalar,
@@ -70,24 +135,70 @@ def _validate(value: Any, *, restored: bool) -> ApplicationConfig:
         allow_nan=False,
         separators=(",", ":"),
     )
-    return ApplicationConfig(host=host, avatar=avatar, payload=payload)
+    return ApplicationConfig(
+        host=host, avatar=avatar, paths=paths, workspace=workspace, payload=payload, source=source
+    )
 
 
-def validate_application(value: Any) -> ApplicationConfig:
-    return _validate(value, restored=False)
+def validate_application(
+    value: Any, *, paths: ApplicationPaths | None = None, source: ConfigSource | None = None
+) -> ApplicationConfig:
+    """``value`` validated as a configuration; ``source``, if given, is where it was read."""
+    return _validate(value, paths=paths, source=source)
 
 
 def restore_application(payload: str) -> ApplicationConfig:
-    """Strictly validate a parent-owned resolved snapshot without repeating workspace resolution."""
-    return _validate(json.loads(payload), restored=True)
+    """Restore explicit roots without consulting the child process environment; the selected
+    plugins resolve and load again here, before any session."""
+    return _validate(json.loads(payload))
 
 
-def load_application(path: str | Path, overrides: Sequence[str] = ()) -> ApplicationConfig:
+def check_application_paths(config: ApplicationConfig) -> None:
+    """Read-only checks before activation; they never create, move or delete data."""
+    from alphaavatar.agents.workspace import check_legacy_identity
+    from alphaavatar.host.workspace import check_workspace_continuity
+
+    check_workspace_continuity(config.workspace, config.previous_workspace_roots)
+    if config.workspace == config.paths.workspace(config.avatar.avatar.id):
+        check_legacy_identity(config.paths.avatars_dir, config.avatar.avatar.id)
+
+
+def validate_plugin_settings(config: ApplicationConfig) -> dict[str, Any]:
+    """The selected plugins' settings, each validated with its own plugin's schema, by section.
+
+    Pure: it reads only the accepted configuration, resolving the plugins and the provider
+    backends their settings name as loading did. Settings a plugin would reject fail,
+    located under their section (``loop.init_config.model``); a plugin without a schema has
+    none here.
+    """
+    from alphaavatar.agents.runtime.plugin import UnavailablePlugins, resolve_plugins
+
+    from .capabilities import unavailable
+
+    selection = resolve_plugins(config.avatar)
+    if selection.problems:
+        raise unavailable(UnavailablePlugins(selection), config.source)
+    return selection.settings
+
+
+def _composed(
+    source: str | Path | ConfigSource, overrides: Sequence[str], settings: Settings | None
+) -> tuple[dict[str, Any], ApplicationPaths]:
+    """The file with its profiles in place and the overrides applied, interpolated; and the
+    home it belongs to. With the ``settings`` loading read, the credentials it names are filled
+    and hidden from logs: those it interpolates before, the others once it is interpolated. One
+    an MCP it creates sends that then holds no value, empty or blank too, is refused at its
+    setting."""
     import yaml
     from omegaconf import OmegaConf
     from omegaconf.errors import OmegaConfBaseException
 
-    config_path = Path(path).expanduser().resolve(strict=True)
+    from .credentials import configured_credentials, fill_configured, interpolated_credentials
+    from .problems import unresolved, unset_credentials
+
+    if not isinstance(source, ConfigSource):
+        source = ConfigSource(Path(source))
+    config_path = source.path.expanduser().resolve(strict=True)
     text = config_path.read_text(encoding="utf-8")
     try:
         if config_path.suffix.lower() in (".yaml", ".yml"):
@@ -96,12 +207,73 @@ def load_application(path: str | Path, overrides: Sequence[str] = ()) -> Applica
             data = _mapping(json.loads(text))
         else:
             raise ValueError("Application configuration must be YAML or JSON")
-        merged = OmegaConf.merge(data, OmegaConf.from_dotlist(list(overrides)))
-        data = _mapping(OmegaConf.to_container(merged, resolve=True))
+        changes = OmegaConf.from_dotlist(list(overrides))
+        if (references := changes.pop("profiles", None)) is not None:
+            data = _mapping(OmegaConf.to_container(OmegaConf.merge(data, {"profiles": references})))
+        home = OmegaConf.select(OmegaConf.merge(data, changes), "application.home")
     except (yaml.YAMLError, OmegaConfBaseException):
         # These exceptions may render the original line, including an inline credential.
         raise ValueError("Invalid YAML, configuration override, or interpolation") from None
 
+    if source.home is not None:
+        if home is not None and ApplicationPaths.from_root(home).root != source.home:
+            raise ConfigReferenceError(
+                f"{source.origin} sets another application.home; a named bundle belongs to "
+                "the home that stores it"
+            )
+        home = source.home
+    paths = resolve_application_paths(
+        os.environ, default_root=platform_application_root(os.environ, Path.home()), home=home
+    )
+    data = compose_profiles(data, paths, source.origin)
+    try:
+        merged = OmegaConf.merge(data, changes)
+        written = OmegaConf.to_container(merged)
+    except OmegaConfBaseException:
+        raise ValueError("Invalid YAML, configuration override, or interpolation") from None
+    if settings is not None:  # Before interpolation: a value still says what it reads.
+        fill_configured(interpolated_credentials(written), settings)
+    try:
+        data = _mapping(OmegaConf.to_container(merged, resolve=True))
+    except OmegaConfBaseException as error:
+        # Said by setting and variable: the exception's own text may quote a value.
+        raise unresolved(written, error) from None
+    if (unset := unset_credentials(written, data)) is not None:  # Not sent as "Bearer ".
+        raise unset
+    if settings is not None:  # And after: an api_key_env may itself be interpolated.
+        fill_configured(configured_credentials(data), settings)
+    return data, paths
+
+
+def load_selections(
+    source: str | Path | ConfigSource,
+    overrides: Sequence[str] = (),
+    settings: Settings | None = None,
+) -> tuple[HostConfig, AvatarConfig]:
+    """A configuration's Host and Avatar settings, validated without resolving its plugins:
+    what setup plans a bundle's packages from before any of them is installed. With the
+    ``settings`` loading read, the credentials it names are filled as ``load_application``
+    fills them."""
+    data, _ = _composed(source, overrides, settings)
+    data.pop("application", None)
+    host = HostConfig.model_validate(data.pop("host", {}))
+    return host, _avatar(data)
+
+
+def load_application(
+    source: str | Path | ConfigSource,
+    overrides: Sequence[str] = (),
+    settings: Settings | None = None,
+) -> ApplicationConfig:
+    """Load a file, composing the profiles it references; overrides apply to the result.
+
+    ``profiles.<section>=<name>`` overrides choose references; every other override applies
+    after composition, as to a single file. With the ``settings`` ``load_environment`` read,
+    the credentials the composed file names (each ``api_key_env``, as interpolated; in MCP
+    servers, ``<NAME>`` placeholders and ``${oc.env:NAME}`` in ``Authorization``) are filled
+    first from the .env file, then the stored ones, and hidden from logs.
+    """
+    data, paths = _composed(source, overrides, settings)
     duration = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS")
     if duration is not None:
         host = _mapping(data.get("host", {}))
@@ -111,4 +283,19 @@ def load_application(path: str | Path, overrides: Sequence[str] = ()) -> Applica
         host["execution"] = execution
         data["host"] = host
 
-    return validate_application(data)
+    if not isinstance(source, ConfigSource):
+        source = ConfigSource(Path(source).expanduser().absolute())
+    config = validate_application(data, paths=paths, source=source)
+    raw_avatar = _mapping(data.get("avatar", {}))
+    if raw_avatar.get("workspace_root") is None:
+        identity = config.avatar.avatar.id
+        if identity not in {".", ".."} and not any(c in identity for c in "/\\\x00"):
+            home = Path.home()
+            previous = [home / ".local" / "share" / identity]
+            if os.name == "posix":
+                previous.append(Path("/var/lib") / identity)
+            if os.environ.get("XDG_DATA_HOME"):
+                previous.append(Path(os.environ["XDG_DATA_HOME"]) / identity)
+            config = replace(config, previous_workspace_roots=tuple(previous))
+
+    return config

@@ -1,0 +1,33 @@
+# No tool is on. Switched on here, DeepResearch and MCP are installed by
+# `alphaavatar setup <bundle>` as this release's catalog offers them; it does not offer RAG.
+
+deepresearch:
+  plugin: null  # default: web research through Tavily, which reads TAVILY_API_KEY.
+  init_config: {}
+
+rag:
+  plugin: null  # default: answers from your documents; this release's setup does not offer it.
+  init_config:
+    doc_parser: docling
+
+mcp:
+  enabled: false  # true: the Avatar calls the servers below; it needs at least one.
+  plugin: default
+  init_config: {}
+
+  vdb_config:
+    collection_name: mcp
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+
+  servers: {}
+  # For example, LiveKit's documentation, and a server that needs a token. <ENV_VAR>
+  # placeholders resolve from the environment, .env or the stored credentials:
+  #   livekit-docs:
+  #     url: https://docs.livekit.io/mcp/
+  #     instruction: Search LiveKit's documentation, code, examples and changelogs.
+  #   docs:
+  #     url: https://example.com/mcp
+  #     headers:
+  #       Authorization: Bearer <MCP_DOCS_TOKEN>

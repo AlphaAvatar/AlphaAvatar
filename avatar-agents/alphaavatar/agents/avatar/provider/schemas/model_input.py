@@ -23,7 +23,7 @@ from alphaavatar.core.perception import AlignedPerception
 from alphaavatar.core.perception.schemas import PerceptionEvent
 from alphaavatar.core.time import RuntimeTimeRange
 
-from ..enums import ModelMessagePhase, ModelRole
+from ..enums import ModelMessagePhase, ModelRole, ModelTextPartKind
 from .media import ModelMediaPart
 from .provider_item import ModelProviderItem
 
@@ -39,6 +39,7 @@ def _empty_mapping() -> Mapping[str, Any]:
 class ModelTextPart:
     text: str
     annotations: tuple[Mapping[str, Any], ...] = ()
+    kind: ModelTextPartKind = ModelTextPartKind.TEXT
 
 
 @dataclass(frozen=True, slots=True)

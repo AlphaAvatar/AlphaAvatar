@@ -45,15 +45,15 @@ own environment so checking code does not uninstall or replace runtime dependenc
 
 ```bash
 UV_PROJECT_ENVIRONMENT=.venv-quality uv sync --locked --only-group lint --no-install-workspace
-UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync python scripts/check_workspace.py
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync python scripts/quality/check_workspace.py
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check .
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format --check .
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync pre-commit validate-config
 uv lock --check
 ```
 
-`scripts/check_workspace.py` checks package metadata, dependency relationships, entrypoint
-files, licenses and lock policy without importing the runtime. Its `--metadata-only` mode
+`scripts/quality/check_workspace.py` checks package metadata, dependency relationships,
+entrypoint files, licenses and lock policy without importing the runtime. Its `--metadata-only` mode
 is useful during authoring but explicitly skips source/lock validation; it is not a release
 gate. `uv lock --check` is still required for resolver-level freshness. No command here
 silently treats an unavailable tool or an empty test suite as a successful check.
@@ -170,7 +170,7 @@ Keep public namespaces under `alphaavatar.plugins.<plugin>`. Do not encode layer
 
 Consumers own their tasks, streams, and request state; `FoundationRuntime` owns shared service components. Plugin registration must not initialize models. Select inference runners from the active configuration and resolve model files inside runner initialization.
 
-Package changes must keep workspace membership, `[tool.uv.sources]`, `scripts/release.sh`, dependency metadata, and `uv.lock` consistent. Review lockfile changes before committing, then verify:
+Package changes must keep workspace membership, `[tool.uv.sources]`, `scripts/maintenance/release.sh`, dependency metadata, and `uv.lock` consistent. Review lockfile changes before committing, then verify:
 
 ```bash
 uv lock --check
@@ -178,6 +178,10 @@ uv sync --all-packages --locked
 ```
 
 Update the root plugin catalog with a concise capability description and accurate status. Existing plugins link to their README; planned plugins must not use placeholder links or imply that an implementation is available.
+
+## Code conventions
+
+Follow [Coding conventions](docs/coding-conventions.md): how modules and classes are ordered, and the names they use.
 
 ---
 
@@ -190,11 +194,20 @@ Pushing a production `vX.Y.Z` tag runs this pipeline:
 push v* tag
     ↓
 Quality checks (lint, build, install)
-    ↓
-Generate Release Notes
-    ↓
-Create GitHub Release
+    ↓                                    ↓
+Linux package                            Generate Release Notes
+  built in manylinux_2_28 for the tag,     docs/releases/vX.Y.Z.md
+  installed and set up on a clean          + GitHub's PR changelog
+  Ubuntu 24.04
+    ↓                                    ↓
+Create GitHub Release (after both)
+  a draft with the notes → attach the package files → download them from the
+  draft and check names, sizes and SHA-256s → publish
 ```
+
+The Linux package job builds only when the tag names the Host version (`v` +
+`avatar-host`'s `__version__`) and points at the commit being built. A published
+Release keeps its files: a re-run changes nothing once it is public.
 
 `.github/workflows/release.yml` does not upload anything to PyPI or TestPyPI.
 A passing source build does not prove that a particular distribution is available
@@ -217,7 +230,8 @@ make release VERSION=0.6.9 TYPE=prod
 ```
 
 The final `make release` pushes the `v0.6.9` tag; GitHub Actions runs the
-quality, notes, and Release creation stages. Alternatively, push an existing
+quality, Linux package, notes, and Release stages shown above.
+`make release` neither changes versions nor builds anything itself. Alternatively, push an existing
 local `vX.Y.Z` tag after checking that it points to the intended source commit.
 The workflow combines `docs/releases/vX.Y.Z.md` (if present) with GitHub's
 configured PR changelog (`.github/release.yml`). Re-running the release job
@@ -262,9 +276,11 @@ committed `uv.lock`, as described in the main README.
 
 ### 3. Verify the result
 
-Verify that GitHub Actions completed the three release stages and that
+Verify that GitHub Actions completed the four release stages and that
 `https://github.com/AlphaAvatar/AlphaAvatar/releases/tag/vX.Y.Z` contains
-the expected manual and generated notes. Verify PyPI separately, **only**
+the expected manual and generated notes and the Linux package files
+(`install.sh`, the package and its `.sha256`, the manifest, the wheels and
+`SHA256SUMS`). Verify PyPI separately, **only**
 for a package that was deliberately published.
 
 Changing `.github/workflows/release.yml` on `main` does not retroactively fix

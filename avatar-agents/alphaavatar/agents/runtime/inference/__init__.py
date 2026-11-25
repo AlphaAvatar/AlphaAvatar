@@ -13,19 +13,24 @@
 # limitations under the License.
 from .bootstrap import (
     bootstrap_inference_runners,
+    check_inference_config,
+    plan_inference_runners,
     prepare_inference_runners,
-    register_inference_runner_bootstrap,
+    snapshot_inference_config,
 )
-from .executor import INFERENCE_ENDPOINT_ENV, InferenceExecutor
-from .runner import InferenceRunner
+from .executor import INFERENCE_SOCKET_ENV, InferenceExecutor
+from .runner import InferenceRunner, RunnerLaunch
 from .runtime import InferenceRuntime
 
 __all__ = [
-    "INFERENCE_ENDPOINT_ENV",
+    "RunnerLaunch",
+    "INFERENCE_SOCKET_ENV",
     "InferenceExecutor",
     "InferenceRunner",
     "InferenceRuntime",
     "bootstrap_inference_runners",
+    "check_inference_config",
+    "plan_inference_runners",
     "prepare_inference_runners",
-    "register_inference_runner_bootstrap",
+    "snapshot_inference_config",
 ]

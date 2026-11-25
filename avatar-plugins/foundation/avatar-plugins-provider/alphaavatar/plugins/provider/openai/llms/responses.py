@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, TypeVar
@@ -36,17 +37,32 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelRefusalPart,
     ModelRequest,
     ProviderModelResult,
-    ProviderTaskConfig,
 )
 from alphaavatar.agents.avatar.provider.schemas.stream import ModelStreamEvent
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.log.events import log_event
 
 from ..adapters.responses import ResponsesAdapter, continuation_scope
-from .client import ResponsesClient, observe_task
+from .client import ResponsesClient, observe_task, sending
 from .config import OpenAIClientConfig, ResponsesInputConfig
 from .stream import ResponsesDecoder
 
 T = TypeVar("T")
+
+
+logger = logging.getLogger(__name__)
+
+
+def _pictures(payload: dict[str, Any]) -> int:
+    """The pictures an encoded request carries: its ``input_image`` parts."""
+    return sum(
+        part.get("type") == "input_image"
+        for item in payload.get("input") or ()
+        if isinstance(item, dict)
+        for part in (item.get("content") if isinstance(item.get("content"), list) else ())
+        if isinstance(part, dict)
+    )
 
 
 def _diagnostic(value: Any) -> Any:
@@ -101,6 +117,10 @@ class OpenAIResponsesLLM(StreamingLLMBase):
         if not self._config.model.strip():
             raise ValueError("Responses model name cannot be empty")
 
+    def prepare(self) -> None:
+        self.validate_input()
+        self._client.prepare()
+
     async def _prepare(self, operation: Callable[[], T]) -> T:
         task = asyncio.create_task(asyncio.to_thread(operation), name="responses_prepare")
         self._preparations.add(task)
@@ -118,21 +138,48 @@ class OpenAIResponsesLLM(StreamingLLMBase):
         events = None
         try:
             async with asyncio.timeout_at(deadline):
+                taken = asyncio.get_running_loop().time()
                 client = await self._client.get()
+                client_ms = round((asyncio.get_running_loop().time() - taken) * 1000, 3)
                 adapter = ResponsesAdapter(
                     self._config,
                     self._options,
                     continuation_scope(self._client.scope, self._config.model),
                 )
+                began = asyncio.get_running_loop().time()
                 payload = await self._prepare(lambda: adapter.encode(request))
+                encode_ms = round((asyncio.get_running_loop().time() - began) * 1000, 3)
                 self.validate_input()
+                frames, attempts = _pictures(payload), 0
+
+                def sent(size: int | None) -> None:
+                    # Each attempt as it goes to the transport, encoded, in numbers only: how
+                    # long the client took to be ready and encoding took here, all of it from
+                    # the request taken to this attempt sent, the pictures, the body sent.
+                    nonlocal attempts
+                    attempts += 1
+                    prepare_ms = round((asyncio.get_running_loop().time() - taken) * 1000, 3)
+                    log_event(
+                        logger,
+                        "model.request_sent",
+                        request_id=request.request_id,
+                        client_ms=client_ms,
+                        prepare_ms=prepare_ms,
+                        encode_ms=encode_ms,
+                        frame_count=frames,
+                        request_bytes=size,
+                        attempt=attempts,
+                    )
+
                 try:
-                    raw = await client.responses.create(**payload)
+                    with sending(sent):
+                        raw = await client.responses.create(**payload)
                 except Exception as exc:
                     normalized = _sdk_error(exc)
                     if normalized is not None:
                         raise normalized from None
                     raise
+
             decoder = ResponsesDecoder(
                 request_id=request.request_id,
                 scope=continuation_scope(self._client.scope, self._config.model),

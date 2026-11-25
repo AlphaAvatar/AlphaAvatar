@@ -8,7 +8,7 @@ application hosting and transport assembly belong to Host and RTC.
 
 ```text
 alphaavatar/agents/
-├── avatar/               # Engine, Loop, Context and Provider contracts.
+├── avatar/               # Engine, Loop, Context, Provider, Voice and Vision contracts.
 ├── runtime/              # Runtime composition, capability registry and inference.
 ├── configs/              # Strict Avatar and plugin-selection configuration.
 ├── character/            # Presentation and transport contracts.
@@ -17,9 +17,9 @@ alphaavatar/agents/
 ├── router/               # Interaction processor contracts.
 ├── status/               # Status contracts.
 ├── tools/                # Tool abstractions and operation contracts.
-├── reflection/           # Reflection contracts; not a completed feature.
-├── utils/                # Workspace, identity, time and shared utilities.
-├── env.py                # Environment initialization.
+├── reflection/           # Reserved, empty package; no Reflection contracts yet.
+├── workspace/            # Workspace, user and session paths and their preparation.
+├── utils/                # Identity, time and shared utilities.
 ├── log.py                # Agent logging configuration.
 └── version.py            # Package version.
 ```
@@ -32,7 +32,7 @@ Selected files and feature directories are shown; ordinary package initializers 
 Router turn decision / direct input
     -> AvatarEngine
     -> Foundation Loop
-    -> ContextManager + ProviderService + CapabilityRegistry
+    -> ContextManager + ProviderService + AvatarCapabilityRegistry
     -> OutputRuntime
 ```
 
@@ -41,7 +41,7 @@ and precise interruption. It does not inherit a LiveKit Agent, construct model p
 register SDK tools or write directly to Memory.
 
 Loop owns model/tool execution and canonical record publication. ContextManager owns
-bounded history and query preparation. Provider owns model clients and tracing. State
+canonical session history, request-local projection and query preparation. Provider owns model clients and tracing. State
 and static loop budgets are captured once per query, not rewritten between model steps.
 Generation completion remains distinct from playback completion and interruption.
 
@@ -58,7 +58,7 @@ settles Loop execution while its canonical record consumers still exist. Plugin
 finalization remains in each plugin. Host owns the surrounding execution lifecycle;
 transport detachment releases RTC subscriptions independently of Engine destruction.
 
-InferenceRuntime owns the shared endpoint and serial runner processes. InferenceExecutor
+InferenceRuntime owns the shared socket and serial runner processes. InferenceExecutor
 owns only client connections. Host supervises the service but does not create a second
 owner for runner processes. Neither failed jobs nor state-changing requests are
 replayed automatically by the Host.
@@ -66,8 +66,9 @@ replayed automatically by the Host.
 ## Configuration
 
 Agent configuration selects plugins and processor-owned `init_config` settings. The
-main model is `loop.init_config.model`; there is no SDK `llm` section. Tool registration
-does not grant approval: exact capability policy or an Engine authorizer is required.
+main model is `loop.init_config.model`; there is no SDK `llm` section. Enabled plugins
+grant their capabilities to each Run; an exact `tool_policies` entry can deny one
+(`enabled: false`) or require an authorizer (`approval_required: true`).
 The native provider extras are selected on `alpha-avatar-plugins-provider`, not on an
 Agents SDK `providers` extra.
 

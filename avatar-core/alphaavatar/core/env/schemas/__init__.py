@@ -12,6 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .metadata import OutputMetadata
-from .reference import PerceptionEntityRef, PerceptionSegmentRef, PerceptionSourceRef
+from .reference import (
+    DeviceId,
+    EntityId,
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+    SourceId,
+)
 
-__all__ = ["OutputMetadata", "PerceptionEntityRef", "PerceptionSegmentRef", "PerceptionSourceRef"]
+__all__ = [
+    "DeviceId",
+    "EntityId",
+    "OutputMetadata",
+    "PerceptionEntityRef",
+    "PerceptionSegmentRef",
+    "PerceptionSourceRef",
+    "SourceId",
+]

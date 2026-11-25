@@ -12,21 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import logging
 from copy import deepcopy
-from datetime import datetime
-from typing import Any
+from dataclasses import replace
+from datetime import UTC, datetime
+from typing import Any, get_args, get_origin
+from uuid import uuid4
 
 from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
-from alphaavatar.agents.utils.time import application_now
-from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
+from alphaavatar.core.turn import TurnStreamGap
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from ...log import logger
+from ...namespace import NAMESPACE
 from ...profile import UserProfileDetails
 from ...template import PersonaPluginsTemplate
 from .config import ProfilerConfig
 from .op import (
+    PatchOp,
     ProfileDelta,
     append_string,
     append_text,
@@ -36,6 +42,8 @@ from .op import (
     write_set,
 )
 from .provider import ProfilerProvider
+
+logger = logging.getLogger(__name__)
 
 
 @avatar_capability(
@@ -57,37 +65,65 @@ class ProfilerProcessor(PersonaProcessorBase):
         self._provider = ProfilerProvider(config.provider, service=runtime.foundation.provider)
         self._consumer_task: asyncio.Task[None] | None = None
 
+        # The session's user Turns, kept until it ends: only then are they given to their
+        # participants, so an association that settled after a Turn's admission counts.
+        self._turns: list[TurnSnapshot] = []
+
     @property
     def name(self) -> str:
         return "profiler"
 
+    @staticmethod
+    def _kept(snapshot: TurnSnapshot) -> TurnSnapshot:
+        """The Turn as kept until the session ends: its input observations alone, without
+        their media, which is all its participants are read from."""
+        inputs = set(snapshot.input_observation_ids)
+        return replace(
+            snapshot,
+            perception_events=tuple(
+                replace(event, payload=replace(event.observation, payload=None))
+                for event in snapshot.perception_events
+                if event.observation is not None and event.observation.observation_id in inputs
+            ),
+            metadata={},
+        )
+
+    @staticmethod
+    def _is_list_field(name: str) -> bool:
+        annotation = UserProfileDetails.model_fields[name].annotation
+        return get_origin(annotation) is list or any(
+            get_origin(value) is list for value in get_args(annotation)
+        )
+
     async def _aextract_delta(
-        self, *, uid: str, profile_details_dump: dict[str, Any], new_turn: str
+        self, *, user_id: str, profile_details_dump: dict[str, Any], new_turn: str
     ) -> ProfileDelta:
         return await self._provider.extract(
             profile_details_dump=profile_details_dump,
             new_turn=new_turn,
             metadata={
-                "provider_dir": self.session_runtime.session_path.provider_dir,
-                "plugin": "persona",
+                "provider_dir": self.runtime.session_path.provider_dir,
+                "plugin": NAMESPACE,
                 "component": "profiler",
                 "operation": "profile_delta",
-                "user_id": uid,
+                "user_id": user_id,
                 "session_id": self.session_runtime.session_id,
             },
         )
 
     def _apply_delta(
         self, updated_at: datetime, profile_details_dump: dict, delta: ProfileDelta
-    ) -> tuple[bool, dict[str, Any]]:
+    ) -> tuple[dict[str, Any], list[PatchOp]]:
         data = deepcopy(profile_details_dump)
-        updated = False
+        accepted = []
 
         for patch in delta.ops:
             tokens = parse_pointer(patch.path)
-            if not tokens or len(tokens) != 1:
+            if len(tokens) != 1 or tokens[0] not in UserProfileDetails.model_fields:
                 continue
 
+            name = tokens[0]
+            previous, present = deepcopy(data.get(name)), name in data
             try:
                 if patch.op == "set":
                     write_set(data, tokens, patch.value, updated_at)
@@ -95,109 +131,130 @@ class ProfilerProcessor(PersonaProcessorBase):
                     clear_path(data, tokens)
                 elif patch.op == "append" and patch.value is not None:
                     current = data.get(tokens[0])
-                    if isinstance(current, list):
+                    if isinstance(current, list) or self._is_list_field(tokens[0]):
                         append_string(data, tokens, patch.value, updated_at)
                     else:
                         append_text(data, tokens, patch.value, updated_at)
                 elif patch.op == "remove" and patch.value is not None:
+                    if not self._is_list_field(name):
+                        raise ValueError("Profile remove requires a list field")
                     remove_string(data, tokens, patch.value)
-                updated = True
+
+                UserProfileDetails(**{name: data.get(name)})
+                accepted.append(patch)
             except Exception:
+                if present:
+                    data[name] = previous
+                else:
+                    data.pop(name, None)
                 logger.exception(
-                    "Failed to apply profile delta uid operation=%s path=%s", patch.op, patch.path
+                    "Failed to apply profile delta user_id operation=%s path=%s",
+                    patch.op,
+                    patch.path,
                 )
 
-        return updated, data
+        return data, accepted
 
-    async def _update_profile(self, uid: str, persona_cache: PersonaCache) -> None:
+    async def _update_profile(self, persona_cache: PersonaCache) -> None:
         if not persona_cache.turns:
             return
 
-        current = (
-            persona_cache.profile_details.model_dump()
-            if persona_cache.profile_details is not None
-            else {}
-        )
+        participant_id = persona_cache.participant.participant_id
+
+        participant = self.session_runtime.get_participant(participant_id=participant_id)
+        if participant is None or participant.user_id is None:
+            return
+
+        persona_cache.participant = participant
 
         delta = await self._aextract_delta(
-            uid=uid,
+            user_id=participant.user_id,
             profile_details_dump=persona_cache.profile_details_dump_value,
             new_turn=PersonaPluginsTemplate.apply_update_template(persona_cache.turns),
         )
 
-        is_updated, details = self._apply_delta(application_now(), current, delta)
-        if is_updated:
-            logger.info(f"[uid: {uid}] User Profile UPDATE success: {details}")
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+
+        latest = self.session_runtime.get_participant(participant_id=participant_id)
+        if latest is None or latest.identity_revision != participant.identity_revision:
+            return
+
+        # The provider may await while profile loading or sensor observations advance.
+        current_details = persona_cache.profile_details
+        current = current_details.model_dump() if current_details is not None else {}
+        pending = persona_cache.detail_operations
+        updated_at = datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC)
+        details, accepted = self._apply_delta(updated_at, current, delta)
+        if accepted:
             persona_cache.profile_details = UserProfileDetails(**details)
-        else:
-            logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
+            operations = {}
+            for patch in accepted:
+                tokens = parse_pointer(patch.path)
+                if len(tokens) == 1 and tokens[0] in UserProfileDetails.model_fields:
+                    changes = operations.setdefault(tokens[0], list(pending.get(tokens[0], [])))
+                    changes.append(
+                        {
+                            "op": patch.op,
+                            "value": patch.value,
+                            "list": self._is_list_field(tokens[0]),
+                            "updated_at": updated_at.isoformat(),
+                            "sequence": len(changes),
+                            "id": uuid4().hex,
+                        }
+                    )
+
+            persona_cache.mark_profile_fields(set(operations), updated_at=updated_at)
+            persona_cache.record_profile_operations(operations)
+            logger.info("Persona profile observations updated participant=%s", participant_id)
 
     """Processor Loop"""
-
-    def _target_uids(self, snapshot: TurnSnapshot) -> tuple[str, ...]:
-        uids = []
-
-        for actor in snapshot.actors:
-            uid = actor.user_id or (
-                actor.entity.resolved_entity_id if actor.entity is not None else None
-            )
-            if uid and uid not in uids:
-                uids.append(uid)
-
-        if uids:
-            return tuple(uids)
-
-        if len(self.session_runtime.participants) == 1 and self.session_runtime.primary_user_id:
-            return (self.session_runtime.primary_user_id,)
-
-        return ()
 
     async def _record_turn(self, snapshot: TurnSnapshot) -> None:
         if snapshot.modality == TurnInputModality.SYSTEM or not (snapshot.text or "").strip():
             return
+        self._turns.append(self._kept(snapshot))
 
-        for uid in self._target_uids(snapshot):
-            if uid not in self.persona.persona_cache:
-                await self.persona.load_profile(uid=uid)
-
-            cache = self.persona.persona_cache.get(uid)
-            if cache is not None:
-                cache.add_turn(snapshot)
+    def _assign_turns(self) -> None:
+        """Each kept Turn to its participants as they stand at the session's end."""
+        for snapshot in self._turns:
+            # A claimed user_id is not a physical speaker; only the inputs' participants count.
+            for entry in self.runtime.participants.of_turn(snapshot):
+                if entry.participant_id is None:
+                    continue
+                if (
+                    self.session_runtime.get_participant(participant_id=entry.participant_id)
+                    is None
+                ):
+                    continue
+                cache = self.persona.cache_for(entry.participant_id)
+                if cache is not None:
+                    cache.add_turn(snapshot)
+        self._turns.clear()
 
     async def _consume_turns(self) -> None:
         stream = self.runtime.turn.events
-
-        while True:
-            try:
-                await stream.wait_for_pending(consumer_id=self.CONSUMER_ID)
-                batch = stream.read_pending(consumer_id=self.CONSUMER_ID, limit=8)
-
-                if batch.has_gap:
-                    logger.warning(
-                        "Persona profiler missed committed turns missed=%s", batch.missed_count
-                    )
-
-                for event in batch.items:
-                    await self._record_turn(event.snapshot)
-
-                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
-
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Persona profiler turn consumer failed")
-                await asyncio.sleep(0.05)
+        try:
+            while await stream.wait_for_pending(consumer_id=self.CONSUMER_ID):
+                await self._drain_turns()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            stream.fail(self.CONSUMER_ID, error)
+            logger.exception("Persona profiler turn consumer failed")
+            raise
 
     async def _drain_turns(self) -> None:
         stream = self.runtime.turn.events
-
         while True:
             batch = stream.read_pending(consumer_id=self.CONSUMER_ID, limit=32)
-
             if batch.has_gap:
-                logger.warning(
-                    "Persona profiler missed committed turns missed=%s", batch.missed_count
+                error = TurnStreamGap(
+                    f"Persona profiler missed {batch.missed_count} committed Turns"
                 )
+                stream.fail(self.CONSUMER_ID, error)
+                raise error
 
             for event in batch.items:
                 await self._record_turn(event.snapshot)
@@ -208,34 +265,49 @@ class ProfilerProcessor(PersonaProcessorBase):
             if not batch.items or batch.remaining_count == 0:
                 return
 
+    def _observe_consumer(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            if self._consumer_task is task:
+                self.runtime.turn.events.fail(
+                    self.CONSUMER_ID, RuntimeError("Persona Turn consumer unexpectedly cancelled")
+                )
+        else:
+            task.exception()
+
     """Runtime operations"""
 
     async def _start(self) -> None:
         self._consumer_task = asyncio.create_task(
             self._consume_turns(), name="persona_profiler_turn_consumer"
         )
+        self._consumer_task.add_done_callback(self._observe_consumer)
         logger.info("Persona Profiler started")
 
     async def _stop(self, *, finalize: bool) -> None:
-        if self._consumer_task is not None:
-            self._consumer_task.cancel()
-            await asyncio.gather(self._consumer_task, return_exceptions=True)
-            self._consumer_task = None
+        consumer, self._consumer_task = self._consumer_task, None
+        if consumer is not None:
+            cancelled = consumer.cancelled() or consumer.cancelling() > 0
+            consumer.cancel()
+            result = (await asyncio.gather(consumer, return_exceptions=True))[0]
+            if finalize and cancelled:
+                raise RuntimeError("Persona Turn consumer unexpectedly cancelled")
+            if finalize and isinstance(result, Exception):
+                raise result
 
         if finalize:
             await self._drain_turns()
+            self._assign_turns()
+        self._turns.clear()
 
         self.runtime.turn.events.clear_consumer(self.CONSUMER_ID)
 
-        if not finalize:
-            logger.info("Persona Profiler stopped without finalization")
-            return
+        logger.info("Persona Profiler stopped finalize=%s", finalize)
 
+    async def finalize_caches(self) -> None:
+        """Each user's profile from all of its session's turns: Persona has merged the caches
+        of each user's participants into one, so each user is extracted once."""
         results = await asyncio.gather(
-            *(
-                self._update_profile(uid, cache)
-                for uid, cache in self.persona.persona_cache.items()
-            ),
+            *(self._update_profile(cache) for cache in self.persona.persona_cache.values()),
             return_exceptions=True,
         )
 
@@ -252,4 +324,4 @@ class ProfilerProcessor(PersonaProcessorBase):
         if errors:
             raise ExceptionGroup("One or more Persona profiles failed to update", errors)
 
-        logger.info("Persona Profiler stopped")
+        logger.info("Persona Profiler updated the session's profiles")

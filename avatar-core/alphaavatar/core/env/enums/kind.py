@@ -23,9 +23,11 @@ class ObservationKind(StrEnum):
     AUDIO_SEGMENT = "audio_segment"
     SPEECH_FRAME = "speech_frame"
     SPEECH_SEGMENT = "speech_segment"
+    SPEECH_CANCELLED = "speech_cancelled"
 
     TRANSCRIPT_DELTA = "transcript_delta"
     TRANSCRIPT_SEGMENT = "transcript_segment"
+    TRANSCRIPT_UNAVAILABLE = "transcript_unavailable"
     TEXT_INPUT = "text_input"
 
     IMAGE_INPUT = "image_input"
@@ -35,5 +37,4 @@ class AnnotationKind(StrEnum):
     FACE_DETECTION = "persona.face_detection"
 
     INTERACTION_ADDRESSING_EVIDENCE = "interaction.addressing_evidence"
-    INTERACTION_ADDRESSING = "interaction.addressing"
     INTERACTION_TURN = "interaction.turn"

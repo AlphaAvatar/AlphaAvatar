@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -21,11 +22,12 @@ from alphaavatar.agents.avatar.provider.enums import ModelRole
 from alphaavatar.agents.avatar.provider.schemas import ModelInput, ModelInputMessage, ModelTextPart
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
-from ...log import logger
 from ...schemas.patch import EnvMemoryDelta
 from .config import EnvironmentProviderConfig
 from .input_builder import EnvMemoryInput
 from .prompt import ENV_DELTA_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 class EnvironmentProvider:

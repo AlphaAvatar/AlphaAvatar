@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import time
 from collections.abc import Coroutine
@@ -23,13 +22,15 @@ from typing import Any
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.tools.schemas import ToolError
-from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.agents.utils.vdb.config import lancedb_directory, vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from ..config import DEFAULT_TIMEOUT, MCPServerConfig
@@ -37,6 +38,7 @@ from ..enums import MCPOp, MCPOutputMode
 from ..log import logger
 from ..mcp_server_remote import MCPServerRemote
 from ..mcp_tool import MCPTool
+from ..namespace import NAMESPACE
 from ..schemas import MCP_TOOL_CATEGORIES, MCP_TOP_K_RANGE
 
 COMPACT_RESULT_MAX_CHARS = 2000
@@ -47,6 +49,8 @@ class LanceDBRunner(InferenceRunner):
     """Serial database work stays in this process; remote sessions own one async loop."""
 
     INFERENCE_METHOD = "alphaavatar.mcp.vdb.lancedb"
+    REQUIRES = (vdb_requirement("lancedb"),)
+    PROVIDERS = vdb_embeddings()
 
     def __init__(self) -> None:
         self._servers: dict[str, dict[str, Any]] = {}
@@ -532,28 +536,30 @@ class LanceDBRunner(InferenceRunner):
     def initialize(self) -> None:
         if self._closed or self._initialized or self._loop_thread is not None:
             raise RuntimeError("MCP runner can only initialize once")
-        config = json.loads(os.getenv("MCP_VDB_CONFIG", "{}"))
-        servers = json.loads(os.getenv("MCP_SERVERS", "{}"))
+
+        options = self.config_for(NAMESPACE)
+        config = options.get("vdb_config", {})
+        servers = options.get("servers", {})
         if not isinstance(servers, dict) or not servers or len(servers) > 64:
             raise ValueError("MCP requires between one and 64 configured servers")
+
         for key, values in servers.items():
             if not isinstance(key, str) or not key.strip():
                 raise ValueError("MCP server keys must be nonempty names")
             self._servers[key] = MCPServerConfig.model_validate(values).model_dump()
+
         self._collection_name = config.get("collection_name")
         if not self._collection_name:
-            raise ValueError("collection_name is required in MCP_VDB_CONFIG")
+            raise ValueError("collection_name is required in tools.mcp.vdb_config")
+
         embedding = config.get("embedding") or {}
         if not embedding.get("provider") or not embedding.get("model"):
             raise ValueError("MCP embedding.provider and embedding.model are required")
+
         vdb_config = {key: value for key, value in config.items() if key != "embedding"}
-        if not vdb_config.get("client_path"):
-            vdb_config["client_path"] = str(
-                WorkspacePaths.from_env()
-                .data.indexes.namespace(AvatarModule.MCP.value)
-                .backend("lancedb")
-                .root
-            )
+        workspace = WorkspacePaths.from_root(self.launch.workspace_root)
+        vdb_config["client_path"] = str(lancedb_directory(vdb_config, workspace, NAMESPACE))
+
         self._client = lancedb.get_client(**vdb_config)
         self._embeddings = create_embedding_model(
             ProviderTaskConfig(
@@ -563,8 +569,14 @@ class LanceDBRunner(InferenceRunner):
                 extra=embedding.get("extra") or {},
             )
         )
-        dimension = len(self._embeddings.embed_query("dimension-probe"))
-        self._ensure_collection(self._collection_name, dimension)
+        dimension = probe_dimension(self._embeddings)
+        # Never vectors of two models in one table: checked against its record first.
+        self._client.claim_space(
+            self._collection_name,
+            EmbeddingSpace.configured(embedding, dimension),
+            setting="tools.mcp.vdb_config.collection_name",
+            ensure=lambda: self._ensure_collection(self._collection_name, dimension),
+        )
         self._loop_thread = AsyncLoopThread(name="mcp-loop")
         try:
             self._submit(self._initialize_mcp(), timeout=DEFAULT_TIMEOUT)

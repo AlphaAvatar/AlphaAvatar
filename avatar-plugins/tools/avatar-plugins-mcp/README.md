@@ -53,10 +53,10 @@ tools:
 ```
 
 Server settings are strictly validated. `streamable_http` is the default;
-select `transport: sse` explicitly for an SSE endpoint. There is no automatic
+select `transport: sse` explicitly for an SSE server. There is no automatic
 transport fallback, reconnect-and-replay, or hidden SDK compatibility path.
-Remote endpoints require HTTPS; loopback HTTP is supported for local development.
-Embedded URL credentials and fragments are rejected. Endpoints and returned tool
+Remote servers require HTTPS; loopback HTTP is supported for local development.
+Embedded URL credentials and fragments are rejected. Servers and returned tool
 content remain deployment-specific external services.
 
 Credentials can use the existing environment-placeholder mechanism, for example:
@@ -66,8 +66,14 @@ headers:
   Authorization: "Bearer <GITHUB_PAT>"
 ```
 
-Provide `GITHUB_PAT` through the environment, never as a committed token. The
-configuration above is a fragment; see [complete examples](../../../examples/README.md).
+Provide `GITHUB_PAT` through the environment, never as a committed token.
+`Bearer ${oc.env:GITHUB_PAT}` reads it too. A `<NAME>` placeholder is a credential wherever a
+server's settings hold it, `${oc.env:NAME}` only in the `Authorization` header: empty or blank,
+it takes the `.env` file's or the stored value, and logs hide it
+([credentials](../../../docs/cli/config.md#credentials)). Anywhere else, such as
+`X-Region: ${oc.env:REGION}`, `${oc.env:NAME}` reads an ordinary variable as the environment
+holds it, empty too, and logs show it. The configuration above is a
+fragment; see [complete examples](../../../examples/README.md).
 Restart Host after changing configured servers, transport settings or credentials.
 
 ## Discovery and refresh
@@ -100,7 +106,8 @@ cancellation is not proof that a remote write did not commit.
 
 `output_mode: raw` preserves complete result content and echoed arguments.
 `compact` omits echoed arguments and truncates individual result text to 2000
-characters with a note. Structured MCP result content is preserved. A successful
+characters with a note. Structured MCP result content is kept in the result text, so
+compact truncates it too. A successful
 empty result is represented as an empty list, not misclassified as a tool failure.
 Server-reported errors remain errors. Peer successes are not discarded merely
 because another operation in the same batch failed.
@@ -113,9 +120,11 @@ A close failure remains a failure; it does not imply successful remote rollback.
 
 ## Authorization and privacy
 
-Registration, discovery and remote annotations do not approve a call. Foreground
-Loop enforces exact-capability policies and its authorizer. `tool_policies: {}`
-does not bypass approval, and the native Host does not supply an approval UI.
+Remote annotations do not approve a call; enabling the plugin grants its capability
+to each Run. With `tool_policies: {}` every MCP call, writes included, runs without a
+second approval. An exact policy can deny the capability with `enabled: false` or
+require `approval_required: true`; the native Host supplies no authorizer, so it is
+then not offered to the model.
 Do not mark the whole MCP capability read-only because one configured tool is read-only.
 
 Tool implementations return outcomes; they receive neither StatusEmitter nor

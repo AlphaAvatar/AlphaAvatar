@@ -14,25 +14,31 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
+import logging
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
-from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 
-from ...log import logger
+from ...namespace import NAMESPACE
 from ...storage.graph import GraphLookup
 from ..base import MemoryProcessor
 from .config import RetrievalConfig
+from .passive import PassiveRecall
 from .schema import RetrievalCapabilityInput, RetrievalOp
 
 if TYPE_CHECKING:
+    from alphaavatar.core.turn.schemas import TurnSnapshot
+
     from ...runtime import MemoryRuntime
+    from ...schemas import MemoryIdentitySnapshot
+    from ...state import MemoryContextState
+
+logger = logging.getLogger(__name__)
 
 RecallObserver = Callable[[Iterable[MemoryItem]], None]
 
@@ -49,7 +55,7 @@ RecallObserver = Callable[[Iterable[MemoryItem]], None]
     input_schema=RetrievalCapabilityInput,
 )
 class RetrievalProcessor(MemoryProcessor):
-    TURN_CONSUMER_ID = "memory.retrieval.turn"
+    TURN_CONSUMER_ID = PassiveRecall.CONSUMER_ID
 
     def __init__(
         self,
@@ -62,19 +68,19 @@ class RetrievalProcessor(MemoryProcessor):
         super().__init__(runtime=runtime, memory=memory)
 
         self._config = config
-        self._search_context = config.search_context
         self._recall_num = config.recall_num
         self._recall_observers = recall_observers
 
-        self._consumer_task: asyncio.Task[None] | None = None
-        self._query_history: dict[str, deque[str]] = {}
+        self._passive = PassiveRecall(
+            runtime=runtime, memory=memory, config=config, notify=self._notify_passive_recall
+        )
 
     @property
     def name(self) -> str:
         return "retrieval"
 
     def _graph_lookup(self) -> GraphLookup:
-        return GraphLookup(self.runtime.workspace.graph.namespace(AvatarModule.MEMORY.value).root)
+        return GraphLookup(self.runtime.workspace.graph.namespace(NAMESPACE).root)
 
     def _resolve_graph_keys(self, node_key: str, max_hops: int) -> list[str]:
         lookup = self._graph_lookup()
@@ -94,6 +100,26 @@ class RetrievalProcessor(MemoryProcessor):
     def _recall_owners(self, owner_refs: list[MemoryOwnerRef]) -> list[MemoryOwnerRef]:
         return self.deduplicate_refs([MemoryOwnerRef.avatar(self.avatar_id), *owner_refs])
 
+    def _recall_context(
+        self, context_id: str | None, snapshot: TurnSnapshot | None
+    ) -> tuple[MemoryContextState, MemoryIdentitySnapshot]:
+        self.memory_runtime.sync_session()
+        if snapshot is not None:
+            context_id = context_id or self.memory_runtime.resolve_context_id(snapshot.context_ids)
+
+        state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
+        if snapshot is not None and (
+            state.context_id not in snapshot.context_ids
+            or (
+                state.get_turn(snapshot.turn_id) is not snapshot
+                and self.runtime.turn.get(snapshot.input_id) is not snapshot
+            )
+        ):
+            raise ValueError("Memory retrieval requires the execution's committed Turn")
+        return state, state.capture_identity(
+            () if snapshot is None else (snapshot,), of_turn=self.runtime.participants.of_turn
+        )
+
     async def _search_text(
         self,
         query: str,
@@ -102,24 +128,32 @@ class RetrievalProcessor(MemoryProcessor):
         memory_type: MemoryType | None = None,
         top_k: int | None = None,
         timeout: float | None = None,
+        snapshot: TurnSnapshot | None = None,
     ) -> list[MemoryItem]:
         query = query.strip()
 
         if not query:
             return []
 
-        state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
+        state, identity = self._recall_context(context_id, snapshot)
+        if not self.memory_runtime.identity_is_current(identity):
+            return []
 
-        owners = self._recall_owners(state.owner_refs)
+        owners = self._recall_owners([] if identity.unattributed else list(identity.owner_refs))
 
         try:
-            return await self.store.recall_by_context(
+            items = await self.store.recall_by_context(
                 context_str=query,
                 owner_refs=owners,
-                context=state.context,
                 memory_type=memory_type,
                 top_k=(top_k if top_k is not None else self._recall_num),
                 timeout=(timeout if timeout is not None else 3.0),
+                participants=identity.participants,
+            )
+            return (
+                self.memory_runtime.visible_items(items, identity=identity)
+                if self.memory_runtime.identity_is_current(identity)
+                else []
             )
 
         except Exception as exc:
@@ -137,10 +171,13 @@ class RetrievalProcessor(MemoryProcessor):
         max_hops: int = 0,
         top_k: int = 50,
         timeout: float | None = None,
+        snapshot: TurnSnapshot | None = None,
     ) -> list[MemoryItem]:
-        state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
+        state, identity = self._recall_context(context_id, snapshot)
+        if not self.memory_runtime.identity_is_current(identity):
+            return []
 
-        owners = self._recall_owners(state.owner_refs)
+        owners = self._recall_owners([] if identity.unattributed else list(identity.owner_refs))
 
         node_keys: list[str] = []
 
@@ -148,15 +185,20 @@ class RetrievalProcessor(MemoryProcessor):
             node_keys = await asyncio.to_thread(self._resolve_graph_keys, node_key, max_hops)
 
         try:
-            return await self.store.recall_by_graph_node(
+            items = await self.store.recall_by_graph_node(
                 owner_refs=owners,
-                context=state.context,
                 node_keys=node_keys,
                 node_query=node_query,
                 memory_type=memory_type,
                 node_type=node_type,
                 top_k=top_k,
                 timeout=(timeout if timeout is not None else 3.0),
+                participants=identity.participants,
+            )
+            return (
+                self.memory_runtime.visible_items(items, identity=identity)
+                if self.memory_runtime.identity_is_current(identity)
+                else []
             )
 
         except Exception as exc:
@@ -165,10 +207,17 @@ class RetrievalProcessor(MemoryProcessor):
 
     """Processor invoke"""
 
-    async def invoke(self, request: RetrievalCapabilityInput) -> str:
+    async def invoke(
+        self, request: RetrievalCapabilityInput, *, input_id: str | None = None
+    ) -> str:
+        if not input_id or (snapshot := self.runtime.turn.get(input_id)) is None:
+            raise ValueError("Memory retrieval requires a committed input_id")
+
         match request.op:
             case RetrievalOp.TEXT_SEARCH:
-                items = await self._search_text(request.query or "", top_k=request.top_k)
+                items = await self._search_text(
+                    request.query or "", top_k=request.top_k, snapshot=snapshot
+                )
             case RetrievalOp.GRAPH_SEARCH:
                 items = await self._search_graph(
                     node_key=request.node_key,
@@ -176,87 +225,18 @@ class RetrievalProcessor(MemoryProcessor):
                     node_type=request.node_type,
                     max_hops=request.max_hops,
                     top_k=request.top_k,
+                    snapshot=snapshot,
                 )
             case _:
                 raise ValueError(f"Unsupported retrieval operation: {request.op}")
 
         return "\n".join(item.render_line() for item in items) or "No relevant memory was found."
 
-    """Processor Loop"""
-
-    def _turn_query(self, snapshot: TurnSnapshot, context_id: str) -> str:
-        text = (snapshot.text or "").strip()
-        if not text:
-            return ""
-
-        history = self._query_history.setdefault(
-            context_id, deque(maxlen=max(1, self._search_context))
-        )
-        history.append(text)
-        return "\n\n".join(f"### user:\n{item}" for item in history)
-
-    async def _process_turn(self, snapshot: TurnSnapshot) -> None:
-        if snapshot.modality == TurnInputModality.SYSTEM:
-            return
-
-        context_id = self.memory_runtime.resolve_context_id(snapshot.context_ids)
-        if context_id is None:
-            logger.warning(
-                "Memory retrieval has no context for turn turn_id=%s context_ids=%s",
-                snapshot.turn_id,
-                snapshot.context_ids,
-            )
-            return
-
-        query = self._turn_query(snapshot, context_id)
-        if not query:
-            return
-
-        items = await self._search_text(query, context_id=context_id, top_k=self._recall_num)
-
-        self._notify_passive_recall(items)
-        self.memory_runtime.apply_items(items)
-
-    async def _consume_loop(self) -> None:
-        stream = self.runtime.turn.events
-
-        while True:
-            try:
-                await stream.wait_for_pending(consumer_id=self.TURN_CONSUMER_ID)
-                batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID, limit=1)
-
-                if batch.has_gap:
-                    logger.warning(
-                        "Memory retrieval missed committed turns missed=%s", batch.missed_count
-                    )
-
-                if not batch.items:
-                    stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
-                    continue
-
-                await self._process_turn(batch.items[0].snapshot)
-                stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
-
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Memory retrieval turn consumer failed")
-                await asyncio.sleep(0.05)
-
     """Runtime operations"""
 
     async def _start(self) -> None:
-        self.runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
-        self._consumer_task = asyncio.create_task(
-            self._consume_loop(), name="memory_retrieval_turn_consumer"
-        )
+        if self._config.enabled:
+            await self._passive.start()
 
     async def _stop(self, *, finalize: bool) -> None:
-        if self._consumer_task is not None:
-            self._consumer_task.cancel()
-            await asyncio.gather(self._consumer_task, return_exceptions=True)
-            self._consumer_task = None
-
-        self.runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
-        self.runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
-        self._query_history.clear()
+        await self._passive.stop()

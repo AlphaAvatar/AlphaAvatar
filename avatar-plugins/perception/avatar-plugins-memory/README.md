@@ -10,7 +10,7 @@ MemoryRuntime
 ├── conversation    Durable conversation extraction and consolidation.
 ├── tool            Useful tool-result memory.
 ├── environment     Perception-driven environment extraction.
-└── MemoryStore     Vector/graph storage and persistence.
+└── MemoryStore     SQLite records, with vector index and Markdown/graph exports.
 ```
 
 Each processor owns its configuration, provider gateway, prompts and lifecycle. MemoryRuntime owns contexts, consumer cursors and store orchestration. It does not require Engine to inject assistant messages directly.
@@ -78,7 +78,7 @@ Text alone does not establish environment evidence. Enabled audio support uses s
 
 Memory records retain text, kind, ownership, scope, context, provenance and graph-related metadata. Supported memory types include Avatar, Conversation, Tools and ENV. Raw SDK objects and media clients are not stored as memory records.
 
-LanceDB and Qdrant adapters provide vector storage. Retrieval owns text/graph lookup and identity-related resolution rather than adding concrete search methods to MemoryBase. Avatar-owned memory and user-owned memory remain separate ownership domains, even when they can be recalled across episodes.
+The SQLite records are authoritative; an outbox feeds their projections: the LanceDB or Qdrant vector index and the Markdown/graph export. A vector index holds one embedding model's vectors: the model it was made with is recorded beside it, and an index recorded for another model, of the same dimension too, is refused at start and, for LanceDB where start opens it, by `alphaavatar setup`, with nothing in it changed; give `vdb_config.collection_name` another name for a separate index. A key, its variable or a server's address is not part of the model. An index made before this was recorded is taken as the configured model only while its vectors, empty too, are of the configured dimension, which cannot verify the model; one of another dimension is refused. Hosts sharing an index record it at once safely: the same model opens it on each, and two models never both do. Retrieval owns text/graph lookup and identity-related resolution rather than adding concrete search methods to MemoryBase. Retrieval reads a memory by its type and owners, never by its scope. Avatar memory is read through the Avatar, so every reader can read it. Conversation, tool and environment memory is read only by its user owners, from any context, even when the Avatar is also an owner. Scope decides the export directory and which memories consolidation may merge. Environment memory belongs to the Avatar and to the session's primary participant, the person who opened the session, whether or not they appear in what is observed. Its scope is its context.
 
 ## Lifecycle
 

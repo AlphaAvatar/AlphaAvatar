@@ -18,11 +18,11 @@ from .speech import (
     SpeechTranscriptionProcessor,
     TranscriptSynchronizationProcessor,
 )
-from .turn_taking import MultimodalTurnTakingProcessor
+from .turn_taking import TurnTakingProcessor
 
 __all__ = [
     "AudioActivityProcessor",
-    "MultimodalTurnTakingProcessor",
+    "TurnTakingProcessor",
     "SemanticAddressingProcessor",
     "SpeechSynthesisProcessor",
     "SpeechTranscriptionProcessor",

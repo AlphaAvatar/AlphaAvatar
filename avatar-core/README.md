@@ -9,9 +9,12 @@ It does not depend on Agents, concrete plugins, model SDKs or LiveKit.
 alphaavatar/core/
 ├── cleanup.py          # Cancellation-safe waiting for owned cleanup.
 ├── lifecycle.py        # Components, phases and ordered lifecycle groups.
+├── time.py             # RuntimeClock and runtime time ranges.
+├── ipc.py              # Private local socket paths.
 ├── log/                # Diagnostic records, producers and error formatting.
 ├── env/                # Input observations, annotations and output envelopes.
 ├── media/              # AlphaAvatar-owned audio, image, video and text payloads.
+├── session/            # Participants, accepted identity bindings and session events.
 ├── perception/         # Source lineage, event streams, windows and timelines.
 ├── turn/               # Committed input snapshots and independent consumers.
 └── output/             # Delivery, canonical records, control and playback facts.
@@ -27,6 +30,7 @@ alphaavatar/core/
 
 | Runtime | Responsibility |
 | --- | --- |
+| `SessionRuntime` | Participants, accepted identity bindings and session events. |
 | `PerceptionRuntime` | Normalized input evidence, source generations, annotations and time-aligned snapshots. |
 | `TurnRuntime` | Committed input snapshots captured against a perception cutoff, with independent consumer cursors. |
 | `OutputRuntime` | Validated output admission, exact interruption, completion and independent record/execution streams. |

@@ -12,21 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
-import os
+import logging
+from time import perf_counter
 from typing import Any
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.agents.utils.vdb.config import lancedb_directory, vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
+from alphaavatar.agents.utils.vdb.space import EmbeddingSpace
+from alphaavatar.agents.workspace import WorkspacePaths
+
+from ...namespace import NAMESPACE
+
+logger = logging.getLogger(__name__)
 
 
 class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.lancedb"
+    REQUIRES = (vdb_requirement("lancedb"),)
+    PROVIDERS = vdb_embeddings()
 
     _REQUIRED_COLUMNS = {
         "id",
@@ -103,6 +112,7 @@ class LanceDBRunner(InferenceRunner):
         doc_kind: str | None = None,
         owner_keys: list[str] | None = None,
         scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]] | None = None,
         memory_type: str | None = None,
         memory_kind: str | None = None,
         node_type: str | None = None,
@@ -122,6 +132,16 @@ class LanceDBRunner(InferenceRunner):
             parts.append(f"array_has_any(owner_keys, {cls._sql_list(owners)})")
         if scopes := cls._as_str_list(scope_keys):
             parts.append(f"scope_key IN {cls._sql_in(scopes)}")
+        if visibility is not None:
+            # What the readers read: each memory type through its kind of owner, any scope.
+            groups = [
+                f"(memory_type IN {cls._sql_in(types)} "
+                f"AND array_has_any(owner_keys, {cls._sql_list(keys)}))"
+                for group in visibility
+                if (types := cls._as_str_list(group.get("memory_types")))
+                and (keys := cls._as_str_list(group.get("owner_keys")))
+            ]
+            parts.append("(" + " OR ".join(groups) + ")" if groups else "false")
         if keys := cls._as_str_list(node_keys):
             parts.append(f"node_key IN {cls._sql_in(keys)}")
         return " AND ".join(parts) if parts else "true"
@@ -286,6 +306,17 @@ class LanceDBRunner(InferenceRunner):
             if (memory_id := str(row.get("memory_id") or "").strip())
         ]
 
+    def _stored(self, where: str) -> bool:
+        """Whether a row these filters select could be a candidate: one with its memory."""
+        rows = (
+            self._memory_table.search()
+            .where(f"({where}) AND memory_id != ''")
+            .select(["memory_id"])
+            .limit(1)
+            .to_list()
+        )
+        return bool(rows)
+
     def _filter_candidates(self, *, where: str, limit: int) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -304,28 +335,58 @@ class LanceDBRunner(InferenceRunner):
         self,
         *,
         context_str: str,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         top_k: int = 10,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> dict[str, Any]:
         out = {"candidates": [], "error": None}
+        started = perf_counter()
+        embedding_wait = vector_wait = 0.0
+        memories, graph = [], []
+        phase, error_type = "embedding", None
+        common = {"visibility": visibility, "memory_type": memory_type}
+        memory_where = self._where(doc_kind="memory_item", **common)
+        graph_where = self._where(doc_kind="graph_node", **common)
         try:
-            vector = self._embeddings.embed_query(context_str)
-            common = {
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
-                "memory_type": memory_type,
-            }
-            memories = self._query_candidates(
-                vector, where=self._where(doc_kind="memory_item", **common), limit=top_k
-            )
-            graph = self._query_candidates(
-                vector, where=self._where(doc_kind="graph_node", **common), limit=top_k
-            )
+            # Nothing these readers read can be recalled: the query, which a remote
+            # model may embed, is not embedded, and the search would have found nothing anyway.
+            if not (self._stored(memory_where) or self._stored(graph_where)):
+                phase = "empty"
+                return out
+            embedding_started = perf_counter()
+            try:
+                vector = self._embeddings.embed_query(context_str)
+            finally:
+                embedding_wait = perf_counter() - embedding_started
+            phase = "vector"
+            vector_started = perf_counter()
+            try:
+                memories = self._query_candidates(vector, where=memory_where, limit=top_k)
+                graph = self._query_candidates(vector, where=graph_where, limit=top_k)
+            finally:
+                vector_wait = perf_counter() - vector_started
             out["candidates"] = self._merge_candidates(memories, graph, limit=top_k)
         except Exception as exc:
+            error_type = type(exc).__name__
             out["error"] = str(exc)
+        finally:
+            logger.debug(
+                "MEMORY VECTOR RECALL request_id=%s turn_id=%s backend=lancedb phase=%s "
+                "embedding_ms=%.1f vector_ms=%.1f total_ms=%.1f memory_candidates=%d "
+                "graph_candidates=%d candidates=%d error_type=%s",
+                request_id,
+                trace_id,
+                phase,
+                embedding_wait * 1000,
+                vector_wait * 1000,
+                (perf_counter() - started) * 1000,
+                len(memories),
+                len(graph),
+                len(out["candidates"]),
+                error_type,
+            )
         return out
 
     def _search_by_graph_node(
@@ -333,8 +394,7 @@ class LanceDBRunner(InferenceRunner):
         *,
         node_keys: list[str] | None = None,
         node_query: str | None = None,
-        owner_keys: list[str] | None = None,
-        scope_keys: list[str] | None = None,
+        visibility: list[dict[str, list[str]]],
         memory_type: str | None = None,
         node_type: str | None = None,
         top_k: int = 50,
@@ -343,8 +403,7 @@ class LanceDBRunner(InferenceRunner):
         try:
             common = {
                 "doc_kind": "graph_node",
-                "owner_keys": owner_keys,
-                "scope_keys": scope_keys,
+                "visibility": visibility,
                 "memory_type": memory_type,
                 "node_type": node_type,
             }
@@ -461,15 +520,15 @@ class LanceDBRunner(InferenceRunner):
     def _get_memory_embeddings(config: dict[str, Any]):
         embedding_config = config.get("embedding")
         if not embedding_config:
-            raise ValueError("`embedding` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding` is required in memory.vdb_config")
 
         provider = embedding_config.get("provider")
         model = embedding_config.get("model")
         extra = embedding_config.get("extra") or {}
         if not provider:
-            raise ValueError("`embedding.provider` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding.provider` is required in memory.vdb_config")
         if not model:
-            raise ValueError("`embedding.model` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding.model` is required in memory.vdb_config")
 
         return create_embedding_model(
             ProviderTaskConfig(
@@ -478,24 +537,25 @@ class LanceDBRunner(InferenceRunner):
         )
 
     def initialize(self) -> None:
-        config = json.loads(os.getenv("MEMORY_VDB_CONFIG", "{}"))
+        config = self.config_for(NAMESPACE)
         self._collection_name = config.get("collection_name")
         if not self._collection_name:
-            raise ValueError("collection_name is required in MEMORY_VDB_CONFIG")
+            raise ValueError("collection_name is required in memory.vdb_config")
 
         vdb_config = self._get_vdb_config(config)
-        if not vdb_config.get("client_path"):
-            vdb_config["client_path"] = str(
-                WorkspacePaths.from_env()
-                .data.indexes.namespace(AvatarModule.MEMORY.value)
-                .backend("lancedb")
-                .root
-            )
+        workspace = WorkspacePaths.from_root(self.launch.workspace_root)
+        vdb_config["client_path"] = str(lancedb_directory(vdb_config, workspace, NAMESPACE))
 
         self._client = lancedb.get_client(**vdb_config)
         self._embeddings = self._get_memory_embeddings(config)
-        embedding_dim = len(self._embeddings.embed_query("dimension-probe"))
-        self._ensure_collection(self._collection_name, embedding_dim)
+        embedding_dim = probe_dimension(self._embeddings)
+        # Never vectors of two models in one table: checked against its record first.
+        self._client.claim_space(
+            self._collection_name,
+            EmbeddingSpace.configured(config.get("embedding") or {}, embedding_dim),
+            setting="memory.vdb_config.collection_name",
+            ensure=lambda: self._ensure_collection(self._collection_name, embedding_dim),
+        )
         self._memory_table = self._client.open_table(self._collection_name)
         self._validate_collection_schema()
 

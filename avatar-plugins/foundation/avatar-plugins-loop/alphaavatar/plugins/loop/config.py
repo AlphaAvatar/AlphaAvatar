@@ -16,8 +16,11 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.avatar.loop.schemas.request import QueryDifficulty
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig, ProviderTraceConfig
 from alphaavatar.agents.avatar.provider.schemas.request import ReasoningEffort
+from alphaavatar.agents.configs.plugins.foundation.provider_config import (
+    ProviderTaskConfig,
+    ProviderTraceConfig,
+)
 
 
 class ToolPolicy(BaseModel):

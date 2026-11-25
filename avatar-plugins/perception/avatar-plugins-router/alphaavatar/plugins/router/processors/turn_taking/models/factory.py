@@ -16,13 +16,18 @@ from __future__ import annotations
 from alphaavatar.agents.router.models import TurnTakingModelBase
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 
+from ..config import TurnTakingModelConfig
 from .smart_turn_v3 import SmartTurnV3Model
 
 
 def create_turn_taking_model(
-    name: str, *, inference_executor: InferenceExecutor
+    config: TurnTakingModelConfig, *, inference_executor: InferenceExecutor
 ) -> TurnTakingModelBase:
-    if name == "smart_turn_v3":
-        return SmartTurnV3Model(inference_executor=inference_executor)
+    if config.name == "smart_turn_v3":
+        return SmartTurnV3Model(
+            inference_executor=inference_executor,
+            incomplete_threshold=config.incomplete_threshold,
+            complete_threshold=config.complete_threshold,
+        )
 
-    raise ValueError(f"Unsupported Turn-Taking model: {name!r}")
+    raise ValueError(f"Unsupported Turn-Taking model: {config.name!r}")

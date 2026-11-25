@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .decorator import avatar_capability
-from .enum import AvatarCapabilityName
 from .registry import AvatarCapabilityRegistry
 from .result import CapabilityResult
-from .schema import AvatarCapability
 
-__all__ = [
-    "AvatarCapability",
-    "AvatarCapabilityName",
-    "AvatarCapabilityRegistry",
-    "avatar_capability",
-    "CapabilityResult",
-]
+__all__ = ["AvatarCapabilityRegistry", "avatar_capability", "CapabilityResult"]

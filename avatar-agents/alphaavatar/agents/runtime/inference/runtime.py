@@ -18,19 +18,23 @@ import logging
 import multiprocessing as mp
 import os
 import shutil
-import tempfile
 import time
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import replace
 from multiprocessing.context import BaseContext
+from typing import TYPE_CHECKING
 
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.ipc import private_socket_path
 
+from .bootstrap import check_inference_config
+from .pool import RunnerPool
 from .process import RunnerProcess
 from .protocol import (
     CLOSE,
     CONNECT,
-    INFERENCE_ENDPOINT_ENV,
+    INFERENCE_SOCKET_ENV,
     REQUEST,
     RESULT,
     RESULT_NONE,
@@ -43,29 +47,34 @@ from .protocol import (
     validate_method,
     write_frame,
 )
-from .runner import InferenceRunner
+from .runner import InferenceRunner, RunnerLaunch
 from .schemas import InferenceRunnerStatus
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs.runtime_config import InferenceConfig
 
 logger = logging.getLogger(__name__)
 
 
 class InferenceRuntime:
-    """Own one local endpoint and a bounded set of serial, independently spawned runners."""
+    """Own one local socket and, per method, a bounded pool of serial spawned runners."""
 
     def __init__(
         self,
         runners: dict[str, type[InferenceRunner]],
         *,
         mp_ctx: BaseContext | None = None,
-        initialize_timeout: float = 300,
-        request_timeout: float = 30,
-        close_timeout: float = 5,
+        launch: RunnerLaunch | None = None,
+        config: InferenceConfig | None = None,
         max_clients: int = 256,
-        max_pending_per_runner: int = 64,
         handshake_timeout: float = 10,
-        restart_limit: int = 2,
-        restart_window_seconds: float = 300,
     ) -> None:
+        if config is None:
+            # The Host passes the accepted runtime.inference; defaults serve direct use.
+            from alphaavatar.agents.configs.runtime_config import InferenceConfig
+
+            config = InferenceConfig()
+        self._launch, self._config = launch, config
         self._runner_classes = dict(runners)
         for method, runner in self._runner_classes.items():
             validate_method(method)
@@ -73,35 +82,33 @@ class InferenceRuntime:
                 raise TypeError("Inference plans require InferenceRunner classes")
             if runner.INFERENCE_METHOD != method:
                 raise ValueError("Inference plan method does not match its runner")
+        check_inference_config(self._runner_classes, config)
 
         self._mp_ctx = mp_ctx or mp.get_context("spawn")
         if self._mp_ctx.get_start_method() == "fork":
             raise ValueError("Inference processes require spawn or forkserver, not fork")
 
-        self._initialize_timeout = positive_timeout(initialize_timeout, "initialize_timeout")
-        self._request_timeout = positive_timeout(request_timeout, "request_timeout")
-        self._close_timeout = positive_timeout(close_timeout, "close_timeout")
         self._handshake_timeout = positive_timeout(handshake_timeout, "handshake_timeout")
         self._max_clients = positive_limit(max_clients, "max_clients")
-        self._max_pending = positive_limit(max_pending_per_runner, "max_pending_per_runner")
-        self._restart_limit = positive_limit(restart_limit, "restart_limit")
-        self._restart_window = positive_timeout(restart_window_seconds, "restart_window_seconds")
         self._restart_history: dict[str, deque[float]] = {
             method: deque() for method in self._runner_classes
         }
         self._recovery_lock = asyncio.Lock()
-        self._runners: dict[str, RunnerProcess] = {}
+        self._pools = {
+            method: RunnerPool(method, config.workers(method), max_pending=config.max_pending)
+            for method in self._runner_classes
+        }
         self._startup = {
             method: InferenceRunnerStatus(method=method) for method in self._runner_classes
         }
         self._startup_started: dict[str, float] = {}
         self._server: asyncio.Server | None = None
-        self._endpoint: str | None = None
+        self._socket_path: str | None = None
         self._socket_dir: str | None = None
         self._client_tasks: set[asyncio.Task[None]] = set()
         self._client_writers: set[asyncio.StreamWriter] = set()
         self._start_task: asyncio.Task[None] | None = None
-        self._directory_task: asyncio.Task[str] | None = None
+        self._directory_task: asyncio.Task[tuple[str, str]] | None = None
         self._listen_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
         self._started = False
@@ -112,45 +119,85 @@ class InferenceRuntime:
         return tuple(self._runner_classes)
 
     @property
-    def endpoint(self) -> str:
-        if self._endpoint is None or not self._started or self._close_task is not None:
+    def socket_path(self) -> str:
+        if self._socket_path is None or not self._started or self._close_task is not None:
             raise RuntimeError("Inference runtime is not ready")
-        return self._endpoint
+        return self._socket_path
 
     @property
-    def is_alive(self) -> bool:
+    def _serving(self) -> bool:
+        # Admission is per method; one failed runner must not refuse its healthy peers.
         return bool(
             self._started
             and self._close_task is None
             and self._server is not None
             and self._server.is_serving()
-            and all(runner.is_alive for runner in self._runners.values())
+        )
+
+    @property
+    def is_alive(self) -> bool:
+        """Overall health for supervision and recovery, not request admission."""
+        return self._serving and all(
+            pool.ready_workers == len(pool.slots) for pool in self._pools.values()
         )
 
     def snapshot(self) -> tuple[InferenceRunnerStatus, ...]:
-        """Read startup facts and current readiness without inspecting model or request data."""
+        """Read startup facts, readiness and counters without model or request data."""
         now = time.monotonic()
         views = []
         for method, status in self._startup.items():
-            runner = self._runners.get(method)
-            ready = self._close_task is None and runner is not None and runner.is_alive
+            pool = self._pools[method]
+            ready = 0 if self._close_task is not None else pool.ready_workers
             elapsed = status.startup_elapsed_seconds
             if status.startup_state == "initializing":
                 elapsed = max(0.0, now - self._startup_started[method])
-            views.append(replace(status, ready=ready, startup_elapsed_seconds=elapsed))
+            views.append(
+                replace(
+                    status,
+                    ready=ready == len(pool.slots),
+                    startup_elapsed_seconds=elapsed,
+                    workers=len(pool.slots),
+                    ready_workers=ready,
+                    executing=pool.executing,
+                    waiting=pool.waiting,
+                    rejected=pool.rejected,
+                    queue_timeouts=pool.queue_timeouts,
+                    execution_timeouts=pool.execution_timeouts,
+                    restarts=pool.restarts,
+                )
+            )
         return tuple(views)
 
-    async def _initialize_runner(self, method: str, runner: RunnerProcess, index: int) -> None:
+    def _process(self, method: str) -> RunnerProcess:
+        config = self._config
+        return RunnerProcess(
+            self._runner_classes[method],
+            mp_ctx=self._mp_ctx,
+            initialize_timeout=config.initialize_timeout,
+            request_timeout=config.request_timeout,
+            close_timeout=config.close_timeout,
+            max_pending=1,  # The pool queues; a worker never holds a second request.
+            launch=self._launch,
+            on_settled=self._pools[method].wake,
+        )
+
+    async def _initialize_runner(self, method: str, slots: Sequence[int], index: int) -> None:
+        pool = self._pools[method]
         started = self._startup_started[method] = time.monotonic()
         self._startup[method] = InferenceRunnerStatus(method=method, startup_state="initializing")
         logger.info(
-            "Inference runner initializing method=%r progress=%d/%d",
+            "Inference runner initializing method=%r workers=%d/%d progress=%d/%d",
             method,
+            len(slots),
+            len(pool.slots),
             index,
             len(self._runner_classes),
         )
         try:
-            await runner.start()
+            for slot in slots:
+                # Own partial initialization before the first await; unready workers get no work.
+                worker = pool.slots[slot] = self._process(method)
+                await worker.start()
         except BaseException as error:
             cancelled = isinstance(error, asyncio.CancelledError)
             elapsed = time.monotonic() - started
@@ -172,6 +219,7 @@ class InferenceRuntime:
         self._startup[method] = InferenceRunnerStatus(
             method=method, startup_state="ready", startup_elapsed_seconds=time.monotonic() - started
         )
+        pool.wake()
         logger.info(
             "Inference runner ready method=%r elapsed=%.3fs progress=%d/%d",
             method,
@@ -204,39 +252,29 @@ class InferenceRuntime:
 
     async def _listen(self) -> None:
         self._server = await asyncio.start_unix_server(
-            self._accept_client, path=self._endpoint, start_serving=False
+            self._accept_client, path=self._socket_path, start_serving=False
         )
 
     async def _start(self) -> None:
-        if os.environ.get(INFERENCE_ENDPOINT_ENV):
-            raise RuntimeError("An inference endpoint is already configured in this process")
+        if os.environ.get(INFERENCE_SOCKET_ENV):
+            raise RuntimeError("An inference socket is already configured in this process")
 
         self._directory_task = asyncio.create_task(
-            asyncio.to_thread(tempfile.mkdtemp, prefix="alphaavatar-inference-")
+            asyncio.to_thread(private_socket_path, "alphaavatar-inference-", "runtime.sock")
         )
         self._directory_task.add_done_callback(self._observe)
-        self._socket_dir = await asyncio.shield(self._directory_task)
-        self._endpoint = f"{self._socket_dir}/runtime.sock"
+        self._socket_dir, self._socket_path = await asyncio.shield(self._directory_task)
         self._listen_task = asyncio.create_task(self._listen())
         self._listen_task.add_done_callback(self._observe)
         await asyncio.shield(self._listen_task)
 
         # Export before the first forkserver starts so job processes inherit the final path.
-        if os.environ.get(INFERENCE_ENDPOINT_ENV):
-            raise RuntimeError("Another inference runtime acquired the process endpoint")
+        if os.environ.get(INFERENCE_SOCKET_ENV):
+            raise RuntimeError("Another inference runtime acquired the process inference socket")
 
-        os.environ[INFERENCE_ENDPOINT_ENV] = self._endpoint
-        for index, (method, runner_cls) in enumerate(self._runner_classes.items(), start=1):
-            runner = RunnerProcess(
-                runner_cls,
-                mp_ctx=self._mp_ctx,
-                initialize_timeout=self._initialize_timeout,
-                request_timeout=self._request_timeout,
-                close_timeout=self._close_timeout,
-                max_pending=self._max_pending,
-            )
-            self._runners[method] = runner  # Own partial initialization before the first await.
-            await self._initialize_runner(method, runner, index)
+        os.environ[INFERENCE_SOCKET_ENV] = self._socket_path
+        for index, (method, pool) in enumerate(self._pools.items(), start=1):
+            await self._initialize_runner(method, range(len(pool.slots)), index)
 
         if self._close_task is not None:
             raise RuntimeError("Inference runtime closed during initialization")
@@ -263,7 +301,7 @@ class InferenceRuntime:
             raise
 
     def _accept_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if not self.is_alive or len(self._client_tasks) >= self._max_clients:
+        if not self._serving or len(self._client_tasks) >= self._max_clients:
             writer.transport.abort()
             return
 
@@ -282,9 +320,26 @@ class InferenceRuntime:
         elif (error := task.exception()) is not None:
             self._client_error = self._client_error or error
 
+    async def _respond(self, method: str, data: bytes) -> bytes:
+        config = self._config
+        try:
+            # The pool resolves workers per request: a retired process never serves again.
+            result = await self._pools[method].run(
+                data, queue_timeout=config.queue_timeout, timeout=config.request_timeout
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            # Results are never retried. The caller learns failure, not a guessed outcome.
+            return RUN_ERROR + str(error).encode("utf-8", errors="replace")[-16384:]
+        return RESULT_NONE if result is None else RESULT + result
+
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        config = self._config
+        reading: asyncio.Task[bytes] | None = None
+        work: asyncio.Task[bytes] | None = None
         try:
             async with asyncio.timeout(self._handshake_timeout):
                 message = await read_frame(reader)
@@ -298,108 +353,119 @@ class InferenceRuntime:
                 await write_frame(
                     writer,
                     service_ready(
-                        queue=self._request_timeout,
-                        execution=self._request_timeout,
+                        queue=config.queue_timeout,
+                        execution=config.request_timeout,
                         # Socket close, up to three joins, then the bounded response write.
-                        settlement=4 * self._close_timeout + self._request_timeout,
+                        settlement=4 * config.close_timeout + config.request_timeout,
                     ),
                 )
+            reading = asyncio.create_task(read_frame(reader))
             while self._close_task is None:
-                message = await read_frame(reader)
+                message = await reading
                 if message == CLOSE:
                     return
                 if message[:1] != REQUEST:
                     raise ValueError("Invalid inference request")
-                try:
-                    # Resolve on every request. A session connection may survive
-                    # a failed runner and must never keep the retired process.
-                    runner = self._runners.get(method)
-                    if runner is None or not runner.is_alive:
-                        raise RuntimeError("Inference runner temporarily unavailable")
-                    result = await runner.run(message[1:])
-                    response = RESULT_NONE if result is None else RESULT + result
-                except asyncio.CancelledError:
-                    raise
-                except Exception as error:
-                    # Results are never retried. The caller learns failure, not a guessed outcome.
-                    response = RUN_ERROR + str(error).encode("utf-8", errors="replace")[-16384:]
-                async with asyncio.timeout(self._request_timeout):
-                    await write_frame(writer, response)
+                # A live client sends nothing before its response, so a read that ends
+                # first means it left: withdraw a queued request instead of running it.
+                reading = asyncio.create_task(read_frame(reader))
+                work = asyncio.create_task(self._respond(method, message[1:]))
+                await asyncio.wait((work, reading), return_when=asyncio.FIRST_COMPLETED)
+                if not work.done():
+                    # A dispatched request still settles on its worker; nobody reads it.
+                    return
+                async with asyncio.timeout(config.request_timeout):
+                    await write_frame(writer, work.result())
         except (asyncio.IncompleteReadError, ConnectionError, OSError, ValueError, TimeoutError):
             pass
         finally:
+            tasks = tuple(task for task in (reading, work) if task is not None)
+            for task in tasks:
+                task.cancel()
             try:
-                await close_writer(writer, self._close_timeout)
+                await asyncio.gather(*tasks, return_exceptions=True)
+                await close_writer(writer, config.close_timeout)
             finally:
                 self._client_writers.discard(writer)
 
     async def do_inference(
         self, method: str, data: bytes, *, timeout: float | None = None
     ) -> bytes | None:
-        if not self.is_alive:
+        if not self._serving:
             raise RuntimeError("Inference runtime is not ready")
-        runner = self._runners.get(method)
-        if runner is None:
+        if method not in self._runner_classes:
             raise ValueError(f"Inference runner {method!r} is not registered")
-        return await runner.run(data, timeout=timeout)
+        config = self._config
+        if timeout is not None:
+            # One explicit budget bounds the wait for a worker and the execution separately.
+            timeout = positive_timeout(timeout, "request timeout")
+        return await self._pools[method].run(
+            data,
+            queue_timeout=timeout or config.queue_timeout,
+            timeout=timeout or config.request_timeout,
+        )
 
     async def recover_failed_runners(self) -> bool:
-        """Rebuild isolated failed processes; never replay an attempted request.
+        """Rebuild failed workers one at a time; never replay an attempted request.
 
         A caller owns the policy for failing the Host if safe reclamation or
-        a bounded restart is unsuccessful. Only ready replacements are exposed.
+        a bounded restart is unsuccessful. Only ready replacements are exposed,
+        and healthy workers of the same method keep serving meanwhile. The
+        restart budget is per method, shared by its workers. Once close
+        begins, no worker starts and an interrupted recovery returns False.
         """
+        config = self._config
         async with self._recovery_lock:
             if self._close_task is not None or not self._started:
                 return False
-            for index, (method, runner_cls) in enumerate(self._runner_classes.items(), start=1):
-                previous = self._runners.get(method)
-                if previous is not None and previous.is_alive:
-                    continue
-                now = time.monotonic()
-                history = self._restart_history[method]
-                while history and now - history[0] >= self._restart_window:
-                    history.popleft()
-                if len(history) >= self._restart_limit:
-                    logger.error(
-                        "Inference runner restart limit reached method=%s attempts=%d "
-                        "window_seconds=%.1f",
-                        method,
-                        len(history),
-                        self._restart_window,
-                    )
-                    return False
+            for index, (method, pool) in enumerate(self._pools.items(), start=1):
+                for slot, previous in enumerate(pool.slots):
+                    if previous is not None and previous.is_alive:
+                        continue
+                    now = time.monotonic()
+                    history = self._restart_history[method]
+                    while history and now - history[0] >= config.restart_window_seconds:
+                        history.popleft()
+                    if len(history) >= config.restart_limit:
+                        logger.error(
+                            "Inference runner restart limit reached method=%s attempts=%d "
+                            "window_seconds=%.1f",
+                            method,
+                            len(history),
+                            config.restart_window_seconds,
+                        )
+                        return False
 
-                logger.warning(
-                    "Inference runner recovery starting method=%s pid=%s exitcode=%s attempt=%d/%d",
-                    method,
-                    previous.pid if previous is not None else None,
-                    previous.exitcode if previous is not None else None,
-                    len(history) + 1,
-                    self._restart_limit,
-                )
-                try:
-                    if previous is not None:
-                        # Never start a duplicate while the old process may survive.
-                        await self._close_runner(method, previous)
-                        self._runners.pop(method, None)
-                    history.append(now)
-                    replacement = RunnerProcess(
-                        runner_cls,
-                        mp_ctx=self._mp_ctx,
-                        initialize_timeout=self._initialize_timeout,
-                        request_timeout=self._request_timeout,
-                        close_timeout=self._close_timeout,
-                        max_pending=self._max_pending,
+                    logger.warning(
+                        "Inference runner recovery starting method=%s worker=%d pid=%s "
+                        "exitcode=%s attempt=%d/%d",
+                        method,
+                        slot,
+                        previous.pid if previous is not None else None,
+                        previous.exitcode if previous is not None else None,
+                        len(history) + 1,
+                        config.restart_limit,
                     )
-                    self._runners[method] = replacement
-                    await self._initialize_runner(method, replacement, index)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("Inference runner recovery failed method=%s", method)
-                    return False
-                logger.info("Inference runner recovered method=%s", method)
+                    try:
+                        if previous is not None:
+                            # Never start a duplicate while the old process may survive.
+                            await self._close_runner(method, previous)
+                            pool.slots[slot] = None
+                        if self._close_task is not None:
+                            # Close reclaims the workers it sees; start none after it began.
+                            return False
+                        history.append(now)
+                        pool.restarts += 1
+                        await self._initialize_runner(method, (slot,), index)
+                    except asyncio.CancelledError:
+                        # Close interrupted the replacement's start; the caller was not cancelled.
+                        if self._close_task is None or asyncio.current_task().cancelling():
+                            raise
+                        return False
+                    except Exception:
+                        logger.exception("Inference runner recovery failed method=%s", method)
+                        return False
+                    logger.info("Inference runner recovered method=%s worker=%d", method, slot)
             return self.is_alive
 
     async def _close(self) -> None:
@@ -410,8 +476,8 @@ class InferenceRuntime:
             await asyncio.gather(self._start_task, return_exceptions=True)
         if self._directory_task is not None:
             results = await asyncio.gather(self._directory_task, return_exceptions=True)
-            if isinstance(results[0], str):
-                self._socket_dir = results[0]
+            if isinstance(results[0], tuple):
+                self._socket_dir = results[0][0]
         if self._listen_task is not None:
             await asyncio.gather(self._listen_task, return_exceptions=True)
         errors: list[Exception] = []
@@ -424,20 +490,30 @@ class InferenceRuntime:
             task.cancel()
         results = await asyncio.gather(*tasks, return_exceptions=True)
         errors.extend(result for result in results if isinstance(result, Exception))
-        runners = tuple(reversed(tuple(self._runners.items())))
+        runners = tuple(
+            (method, slot, worker)
+            for method, pool in reversed(self._pools.items())
+            for slot, worker in enumerate(pool.slots)
+            if worker is not None
+        )
         results = await asyncio.gather(
-            *(self._close_runner(method, runner) for method, runner in runners),
+            *(self._close_runner(method, worker) for method, _, worker in runners),
             return_exceptions=True,
         )
-        for (method, _), result in zip(runners, results, strict=True):
+        for (method, slot, worker), result in zip(runners, results, strict=True):
             if result is None:
-                self._runners.pop(method, None)
+                slots = self._pools[method].slots
+                if slots[slot] is worker:  # Clear only the worker this close reclaimed.
+                    slots[slot] = None
             elif isinstance(result, asyncio.CancelledError):
                 errors.append(RuntimeError("Inference process cleanup cancelled unexpectedly"))
             elif isinstance(result, Exception):
                 errors.append(result)
             elif isinstance(result, BaseException):
                 raise result
+        # Recovery starts nothing once closing; its interrupted start ends it. Wait for that.
+        async with self._recovery_lock:
+            pass
         if self._server is not None:
             try:
                 await self._server.wait_closed()
@@ -448,8 +524,11 @@ class InferenceRuntime:
             errors.append(self._client_error)
         self._client_tasks.clear()
         self._client_writers.clear()
-        if self._endpoint is not None and os.environ.get(INFERENCE_ENDPOINT_ENV) == self._endpoint:
-            os.environ.pop(INFERENCE_ENDPOINT_ENV, None)
+        if (
+            self._socket_path is not None
+            and os.environ.get(INFERENCE_SOCKET_ENV) == self._socket_path
+        ):
+            os.environ.pop(INFERENCE_SOCKET_ENV, None)
         if self._socket_dir is not None:
             try:
                 await asyncio.to_thread(shutil.rmtree, self._socket_dir)
@@ -457,7 +536,7 @@ class InferenceRuntime:
                 pass
             except Exception as error:
                 errors.append(error)
-        self._socket_dir = self._endpoint = None
+        self._socket_dir = self._socket_path = None
         if errors:
             raise ExceptionGroup("Inference runtime shutdown failed", errors)
 

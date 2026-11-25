@@ -40,7 +40,7 @@ _END_EVENTS = object()
 @dataclass(slots=True, frozen=True)
 class SileroVADOptions:
     min_speech_duration: float = 0.05
-    min_silence_duration: float = 0.55
+    min_silence_duration: float = 0.3
     activation_threshold: float = 0.5
     deactivation_threshold: float = 0.35
     smoothing_alpha: float = 0.35
@@ -54,7 +54,7 @@ class SileroVAD(VADBase):
         self,
         *,
         min_speech_duration: float = 0.05,
-        min_silence_duration: float = 0.55,
+        min_silence_duration: float = 0.3,
         activation_threshold: float = 0.5,
         deactivation_threshold: float | None = None,
         smoothing_alpha: float = 0.35,
@@ -105,6 +105,10 @@ class SileroVAD(VADBase):
     @property
     def update_interval(self) -> float:
         return SILERO_MODEL_CONFIG.update_interval
+
+    @property
+    def min_silence_duration(self) -> float:
+        return self._options.min_silence_duration
 
     def stream(self) -> VADStreamBase:
         return SileroVADStream(options=self._options, inference_executor=self._inference_executor)

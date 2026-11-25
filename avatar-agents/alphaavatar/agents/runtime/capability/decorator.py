@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .schema import AvatarCapability
+from .schemas import AvatarCapability
 
 
 def validate_handler(handler: Any, *, bound: bool = True) -> None:
@@ -26,8 +26,15 @@ def validate_handler(handler: Any, *, bound: bool = True) -> None:
         raise TypeError("Callable capabilities require a concrete async invoke handler")
     parameters = tuple(inspect.signature(handler).parameters.values())
     positional = {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
-    if len(parameters) != (1 if bound else 2) or any(p.kind not in positional for p in parameters):
-        raise TypeError("Expected async invoke(self, request), or an async handler(request)")
+    count = 1 if bound else 2
+    if (
+        len(parameters) != count + 1
+        or any(p.kind not in positional for p in parameters[:count])
+        or parameters[-1].name != "input_id"
+        or parameters[-1].kind is not inspect.Parameter.KEYWORD_ONLY
+        or parameters[-1].default is not None
+    ):
+        raise TypeError("Expected async invoke(self, request, *, input_id=None)")
 
 
 def avatar_capability(

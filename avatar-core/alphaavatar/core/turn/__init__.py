@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .runtime import TurnRuntime
-from .schema import TurnEntityRef, TurnEvent, TurnInputModality, TurnSnapshot
-from .stream import TurnStream, TurnStreamRead
+from .stream import TurnStream, TurnStreamGap, TurnStreamRead
 
-__all__ = [
-    "TurnEntityRef",
-    "TurnEvent",
-    "TurnInputModality",
-    "TurnSnapshot",
-    "TurnStream",
-    "TurnStreamRead",
-    "TurnRuntime",
-]
+__all__ = ["TurnStream", "TurnStreamGap", "TurnStreamRead", "TurnRuntime"]

@@ -15,45 +15,44 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Hashable
 from dataclasses import replace
-from typing import TypeVar
 
-from alphaavatar.agents.router.enums import TurnTakingAction
+from alphaavatar.agents.router.enums import AssessmentLabel, InteractionEntityKind, TurnTakingAction
 from alphaavatar.agents.router.models import TurnTakingModelBase
 from alphaavatar.agents.router.schemas import (
-    InteractionAddressingEvidence,
+    TurnTakingAssessment,
     TurnTakingDecision,
     TurnTakingEvidence,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSegmentRef
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.perception.schemas import PerceptionEvent
+from alphaavatar.core.turn.schemas import TurnNotice, TurnSnapshot
 
+from .addressing import TurnAddressing
+from .assessment import AssessmentWork
+from .config import TurnTakingConfig
 from .evidence import TurnEvidenceBuilder
 from .fusion import AddressingFusion
 from .policy import TurnTakingPolicy, TurnTakingPolicyResult
-from .schemas.state import AddressingEvidenceRecord, SpeakerKey, TurnCandidate
+from .schemas.state import AddressingEvidenceRecord, InputWindow, TranscriptWait
 
 logger = logging.getLogger(__name__)
 
-_Key = TypeVar("_Key", bound=Hashable)
-
 
 class TurnTakingCoordinator:
+    """Decide a temporal input window; participant identity belongs to perception consumers."""
+
     SOURCE = "router.turn_taking"
 
+    _MAX_RETIRED = 256
     _MAX_ORPHANS = 64
-    _MAX_RETIRED_SEGMENTS = 256
-    _MAX_ADDRESSING_RECORDS_PER_TARGET = 8
-    _TERMINAL_ACTIONS = {
-        TurnTakingAction.COMMIT,
-        TurnTakingAction.CANCEL,
-        TurnTakingAction.PASSIVE,
-        TurnTakingAction.PROACTIVE_CHECK,
-    }
+
+    _TERMINAL = frozenset(
+        {TurnTakingAction.CANCEL, TurnTakingAction.PASSIVE, TurnTakingAction.PROACTIVE_CHECK}
+    )
 
     def __init__(
         self,
@@ -62,754 +61,726 @@ class TurnTakingCoordinator:
         model: TurnTakingModelBase,
         policy: TurnTakingPolicy,
         fusion: AddressingFusion,
-        addressing_wait_sec: float,
-        transcript_wait_sec: float,
-        max_hold_sec: float,
-        unsegmented_alignment_sec: float,
+        config: TurnTakingConfig,
+        transcript_timeout_notice_code: str | None = None,
         required_addressing_sources: tuple[str, ...] = (),
     ) -> None:
         self._runtime = runtime
         self._model = model
         self._policy = policy
-        self._fusion = fusion
+        self._config = config
+        self._notice_code = transcript_timeout_notice_code
+
+        self._addressing = TurnAddressing(
+            runtime=runtime,
+            fusion=fusion,
+            alignment_sec=config.unsegmented_alignment_sec,
+            required_sources=required_addressing_sources,
+        )
         self._builder = TurnEvidenceBuilder(runtime)
+        self._work = AssessmentWork(runtime)
 
-        self._addressing_wait_sec = addressing_wait_sec
-        self._transcript_wait_sec = transcript_wait_sec
-        self._max_hold_sec = max_hold_sec
-        self._unsegmented_alignment_ns = int(unsegmented_alignment_sec * 1_000_000_000)
-        self._required_addressing_sources = frozenset(required_addressing_sources)
+        self._current: InputWindow | None = None
+        self._sealed: dict[str, InputWindow] = {}
+        self._segments: dict[PerceptionSegmentRef, InputWindow] = {}
+        self._retired: dict[PerceptionSegmentRef, None] = {}
+        self._cancelled: dict[PerceptionSourceRef, None] = {}
+        self._orphans: dict[PerceptionSegmentRef, EnvObservation] = {}
+        self._committed_start = 0
 
-        self._candidates: dict[SpeakerKey, TurnCandidate] = {}
-        self._segment_owners: dict[PerceptionSegmentRef, SpeakerKey] = {}
-        self._retired_segments: dict[PerceptionSegmentRef, None] = {}
-        self._orphan_transcripts: dict[PerceptionSegmentRef, EnvObservation] = {}
-        self._orphan_addressing_by_observation: dict[str, list[AddressingEvidenceRecord]] = {}
-        self._orphan_addressing_by_segment: dict[
-            PerceptionSegmentRef, list[AddressingEvidenceRecord]
-        ] = {}
-        self._orphan_unsegmented_addressing: dict[str, AddressingEvidenceRecord] = {}
-
-        self._assessment_tasks: dict[SpeakerKey, asyncio.Task[None]] = {}
-        self._assessment_workers: set[asyncio.Task[None]] = set()
-
-    @staticmethod
-    def _speaker_matches(candidate: TurnCandidate, evidence: InteractionAddressingEvidence) -> bool:
-        candidate_entity = candidate.speaker.entity
-        evidence_entity = evidence.speaker.entity
-
-        if (
-            candidate_entity is not None
-            and evidence_entity is not None
-            and candidate_entity.perception_entity_id != evidence_entity.perception_entity_id
-        ):
-            return False
-
-        candidate_participant = candidate.speaker.transport_participant_id
-        evidence_participant = evidence.speaker.transport_participant_id
-        return not (
-            candidate_participant is not None
-            and evidence_participant is not None
-            and candidate_participant != evidence_participant
-        )
-
-    @classmethod
-    def _store_addressing(
-        cls,
-        mapping: dict[_Key, list[AddressingEvidenceRecord]],
-        key: _Key,
-        record: AddressingEvidenceRecord,
-    ) -> None:
-        if key not in mapping and len(mapping) >= cls._MAX_ORPHANS:
-            mapping.pop(next(iter(mapping)))
-
-        records = mapping.setdefault(key, [])
-        if any(current.annotation_id == record.annotation_id for current in records):
-            return
-
-        records.append(record)
-        if len(records) > cls._MAX_ADDRESSING_RECORDS_PER_TARGET:
-            del records[: -cls._MAX_ADDRESSING_RECORDS_PER_TARGET]
-
-    def _store_unsegmented_addressing(self, record: AddressingEvidenceRecord) -> None:
-        if (
-            record.annotation_id not in self._orphan_unsegmented_addressing
-            and len(self._orphan_unsegmented_addressing) >= self._MAX_ORPHANS
-        ):
-            self._orphan_unsegmented_addressing.pop(next(iter(self._orphan_unsegmented_addressing)))
-
-        self._orphan_unsegmented_addressing[record.annotation_id] = record
-
-    def _publish_result(
-        self,
-        candidate: TurnCandidate,
-        result: TurnTakingPolicyResult,
-        *,
-        observation_id: str | None = None,
-    ) -> None:
-        decision = result.decision
-        if (
-            self._candidates.get(candidate.key) is not candidate
-            or decision.turn_candidate_id != candidate.turn_candidate_id
-            or decision.candidate_revision != candidate.revision
-        ):
-            return
-
-        target_observation_id = observation_id or candidate.anchor_observation_id
-        if target_observation_id is None:
-            return
-
-        if result.addressing is not None:
-            self._runtime.perception.publish_annotation(
-                result.addressing.to_annotation(
-                    source=self.SOURCE, observation_id=target_observation_id
-                )
-            )
-
-        self._runtime.perception.publish_annotation(
-            decision.to_annotation(source=self.SOURCE, observation_id=target_observation_id)
-        )
-        logger.debug(
-            "TURN DECISION candidate_id=%s revision=%s action=%s reason=%s mode=%s "
-            "segments=%d active_segments=%d missing_transcripts=%d",
-            candidate.turn_candidate_id,
-            candidate.revision,
-            decision.action.value,
-            decision.reason,
-            decision.turn_mode.value,
-            len(candidate.segments),
-            len(candidate.active_segments),
-            len(candidate.missing_transcripts),
-        )
-
-    """Assessment Helper"""
-
-    def _candidate(self, key: SpeakerKey, turn_candidate_id: str) -> TurnCandidate | None:
-        candidate = self._candidates.get(key)
-        if candidate is None or candidate.turn_candidate_id != turn_candidate_id:
-            return None
-        return candidate
-
-    def _is_current(self, key: SpeakerKey, evidence: TurnTakingEvidence) -> bool:
-        candidate = self._candidates.get(key)
-        return (
-            candidate is not None
-            and candidate.turn_candidate_id == evidence.turn_candidate_id
-            and candidate.revision == evidence.candidate_revision
+    @property
+    def _windows(self) -> tuple[InputWindow, ...]:
+        return ((self._current,) if self._current is not None else ()) + tuple(
+            self._sealed.values()
         )
 
     @staticmethod
-    def _operational_result(
-        evidence: TurnTakingEvidence, *, action: TurnTakingAction, reason: str
+    def _operational(
+        evidence: TurnTakingEvidence, action: TurnTakingAction, reason: str
     ) -> TurnTakingPolicyResult:
         return TurnTakingPolicyResult(
             decision=TurnTakingDecision(
-                turn_candidate_id=evidence.turn_candidate_id,
-                candidate_revision=evidence.candidate_revision,
+                input_id=evidence.input_id,
+                revision=evidence.revision,
                 turn_mode=evidence.turn_mode,
                 action=action,
                 confidence=0.0 if action == TurnTakingAction.HOLD else 1.0,
-                actor=evidence.speaker,
                 input_observation_ids=evidence.input_observation_ids,
                 reason=reason,
             )
         )
 
-    def _cancel_assessment(self, key: SpeakerKey) -> None:
-        task = self._assessment_tasks.pop(key, None)
-        if (
-            task is not None
-            and task is not asyncio.current_task()
-            and not task.done()
-            and not task.cancelling()
-        ):
-            task.cancel()
+    """Trace operations"""
 
-    def _drop_candidate(self, key: SpeakerKey) -> None:
-        candidate = self._candidates.pop(key, None)
-        if candidate is None:
-            return
-
-        self._cancel_assessment(key)
-
-        for segment in candidate.segments:
-            self._retired_segments[segment] = None
-            if len(self._retired_segments) > self._MAX_RETIRED_SEGMENTS:
-                self._retired_segments.pop(next(iter(self._retired_segments)))
-            if self._segment_owners.get(segment) == key:
-                self._segment_owners.pop(segment, None)
-
-            self._orphan_transcripts.pop(segment, None)
-            self._orphan_addressing_by_segment.pop(segment, None)
-
-    async def _wait_for_transcript(
-        self, key: SpeakerKey, evidence: TurnTakingEvidence, *, reason: str
-    ) -> None:
-        if not self._is_current(key, evidence):
-            return
-
-        candidate = self._candidates[key]
-        if not candidate.missing_transcripts:
-            return
-
-        self._publish_result(
-            candidate,
-            self._operational_result(evidence, action=TurnTakingAction.HOLD, reason=reason),
+    def _trace(self, stage: str, window: InputWindow | None = None, **fields: object) -> None:
+        self._runtime.perception.input_trace.record(
+            stage,
+            input_id=window.input_id if window else None,
+            revision=window.revision if window else None,
+            **fields,
         )
 
-        await asyncio.sleep(self._transcript_wait_sec)
+    def _trace_segment(
+        self,
+        stage: str,
+        segment: PerceptionSegmentRef,
+        observation: EnvObservation,
+        window: InputWindow | None = None,
+        **fields: object,
+    ) -> None:
+        self._trace(
+            stage,
+            window,
+            source_id=segment.source.source_id,
+            source_generation=segment.source.source_generation,
+            segment_id=segment.segment_id,
+            observation_id=observation.observation_id,
+            **fields,
+        )
 
-        if not self._is_current(key, evidence):
+    """Input evidence operations"""
+
+    def _live(self, window: InputWindow) -> bool:
+        return (
+            (self._current is window or self._sealed.get(window.input_id) is window)
+            and window.context_id == self._runtime.state.context_id
+            and all(
+                self._runtime.perception.speech_source_is_current(source)
+                for source in window.sources
+            )
+            and not any(source in self._cancelled for source in window.sources)
+        )
+
+    def _matches(self, window: InputWindow, evidence: TurnTakingEvidence) -> bool:
+        return (
+            self._live(window)
+            and self._work.owns(window.input_id)
+            and not window.published
+            and window.revision == evidence.revision
+            and not window.active_segments
+        )
+
+    def _evidence(self, window: InputWindow) -> TurnTakingEvidence:
+        # Input membership stays sealed while its audio remains temporal context until admission.
+        context = tuple(
+            audio for other in self._windows if self._live(other) for audio in other.audio.values()
+        )
+        return self._builder.build(window, audio=context)
+
+    """Input window operations"""
+
+    def _retire_segment(self, segment: PerceptionSegmentRef) -> None:
+        self._segments.pop(segment, None)
+        self._orphans.pop(segment, None)
+        self._addressing.take_segment(segment)
+        self._retired[segment] = None
+        if len(self._retired) > self._MAX_RETIRED:
+            self._retired.pop(next(iter(self._retired)))
+
+    def _drop(self, window: InputWindow, *, invalidate_context: bool = True) -> None:
+        if self._current is not window and self._sealed.get(window.input_id) is not window:
+            return
+        self._work.cancel(window.input_id)
+        if window.wait is not None:
+            window.wait.cancel_timer()
+        if window.admission_timer is not None:
+            window.admission_timer.cancel()
+            window.admission_timer = None
+        if self._current is window:
+            self._current = None
+        self._sealed.pop(window.input_id, None)
+        for segment in window.segments:
+            self._retire_segment(segment)
+        self._trace("input.retired", window, evidence_count=len(window.input_observation_ids))
+        if invalidate_context and self._current is not None:
+            self._context_changed()
+
+    def _window_for(self, observation: EnvObservation) -> InputWindow:
+        if observation.segment in self._segments:
+            return self._segments[observation.segment]
+        if self._current is not None and not self._live(self._current):
+            self._drop(self._current)
+        if self._current is None:
+            self._current = InputWindow(
+                context_id=self._runtime.state.context_id,
+                started_at=observation.time_range.start,
+                updated_at=observation.time_range.end,
+            )
+        return self._current
+
+    def _seal(self, window: InputWindow) -> None:
+        if window.sealed:
             return
 
-        candidate = self._candidates[key]
-        if not candidate.missing_transcripts:
-            return
+        window.sealed = True
+        if self._current is window:
+            self._current = None
 
-        self._publish_result(
-            candidate,
-            self._operational_result(
-                evidence, action=TurnTakingAction.CANCEL, reason="transcript_timeout"
+        while len(self._sealed) >= self._config.max_pending_inputs:
+            old = next(iter(self._sealed.values()))
+            self._publish(
+                old,
+                self._operational(self._evidence(old), TurnTakingAction.CANCEL, "pending_capacity"),
+            )
+            self._drop(old)
+
+        self._sealed[window.input_id] = window
+
+    """Decision operations"""
+
+    def _notice(
+        self, window: InputWindow, result: TurnTakingPolicyResult
+    ) -> TurnTakingPolicyResult:
+        decision = result.decision
+        if window.wait is not None and window.observed_sequence < self._committed_start:
+            return self._operational(
+                self._evidence(window), TurnTakingAction.CANCEL, "superseded_transcript"
+            )
+
+        codes = window.unavailable_transcripts
+        code = next((codes[s] for s in window.segments if codes.get(s)), None)
+        if not window.transcripts and (
+            code is None
+            or self._runtime.perception.has_active_speech
+            or not (
+                any(ref.kind == InteractionEntityKind.AVATAR for ref in decision.addressees)
+                or any(n.code == "router.addressing_uncertain" for n in decision.system_notices)
+            )
+        ):
+            return self._operational(
+                self._evidence(window),
+                TurnTakingAction.CANCEL,
+                window.transcript_failure or decision.reason or "transcript_unavailable",
+            )
+
+        notices = tuple(
+            TurnNotice(value, tuple(s.segment_id for s in window.segments if codes.get(s) == value))
+            for value in dict.fromkeys(codes[s] for s in window.segments if codes.get(s))
+        )
+        return replace(
+            result,
+            decision=replace(
+                decision,
+                reason=window.transcript_failure or "transcript_unavailable",
+                system_notices=(*decision.system_notices, *notices),
             ),
         )
-        self._drop_candidate(key)
 
-    async def _hold_then_resolve(
-        self, key: SpeakerKey, evidence: TurnTakingEvidence, *, timeout_sec: float, reason: str
+    def _admission_elapsed(self, window: InputWindow) -> None:
+        if self._sealed.get(window.input_id) is window and window.published:
+            self._trace("input.admission_expired", window)
+            self._drop(window)
+
+    def _publish(
+        self,
+        window: InputWindow,
+        result: TurnTakingPolicyResult,
+        *,
+        observation_id: str | None = None,
     ) -> None:
-        await asyncio.sleep(timeout_sec)
-
-        if not self._is_current(key, evidence):
+        decision = result.decision
+        target = observation_id or window.anchor_observation_id
+        if (
+            (self._current is not window and self._sealed.get(window.input_id) is not window)
+            or window.context_id != self._runtime.state.context_id
+            or (decision.action != TurnTakingAction.CANCEL and not self._live(window))
+            or window.published
+            or decision.revision != window.revision
+            or target is None
+        ):
             return
 
-        candidate = self._candidates[key]
-        if candidate.active_segments:
+        if decision.action == TurnTakingAction.COMMIT:
+            if window.wait is not None and window.observed_sequence < self._committed_start:
+                result = self._operational(
+                    self._evidence(window), TurnTakingAction.CANCEL, "superseded_transcript"
+                )
+            elif window.unavailable_transcripts:
+                result = self._notice(window, result)
+            decision = result.decision
+
+        # Freeze membership before publishing: annotation renderers may re-enter the runtime.
+        if decision.action == TurnTakingAction.COMMIT:
+            self._seal(window)
+            window.published = True
+            if window.wait is not None:
+                window.wait.cancel_timer()
+
+        annotation = decision.to_annotation(source=self.SOURCE, observation_id=target)
+        deadline = self._runtime.clock.now().monotonic_ns + round(
+            self._config.commit_timeout_sec * 1e9
+        )
+        annotation = replace(
+            annotation,
+            data={
+                **annotation.data,
+                "context_id": window.context_id,
+                "admission_deadline_ns": deadline,
+            },
+        )
+        event = self._runtime.perception.publish_annotation(annotation)
+        self._trace(
+            "input.decision",
+            window,
+            decision_id=annotation.annotation_id,
+            observation_id=target,
+            event_id=event.event_id if event else None,
+            sequence=event.sequence if event else None,
+            action=decision.action.value,
+            outcome="published" if event else "not_published",
+            evidence_count=len(decision.input_observation_ids),
+            missing_count=len(window.missing_transcripts),
+        )
+        if decision.action in self._TERMINAL or event is None:
+            self._drop(window)
+        elif decision.action == TurnTakingAction.COMMIT:
+            window.admission_timer = asyncio.get_running_loop().call_later(
+                self._config.commit_timeout_sec, self._admission_elapsed, window
+            )
+
+    """Transcript wait operations"""
+
+    def _transcript_elapsed(self, window: InputWindow) -> None:
+        wait = window.wait
+        if wait is None or window.published:
+            return
+        if not self._live(window):
+            self._drop(window)
+            return
+        loop = asyncio.get_running_loop()
+        if loop.time() < wait.deadline:
+            self._trace(
+                "input.transcript_wait",
+                window,
+                outcome="pending",
+                missing_count=len(window.pending_transcripts),
+            )
+            wait.timer = loop.call_at(wait.deadline, self._transcript_elapsed, window)
+            return
+        for segment in window.pending_transcripts.intersection(wait.segments):
+            window.unavailable_transcripts[segment] = self._notice_code
+
+        window.revision += 1
+        window.transcript_failure = "transcript_timeout"
+        wait.cancel_timer()
+        if wait.decision is None:
+            # A transcript-dependent model has not closed this input. Later speech retains
+            # its own budget and remains in the current window, even while it is active.
+            window.wait = None
+            self._schedule(window)
             return
 
-        result = self._policy.resolve_timeout(
-            evidence=evidence, addressing=self._current_addressing(candidate), reason=reason
+        # Restore the saved completion judgment, then apply the current addressing.
+        # Neither a transcript deadline nor a late final can turn a clear HOLD into COMMIT.
+        self._schedule(window)
+
+    def _wait_transcript(
+        self, window: InputWindow, decision: TurnTakingDecision | None, reason: str
+    ) -> None:
+        if window.wait is None:
+            loop = asyncio.get_running_loop()
+            window.wait = TranscriptWait(
+                loop.time() + self._config.transcript_timeout_sec,
+                decision,
+                frozenset(window.pending_transcripts),
+            )
+            window.wait.timer = loop.call_later(
+                min(self._config.transcript_wait_sec, self._config.transcript_timeout_sec),
+                self._transcript_elapsed,
+                window,
+            )
+        elif decision is not None:
+            window.wait.decision = decision
+        if decision is not None:
+            self._seal(window)
+        self._publish(
+            window, self._operational(self._evidence(window), TurnTakingAction.HOLD, reason)
         )
 
-        if result.decision.action == TurnTakingAction.COMMIT and candidate.missing_transcripts:
-            await self._wait_for_transcript(
-                key, evidence, reason="awaiting_transcript_after_turn_timeout"
+    """Assessment operations"""
+
+    def _settle(self, window: InputWindow, result: TurnTakingPolicyResult) -> None:
+        if result.decision.action == TurnTakingAction.COMMIT and window.pending_transcripts:
+            self._wait_transcript(window, result.decision, "awaiting_transcript_for_commit")
+        else:
+            self._publish(window, result)
+
+    def _decision(
+        self, window: InputWindow, evidence: TurnTakingEvidence, assessment: TurnTakingAssessment
+    ) -> TurnTakingPolicyResult:
+        now = asyncio.get_running_loop().time()
+        return self._policy.decide(
+            evidence=evidence,
+            assessment=assessment,
+            speech_completion_expired=window.speech_completion_deadline is not None
+            and now >= window.speech_completion_deadline,
+            addressing_expired=window.addressing_deadline is not None
+            and now >= window.addressing_deadline,
+        )
+
+    async def _hold(
+        self, window: InputWindow, evidence: TurnTakingEvidence, assessment: TurnTakingAssessment
+    ) -> None:
+        now = asyncio.get_running_loop().time()
+        deadlines = []
+        if assessment.speech_completion == AssessmentLabel.UNKNOWN:
+            if window.speech_completion_deadline is None:
+                window.speech_completion_deadline = now + self._config.speech_completion_wait_sec
+            deadlines.append(window.speech_completion_deadline)
+
+        if assessment.addressing == AssessmentLabel.UNKNOWN:
+            if window.addressing_deadline is None:
+                window.addressing_deadline = now + self._config.addressing_wait_sec
+            deadlines.append(window.addressing_deadline)
+
+        if not deadlines:
+            return
+
+        deadline = max(deadlines)
+        with self._work.span("input.hold", evidence, reason="awaiting_uncertain_decision"):
+            while (remaining := deadline - asyncio.get_running_loop().time()) > 0:
+                await asyncio.sleep(remaining)
+
+        if self._matches(window, evidence):
+            self._settle(window, self._decision(window, evidence, assessment))
+
+    async def _assess(self, window: InputWindow, queued_ns: int) -> None:
+        evidence = self._evidence(window)
+        if not self._matches(window, evidence):
+            return
+        if not self._model.capabilities.supports(evidence.turn_mode):
+            self._publish(
+                window,
+                self._operational(evidence, TurnTakingAction.CANCEL, "unsupported_turn_mode"),
             )
             return
 
-        self._publish_result(candidate, result)
-        self._drop_candidate(key)
-
-    async def _assess_candidate(self, key: SpeakerKey, turn_candidate_id: str) -> None:
-        try:
-            candidate = self._candidate(key, turn_candidate_id)
-            if candidate is None or candidate.active_segments:
-                return
-
-            evidence = self._builder.build(candidate)
-
-            if not self._model.capabilities.supports(evidence.turn_mode):
-                self._publish_result(
-                    candidate,
-                    self._operational_result(
-                        evidence,
-                        action=TurnTakingAction.CANCEL,
-                        reason=f"unsupported_turn_mode:{evidence.turn_mode.value}",
-                    ),
+        saved = window.wait.decision if window.wait is not None else None
+        if saved is not None:
+            # Completion was already accepted before STT finished. Keep its uncertainty
+            # fact, but let the newly available transcript supply fresh addressing.
+            uncertain = any(
+                n.code == "router.speech_completion_uncertain" for n in saved.system_notices
+            )
+            assessment = TurnTakingAssessment(
+                input_id=evidence.input_id,
+                revision=evidence.revision,
+                turn_mode=evidence.turn_mode,
+                confidence=saved.confidence,
+                speech_completion=AssessmentLabel.UNKNOWN
+                if uncertain
+                else AssessmentLabel.POSITIVE,
+            )
+        elif self._model.capabilities.uses_transcript and window.pending_transcripts:
+            if window.speech_completion_deadline is None:
+                window.speech_completion_deadline = (
+                    asyncio.get_running_loop().time() + self._config.speech_completion_wait_sec
                 )
-                self._drop_candidate(key)
-                return
-
-            if self._model.capabilities.uses_transcript and candidate.missing_transcripts:
-                await self._wait_for_transcript(
-                    key, evidence, reason="awaiting_transcript_for_assessment"
-                )
-                return
-
+            self._wait_transcript(window, None, "awaiting_transcript_for_assessment")
+            return
+        elif self._model.capabilities.uses_transcript and not window.transcripts:
+            assessment = TurnTakingAssessment(
+                input_id=evidence.input_id,
+                revision=evidence.revision,
+                turn_mode=evidence.turn_mode,
+                confidence=0.0,
+                reason="transcript_unavailable",
+            )
+        else:
             try:
-                assessment = await self._model.assess(evidence)
+                with self._work.span("input.assessment", evidence, event_time_ns=queued_ns):
+                    assessment = await self._model.assess(evidence)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                if not self._is_current(key, evidence):
-                    return
-
-                logger.exception(
-                    "Turn assessment failed turn_candidate_id=%s model=%s",
-                    evidence.turn_candidate_id,
-                    self._model.name,
+                logger.exception("Speech completion assessment failed input_id=%s", window.input_id)
+                assessment = TurnTakingAssessment(
+                    input_id=evidence.input_id,
+                    revision=evidence.revision,
+                    turn_mode=evidence.turn_mode,
+                    confidence=0.0,
+                    reason="speech_completion_failed",
                 )
-                self._publish_result(
-                    candidate,
-                    self._operational_result(
-                        evidence, action=TurnTakingAction.HOLD, reason="turn_assessment_error"
-                    ),
-                )
-                await self._hold_then_resolve(
-                    key, evidence, timeout_sec=self._max_hold_sec, reason="assessment_error_timeout"
-                )
-                return
-
-            if not self._is_current(key, evidence):
-                logger.debug(
-                    "Discarded stale turn assessment turn_candidate_id=%s revision=%s",
-                    evidence.turn_candidate_id,
-                    evidence.candidate_revision,
-                )
-                return
-
-            candidate = self._candidates[key]
-            if not self._addressing_ready(candidate):
-                self._publish_result(
-                    candidate,
-                    self._operational_result(
-                        evidence, action=TurnTakingAction.HOLD, reason="awaiting_addressing"
-                    ),
-                )
-
-                await asyncio.sleep(self._addressing_wait_sec)
-                if not self._is_current(key, evidence):
-                    return
-
-                candidate = self._candidates[key]
-                if not self._addressing_ready(candidate):
-                    result = self._policy.resolve_timeout(
-                        evidence=evidence,
-                        addressing=self._current_addressing(candidate),
-                        reason="addressing_timeout",
-                    )
-                    if (
-                        result.decision.action == TurnTakingAction.COMMIT
-                        and candidate.missing_transcripts
-                    ):
-                        await self._wait_for_transcript(
-                            key, evidence, reason="awaiting_transcript_after_addressing_timeout"
-                        )
-                        return
-
-                    self._publish_result(candidate, result)
-                    self._drop_candidate(key)
-                    return
-
-            assessment = self._fusion.apply(
-                assessment=assessment, records=candidate.addressing_evidence.values()
-            )
-            result = self._policy.decide(evidence=evidence, assessment=assessment)
-
-            if result.decision.action == TurnTakingAction.COMMIT and candidate.missing_transcripts:
-                await self._wait_for_transcript(
-                    key, evidence, reason="awaiting_transcript_for_commit"
-                )
-                return
-
-            self._publish_result(candidate, result)
-
-            if result.decision.action == TurnTakingAction.HOLD:
-                waiting_for_addressing = result.decision.reason == "addressing_unknown"
-
-                await self._hold_then_resolve(
-                    key,
-                    evidence,
-                    timeout_sec=(
-                        self._addressing_wait_sec if waiting_for_addressing else self._max_hold_sec
-                    ),
-                    reason=(
-                        "addressing_timeout" if waiting_for_addressing else "turn_hold_timeout"
-                    ),
-                )
-
-            elif result.decision.action in self._TERMINAL_ACTIONS:
-                self._drop_candidate(key)
-
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Turn assessment task failed turn_candidate_id=%s", turn_candidate_id)
-        finally:
-            if self._assessment_tasks.get(key) is asyncio.current_task():
-                self._assessment_tasks.pop(key, None)
-
-    def _schedule_assessment(self, key: SpeakerKey, turn_candidate_id: str) -> None:
-        self._cancel_assessment(key)
-        task = asyncio.create_task(
-            self._assess_candidate(key, turn_candidate_id),
-            name=f"router_turn_assessment:{turn_candidate_id}",
-        )
-        self._assessment_tasks[key] = task
-        self._assessment_workers.add(task)
-        task.add_done_callback(self._assessment_workers.discard)
-
-    """Addressing Helper"""
-
-    def _addressing_ready(self, candidate: TurnCandidate) -> bool:
-        if not self._required_addressing_sources:
-            return True
-        if not candidate.segments:
-            return False
-
-        latest_segment = candidate.segments[-1]
-
-        return all(
-            (record := candidate.addressing_evidence.get(source)) is not None
-            and record.target_segment == latest_segment
-            for source in self._required_addressing_sources
-        )
-
-    def _current_addressing(self, candidate: TurnCandidate) -> InteractionAddressingEvidence | None:
-        return self._fusion.resolve(candidate.addressing_evidence.values())
-
-    def _maybe_interrupt(self, candidate: TurnCandidate, observation_id: str) -> None:
-        if candidate.interruption_requested:
+        if not self._matches(window, evidence):
             return
 
-        evidence = self._builder.build(candidate)
-        result = self._policy.decide_interruption(
-            evidence=evidence, addressing=self._current_addressing(candidate)
-        )
-        if result is None or not candidate.claim_interruption():
-            return
-
-        self._publish_result(candidate, result, observation_id=observation_id)
-        logger.debug(
-            "Turn interruption requested turn_candidate_id=%s revision=%s mode=%s",
-            candidate.turn_candidate_id,
-            candidate.revision,
-            evidence.turn_mode.value,
-        )
-
-    def _apply_addressing(
-        self, key: SpeakerKey, candidate: TurnCandidate, record: AddressingEvidenceRecord
-    ) -> None:
-        if not self._speaker_matches(candidate, record.evidence):
-            logger.warning(
-                "Addressing evidence speaker mismatch turn_candidate_id=%s annotation_id=%s",
-                candidate.turn_candidate_id,
-                record.annotation_id,
-            )
-            return
-
-        was_ready = self._addressing_ready(candidate)
-        previous = self._current_addressing(candidate)
-
-        if not candidate.update_addressing_evidence(record):
-            return
-
-        is_ready = self._addressing_ready(candidate)
-        current = self._current_addressing(candidate)
-
-        if was_ready == is_ready and self._fusion.same_target(previous, current):
-            return
-
-        candidate.mark_addressing_changed()
-        self._cancel_assessment(key)
-
-        if candidate.active_segments:
-            self._maybe_interrupt(candidate, record.target_observation_id)
-        else:
-            self._schedule_assessment(key, candidate.turn_candidate_id)
-
-    def _attach_segment_addressing(
-        self, key: SpeakerKey, candidate: TurnCandidate, segment: PerceptionSegmentRef
-    ) -> None:
-        for record in self._orphan_addressing_by_segment.pop(segment, ()):
-            self._apply_addressing(key, candidate, record)
-
-    @staticmethod
-    def _identity_score(candidate: TurnCandidate, record: AddressingEvidenceRecord) -> int | None:
-        candidate_participant = candidate.speaker.transport_participant_id
-        evidence_participant = record.evidence.speaker.transport_participant_id
+        assessment = self._addressing.apply(assessment, window)
+        self._trace("input.speech_completion", window, state=assessment.speech_completion.value)
         if (
-            candidate_participant is not None
-            and evidence_participant is not None
-            and candidate_participant != evidence_participant
+            assessment.speech_completion == AssessmentLabel.UNKNOWN
+            and window.speech_completion_deadline is None
         ):
-            return None
-
-        candidate_entity = candidate.speaker.entity
-        evidence_entity = record.evidence.speaker.entity
-        if candidate_entity is not None and evidence_entity is not None:
-            return (
-                3
-                if candidate_entity.perception_entity_id == evidence_entity.perception_entity_id
-                else None
+            window.speech_completion_deadline = (
+                asyncio.get_running_loop().time() + self._config.speech_completion_wait_sec
             )
 
-        if candidate_participant is not None and evidence_participant is not None:
-            return 2
+        result = self._decision(window, evidence, assessment)
+        if assessment.speech_completion == AssessmentLabel.NEGATIVE:
+            self._settle(window, result)
+            return
 
-        return None
+        # A configured text-based addressee cannot run before its full VAD transcript.
+        # Its wait starts when that input is available, independently of STT's deadline.
+        if not self._addressing.ready(window) and window.pending_transcripts:
+            self._wait_transcript(window, None, "awaiting_transcript_for_addressing")
+            return
 
-    @staticmethod
-    def _temporal_distance_ns(
-        candidate: TurnCandidate, record: AddressingEvidenceRecord
-    ) -> int | None:
-        if record.target_time_range is None:
-            return None
+        if not self._addressing.ready(window):
+            assessment = replace(
+                assessment,
+                addressing=AssessmentLabel.UNKNOWN,
+                addressees=(),
+                addressing_confidence=None,
+            )
+            result = self._decision(window, evidence, assessment)
 
-        target_ns = record.target_time_range.end.monotonic_ns
-        start_ns = candidate.started_at.monotonic_ns
-        end_ns = candidate.updated_at.monotonic_ns
-        if start_ns <= target_ns <= end_ns:
-            return 0
+        self._settle(window, result)
+        if result.decision.action == TurnTakingAction.HOLD:
+            if window.pending_transcripts:
+                self._wait_transcript(window, None, "awaiting_transcript_for_decision")
+                return
 
-        return min(abs(target_ns - start_ns), abs(target_ns - end_ns))
+            await self._hold(window, evidence, assessment)
 
-    def _match_unsegmented(
-        self, record: AddressingEvidenceRecord
-    ) -> tuple[SpeakerKey, TurnCandidate] | None:
-        matches: list[tuple[int, int, SpeakerKey, TurnCandidate]] = []
+    def _schedule(self, window: InputWindow) -> None:
+        self._work.cancel(window.input_id)
+        if (
+            not self._live(window)
+            or window.published
+            or window.active_segments
+            or not window.closed_segments
+        ):
+            return
 
-        for key, candidate in self._candidates.items():
-            identity_score = self._identity_score(candidate, record)
-            distance_ns = self._temporal_distance_ns(candidate, record)
-            if (
-                identity_score is None
-                or distance_ns is None
-                or distance_ns > self._unsegmented_alignment_ns
-            ):
-                continue
+        if window.wait is not None and window.pending_transcripts:
+            return
 
-            matches.append((identity_score, -distance_ns, key, candidate))
+        queued = self._runtime.clock.now().monotonic_ns
+        self._work.start(window.input_id, lambda: self._assess(window, queued))
 
-        if not matches:
-            return None
+    def _context_changed(self) -> None:
+        if self._current is not None:
+            self._current.revision += 1
+            self._schedule(self._current)
 
-        matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        best = matches[0]
-        if len(matches) > 1 and matches[1][:2] == best[:2]:
-            return None
+    """Input event operations"""
 
-        return best[2], best[3]
-
-    def _route_unsegmented_addressing(self, record: AddressingEvidenceRecord) -> None:
-        match = self._match_unsegmented(record)
+    def _route_addressing(self, record: AddressingEvidenceRecord) -> None:
+        windows = {window.input_id: window for window in self._windows if not window.published}
+        match = self._addressing.match_window(record, windows)
         if match is None:
-            self._store_unsegmented_addressing(record)
+            if record.target_segment is not None and record.target_segment not in self._retired:
+                self._addressing.defer_segment(record.target_segment, record)
+            elif record.target_segment is None:
+                self._addressing.defer_unsegmented(record)
             return
 
-        key, candidate = match
-        self._apply_addressing(key, candidate, record)
-
-    def _retry_unsegmented_addressing(self) -> None:
-        records = tuple(self._orphan_unsegmented_addressing.values())
-        self._orphan_unsegmented_addressing.clear()
-
-        for record in records:
-            self._route_unsegmented_addressing(record)
-
-    def _route_addressing(
-        self, segment: PerceptionSegmentRef, record: AddressingEvidenceRecord
-    ) -> None:
-        if segment in self._retired_segments:
-            return
-        key = self._segment_owners.get(segment)
-        if key is None:
-            self._store_addressing(self._orphan_addressing_by_segment, segment, record)
-            return
-
-        candidate = self._candidates.get(key)
-        if candidate is not None:
-            self._apply_addressing(key, candidate, record)
-
-    def _route_observation_addressing(
-        self, observation: EnvObservation, record: AddressingEvidenceRecord
-    ) -> None:
-        record = replace(
-            record, target_time_range=observation.time_range, target_segment=observation.segment
-        )
-
-        if observation.segment is not None:
-            self._route_addressing(observation.segment, record)
-        else:
-            self._route_unsegmented_addressing(record)
-
-    def _attach_pending_addressing(self, observation: EnvObservation) -> None:
-        for record in self._orphan_addressing_by_observation.pop(observation.observation_id, ()):
-            self._route_observation_addressing(observation, record)
-
-    """Observation Handler"""
-
-    def _get_candidate(self, observation: EnvObservation) -> tuple[SpeakerKey, TurnCandidate]:
-        key = SpeakerKey.from_observation(observation)
-        candidate = self._candidates.get(key)
-
-        if candidate is None:
-            candidate = TurnCandidate.create(observation)
-            self._candidates[key] = candidate
-
-        return key, candidate
-
-    def _apply_transcript(
-        self,
-        key: SpeakerKey,
-        candidate: TurnCandidate,
-        segment: PerceptionSegmentRef,
-        observation: EnvObservation,
-    ) -> None:
-        text = self._builder.text(observation)
-        if text is None or not candidate.add_transcript(segment, observation, text):
-            return
-        logger.debug(
-            "TURN TRANSCRIPT candidate_id=%s revision=%s segment_id=%s source=%s "
-            "generation=%s observation_id=%s chars=%d active_segments=%d",
-            candidate.turn_candidate_id,
-            candidate.revision,
-            segment.segment_id,
-            segment.source.source_id,
-            segment.source.source_generation,
-            observation.observation_id,
-            len(text),
-            len(candidate.active_segments),
-        )
-        if not candidate.active_segments:
-            self._schedule_assessment(key, candidate.turn_candidate_id)
-
-    def _store_orphan_transcript(
-        self, segment: PerceptionSegmentRef, observation: EnvObservation
-    ) -> None:
-        if (
-            segment not in self._orphan_transcripts
-            and len(self._orphan_transcripts) >= self._MAX_ORPHANS
-        ):
-            self._orphan_transcripts.pop(next(iter(self._orphan_transcripts)))
-
-        self._orphan_transcripts[segment] = observation
-
-    def _consume_speech(self, observation: EnvObservation) -> None:
-        segment = self._builder.require_segment(observation)
-        if segment in self._retired_segments:
-            return
-        key, candidate = self._get_candidate(observation)
-        if (
-            observation.kind == ObservationKind.SPEECH_FRAME
-            and segment in candidate.closed_segments
-        ):
-            return
-
-        is_new_segment = candidate.start_segment(segment, observation)
-        self._segment_owners[segment] = key
-
-        if is_new_segment:
-            # SPEECH_FRAME is ephemeral. close_segment/add_transcript attach retained evidence;
-            # the frame may still anchor immediate interruption, never a committed Turn.
-            self._cancel_assessment(key)
-
-        self._attach_segment_addressing(key, candidate, segment)
-
-        if is_new_segment:
-            self._retry_unsegmented_addressing()
-            self._maybe_interrupt(candidate, observation.observation_id)
-
-        orphan = self._orphan_transcripts.pop(segment, None)
-        if orphan is not None:
-            self._apply_transcript(key, candidate, segment, orphan)
-
-        if observation.kind != ObservationKind.SPEECH_SEGMENT:
-            return
-
-        candidate.close_segment(segment, observation)
-        logger.debug(
-            "TURN SEGMENT CLOSED candidate_id=%s revision=%s segment_id=%s source=%s "
-            "generation=%s observation_id=%s active_segments=%d",
-            candidate.turn_candidate_id,
-            candidate.revision,
-            segment.segment_id,
-            segment.source.source_id,
-            segment.source.source_generation,
-            observation.observation_id,
-            len(candidate.active_segments),
-        )
-
-        audio = self._builder.audio(observation)
-        if audio is not None:
-            candidate.add_audio(audio)
-
-        if not candidate.active_segments:
-            self._schedule_assessment(key, candidate.turn_candidate_id)
+        _, window = match
+        if self._addressing.update(window, record):
+            self._schedule(window)
 
     def _consume_transcript(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
-        if segment in self._retired_segments:
-            return
-        key = self._segment_owners.get(segment)
-
-        if key is None:
-            self._store_orphan_transcript(segment, observation)
-            return
-
-        candidate = self._candidates.get(key)
-        if candidate is not None:
-            self._apply_transcript(key, candidate, segment, observation)
-
-    def handle_observation(self, observation: EnvObservation) -> None:
-        self._attach_pending_addressing(observation)
-
-        if observation.kind in {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}:
-            self._consume_speech(observation)
-        elif observation.kind == ObservationKind.TRANSCRIPT_SEGMENT:
-            self._consume_transcript(observation)
-
-    """Annotation Handler"""
-
-    def handle_annotation(self, event: PerceptionEvent) -> None:
-        annotation = event.annotation
-        if annotation is None or annotation.kind != AnnotationKind.INTERACTION_ADDRESSING_EVIDENCE:
-            return
-
-        observation_id = annotation.observation_id
-        if observation_id is None:
-            logger.warning(
-                "Addressing evidence has no observation target annotation_id=%s",
-                annotation.annotation_id,
+        if segment in self._retired or segment.source in self._cancelled:
+            self._trace_segment(
+                "input.transcript_rejected", segment, observation, reason="retired_segment"
             )
             return
 
-        record = AddressingEvidenceRecord(
-            annotation_id=annotation.annotation_id,
-            source=annotation.source,
-            sequence=event.sequence,
-            target_observation_id=observation_id,
-            published_at=event.time_range.end,
-            evidence=InteractionAddressingEvidence.from_annotation(annotation),
-        )
-        observation = self._runtime.perception.timeline.get_observation(
-            observation_id=observation_id
-        )
-
-        if observation is None:
-            self._store_addressing(self._orphan_addressing_by_observation, observation_id, record)
+        window = self._segments.get(segment)
+        if window is None:
+            previous = self._orphans.get(segment)
+            if previous is None or previous.kind != ObservationKind.TRANSCRIPT_UNAVAILABLE:
+                self._orphans[segment] = observation
+                if len(self._orphans) > self._MAX_ORPHANS:
+                    self._orphans.pop(next(iter(self._orphans)))
+            self._trace_segment("input.transcript_pending", segment, observation)
             return
 
-        self._route_observation_addressing(observation, record)
+        if not self._live(window):
+            self._drop(window)
+            return
+        if window.published or segment in window.unavailable_transcripts:
+            return
+
+        if window.wait is not None and asyncio.get_running_loop().time() >= window.wait.deadline:
+            self._transcript_elapsed(window)
+            if (
+                not self._live(window)
+                or window.published
+                or segment in window.unavailable_transcripts
+            ):
+                return
+
+        if observation.kind == ObservationKind.TRANSCRIPT_UNAVAILABLE:
+            if segment not in window.transcripts:
+                window.unavailable_transcripts[segment] = observation.metadata.get(
+                    "system_notice_code"
+                )
+                window.revision += 1
+                self._trace_segment(
+                    "input.transcript",
+                    segment,
+                    observation,
+                    window,
+                    state="unavailable",
+                    reason=observation.metadata.get("reason_code"),
+                )
+        else:
+            text = self._builder.text(observation)
+            if text is None or not window.add_transcript(segment, observation, text):
+                return
+            self._trace_segment("input.transcript", segment, observation, window, state="final")
+
+        if window.wait is not None and not window.pending_transcripts.intersection(
+            window.wait.segments
+        ):
+            window.wait.cancel_timer()
+            if window.wait.decision is None:
+                window.wait = None
+        self._schedule(window)
+
+    def _consume_speech(self, observation: EnvObservation) -> None:
+        segment = self._builder.require_segment(observation)
+        if segment in self._retired or segment.source in self._cancelled:
+            self._trace_segment(
+                "input.segment_rejected", segment, observation, reason="retired_segment"
+            )
+            return
+
+        if (
+            observation.kind == ObservationKind.SPEECH_FRAME
+            and segment not in self._segments
+            and (
+                observation.metadata.get("speech_event") != "start"
+                or observation.metadata.get("route_index") != 1
+            )
+        ):
+            self._retire_segment(segment)
+            return
+
+        window = self._window_for(observation)
+        if window.published or window.sealed:
+            return
+
+        if (
+            segment not in window.segments
+            and len(window.segments) >= self._config.max_window_segments
+        ):
+            self._publish(
+                window,
+                self._operational(
+                    self._evidence(window), TurnTakingAction.CANCEL, "input_capacity"
+                ),
+            )
+            self._drop(window)
+            window = self._window_for(observation)
+
+        added = window.start_segment(segment, observation)
+        self._segments[segment] = window
+        if added:
+            self._work.cancel(window.input_id)
+            self._trace_segment("input.segment", segment, observation, window, state="open")
+            interruption = self._policy.decide_interruption(
+                evidence=self._evidence(window), addressing=self._addressing.resolve(window)
+            )
+            if interruption is not None and window.claim_interruption():
+                self._publish(window, interruption, observation_id=observation.observation_id)
+
+        for record in self._addressing.take_segment(segment):
+            self._route_addressing(record)
+        for record in self._addressing.take_unsegmented():
+            self._route_addressing(record)
+        if observation.kind == ObservationKind.SPEECH_SEGMENT and window.close_segment(
+            segment, observation
+        ):
+            if not window.observed_sequence:
+                # Use the retained event's sequence, not the stream tail at batch-processing time.
+                window.observed_sequence = next(
+                    (
+                        event.sequence
+                        for event in self._runtime.perception.events.read_range(after_seq=0).items
+                        if event.observation is not None
+                        and event.observation.observation_id == observation.observation_id
+                    ),
+                    0,
+                )
+            if (audio := self._builder.audio(observation)) is not None:
+                window.add_audio(audio)
+            self._trace_segment("input.segment", segment, observation, window, state="closed")
+            if (orphan := self._orphans.pop(segment, None)) is not None:
+                self._consume_transcript(orphan)
+            self._schedule(window)
+
+    def _consume_cancelled(self, observation: EnvObservation) -> None:
+        segment = self._builder.require_segment(observation)
+        self._cancelled[segment.source] = None
+        if len(self._cancelled) > self._MAX_RETIRED:
+            self._cancelled.pop(next(iter(self._cancelled)))
+        for window in self._windows:
+            if segment.source in window.sources:
+                self._publish(
+                    window,
+                    self._operational(
+                        self._evidence(window),
+                        TurnTakingAction.CANCEL,
+                        observation.metadata.get("reason_code", "speech_cancelled"),
+                    ),
+                    observation_id=observation.observation_id,
+                )
+                self._drop(window)
+        self._retire_segment(segment)
+        self._context_changed()
+
+    def handle_observation(self, observation: EnvObservation) -> None:
+        for record in self._addressing.take_observation(observation):
+            self._route_addressing(record)
+        if observation.kind in (ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT):
+            self._consume_speech(observation)
+        elif observation.kind in (
+            ObservationKind.TRANSCRIPT_SEGMENT,
+            ObservationKind.TRANSCRIPT_UNAVAILABLE,
+        ):
+            self._consume_transcript(observation)
+        elif observation.kind == ObservationKind.SPEECH_CANCELLED:
+            self._consume_cancelled(observation)
+
+    def handle_annotation(self, event: PerceptionEvent) -> None:
+        if (record := self._addressing.receive(event)) is not None:
+            self._route_addressing(record)
 
     def handle_annotation_gap(self) -> None:
-        self._orphan_addressing_by_observation.clear()
-        self._orphan_addressing_by_segment.clear()
-        self._orphan_unsegmented_addressing.clear()
+        self._addressing.clear()
+        for window in self._windows:
+            if window.mark_annotation_gap():
+                self._schedule(window)
 
-        for key, candidate in tuple(self._candidates.items()):
-            if not candidate.mark_annotation_gap():
-                continue
+    def handle_turn(self, snapshot: TurnSnapshot) -> None:
+        # The acknowledgement is authoritative even if cancellation already removed its
+        # local record. Snapshot-owned event references survive overlapping cutoffs.
+        owned = set(snapshot.input_observation_ids)
+        first = min(
+            (
+                event.sequence
+                for event in snapshot.perception_events
+                if event.observation is not None and event.observation.observation_id in owned
+            ),
+            default=0,
+        )
+        self._committed_start = max(self._committed_start, first)
+        if (window := self._sealed.get(snapshot.input_id)) is not None:
+            self._drop(window, invalidate_context=False)
 
-            self._cancel_assessment(key)
-            if not candidate.active_segments:
-                self._schedule_assessment(key, candidate.turn_candidate_id)
+        self._context_changed()
 
-    async def reset(self) -> None:
-        tasks = tuple(self._assessment_workers)
-        self._assessment_tasks.clear()
-        self._candidates.clear()
-        self._segment_owners.clear()
-        self._retired_segments.clear()
-        self._orphan_transcripts.clear()
-        self._orphan_addressing_by_observation.clear()
-        self._orphan_addressing_by_segment.clear()
-        self._orphan_unsegmented_addressing.clear()
+    """Runtime operations"""
 
-        for task in tasks:
-            if not task.done() and not task.cancelling():
-                task.cancel()
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        self._assessment_workers.difference_update(tasks)
+    async def reset(self, *, retain_retired: bool = False) -> None:
+        for window in self._windows:
+            self._drop(window)
+        self._orphans.clear()
+        self._addressing.clear()
+        if not retain_retired:
+            self._retired.clear()
+            self._cancelled.clear()
+        await self._work.reset()

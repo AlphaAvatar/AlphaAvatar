@@ -14,30 +14,32 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.avatar.provider.enums import ModelRole
 from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
 from alphaavatar.agents.avatar.provider.records import MODEL_RECORD_SCHEMA
-from alphaavatar.agents.avatar.provider.schemas import ModelInput, ModelInputMessage, ModelTextPart
+from alphaavatar.agents.avatar.provider.schemas import (
+    ModelInput,
+    ModelInputMessage,
+    RealtimeModelInput,
+)
 from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelFunctionCall,
     ModelFunctionOutput,
 )
+from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.turn import TurnStream
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
     from alphaavatar.core.output import OutputRuntime
     from alphaavatar.core.output.schemas import OutputRecordBatch
-    from alphaavatar.core.turn import TurnSnapshot
-
-    from ..config import ContextConfig
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +48,11 @@ logger = logging.getLogger(__name__)
 class _Turn:
     context_id: str
     turn_id: str
-    input_id: str
     cutoff: int
-    seed: ModelInputMessage
-    size_bytes: int
+    message: ModelInputMessage
+    realtime: RealtimeModelInput | None
     records: list[tuple[str | None, ModelInputItem]] = field(default_factory=list)
     batch_digests: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def count(self) -> int:
-        return 1 + len(self.records)
 
     def project(self) -> tuple[ModelInputItem, ...]:
         # A retiring tool may settle after another query begins. Never expose half a pair.
@@ -71,7 +68,7 @@ class _Turn:
         }
         paired = calls & outputs
         return (
-            self.seed,
+            self.message,
             *(
                 item
                 for run_id, item in self.records
@@ -82,22 +79,19 @@ class _Turn:
 
 
 class ContextHistory:
-    """Bounded canonical query history, independently acknowledging Output.records.
+    """Canonical session history, independently acknowledging Output.records.
 
-    User inputs come from committed Turns. Assistant/tool records come only from
-    the lossless journal, not playout, LoopResult or private provider continuation.
-    Byte accounting covers serialized content, not process RSS or shared media caches.
+    User messages come from ContextBuilder. Assistant and tool records come from Output.records.
     """
 
     CONSUMER_ID = "context.history"
 
-    def __init__(self, *, output: OutputRuntime, config: ContextConfig) -> None:
+    def __init__(self, *, output: OutputRuntime, turns: TurnStream) -> None:
         self._journal = output.records
-        self._max_turns = config.history_max_turns
-        self._max_items = config.history_max_items
-        self._max_bytes = config.history_max_bytes
-        self._turns: OrderedDict[tuple[str, str], _Turn] = OrderedDict()
-        self._bytes = self._items = self._latest_cutoff = 0
+        self._turn_events = turns
+        self._turns: dict[tuple[str, str], _Turn] = {}
+        self._item_ids: dict[str, set[str]] = {}
+        self._capture_lock = asyncio.Lock()
         self._registered = self._stopping = False
         self._worker: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
@@ -138,44 +132,6 @@ class ContextHistory:
             self._worker = asyncio.create_task(self._run(), name=self.CONSUMER_ID)
             self._worker.add_done_callback(self._observe)
 
-    def _evict(self, key: tuple[str, str]) -> None:
-        removed = self._turns.pop(key)
-        self._bytes -= removed.size_bytes
-        self._items -= removed.count
-
-    def _make_room(
-        self, *, target: tuple[str, str], add_bytes: int, add_items: int, add_turn: bool = False
-    ) -> bool:
-        turn = self._turns.get(target)
-        target_bytes = (turn.size_bytes if turn else 0) + add_bytes
-        target_items = (turn.count if turn else 0) + add_items
-        if target_bytes > self._max_bytes or target_items > self._max_items:
-            raise RuntimeError("A single turn exceeds canonical context history capacity")
-
-        victims = []
-        size = self._bytes + add_bytes
-        count = self._items + add_items
-        turns = len(self._turns) + int(add_turn)
-        for key, value in self._turns.items():
-            if size <= self._max_bytes and count <= self._max_items and turns <= self._max_turns:
-                break
-
-            # Whole-turn eviction never leaves an orphan tool record in the projected input.
-            if key == target:
-                if key == next(reversed(self._turns)):
-                    raise RuntimeError("The current turn cannot fit in context history")
-
-                victims.append(key)
-                break
-
-            victims.append(key)
-            size, count, turns = size - value.size_bytes, count - value.count, turns - 1
-
-        for key in victims:
-            self._evict(key)
-
-        return target not in victims
-
     def _ingest(self, batch: OutputRecordBatch) -> None:
         if batch.schema != MODEL_RECORD_SCHEMA:
             return
@@ -183,7 +139,7 @@ class ContextHistory:
         key = batch.scope.context_id, batch.scope.turn_id
         turn = self._turns.get(key)
         if turn is None:
-            # A late result stays in canonical storage; it cannot resurrect an evicted query.
+            # Output for a turn outside this history has no owning entry here.
             return
 
         previous = turn.batch_digests.get(batch.batch_id)
@@ -195,12 +151,8 @@ class ContextHistory:
         if not batch.items or type(batch.size_bytes) is not int or batch.size_bytes < 1:
             raise ModelProtocolError("Canonical history requires a nonempty measured batch")
 
-        existing = {
-            item.id
-            for value in self._turns.values()
-            if value.context_id == turn.context_id
-            for item in (value.seed, *(item for _, item in value.records))
-        }
+        existing = self._item_ids[turn.context_id]
+        added: set[str] = set()
         run_id = batch.scope.run_id
         if not isinstance(run_id, str) or not run_id:
             raise ModelProtocolError("Canonical model records require their owning run")
@@ -217,10 +169,15 @@ class ContextHistory:
         }
         records = []
         for item in batch.items:
-            if item.id in existing:
+            if (
+                isinstance(item, ModelFunctionCall | ModelFunctionOutput)
+                and item.name == RUNTIME_CONTEXT_TOOL_NAME
+            ):
+                continue
+            if item.id in existing or item.id in added:
                 raise ModelProtocolError("Canonical model item identity was reused")
 
-            existing.add(item.id)
+            added.add(item.id)
             if isinstance(item, ModelInputMessage):
                 if item.role != ModelRole.ASSISTANT:
                     raise ModelProtocolError(
@@ -240,13 +197,9 @@ class ContextHistory:
 
             records.append((run_id, item))
 
-        if not self._make_room(target=key, add_bytes=batch.size_bytes, add_items=len(records)):
-            return
-
         turn.records.extend(records)
         turn.batch_digests[batch.batch_id] = batch.digest
-        turn.size_bytes += batch.size_bytes
-        self._bytes, self._items = self._bytes + batch.size_bytes, self._items + len(records)
+        existing.update(added)
 
     def drain(self) -> None:
         if not self._registered:
@@ -274,95 +227,91 @@ class ContextHistory:
             self._fail(error)
             raise
 
-    def accept_turn(self, snapshot: TurnSnapshot, context_id: str) -> ModelInput:
-        self._start()
-        key = context_id, snapshot.turn_id
-        previous = self._turns.get(key)
-        if previous is not None:
-            if (previous.input_id, previous.cutoff) != (
-                snapshot.input_id,
-                snapshot.cutoff.sequence,
-            ):
-                raise ModelProtocolError("Committed turn identity changed")
+    def _accept_turn(self, snapshot: TurnSnapshot, built: ModelInput) -> None:
+        message = built.get(snapshot.input_id)
+        if not isinstance(message, ModelInputMessage) or message.role != ModelRole.USER:
+            raise ModelProtocolError("Committed turn requires a built user message")
 
-            return ModelInput(items=(previous.seed,))
+        for context_id in snapshot.context_ids:
+            key = context_id, snapshot.turn_id
+            if previous := self._turns.get(key):
+                if (previous.message.id, previous.cutoff) != (
+                    snapshot.input_id,
+                    snapshot.cutoff.sequence,
+                ):
+                    raise ModelProtocolError("Committed turn identity changed")
+                continue
 
-        if snapshot.cutoff.sequence < self._latest_cutoff:
-            raise RuntimeError("This committed input is outside the retained context history")
-
-        metadata = MappingProxyType(
-            {
-                "context_id": context_id,
-                "turn_id": snapshot.turn_id,
-                "input_modality": snapshot.modality.value,
-            }
-        )
-        text = (
-            snapshot.text
-            if snapshot.text is not None
-            else (
-                '<historical_media omitted="true" current="false">'
-                "Visual input belongs to this earlier turn; do not infer its contents from this placeholder."
-                "</historical_media>"
+            existing = self._item_ids.setdefault(context_id, set())
+            if message.id in existing:
+                raise ModelProtocolError("Context input identity was reused")
+            self._turns[key] = _Turn(
+                context_id, snapshot.turn_id, snapshot.cutoff.sequence, message, built.realtime
             )
-        )
-        seed = ModelInputMessage(
-            id=snapshot.input_id,
-            role=ModelRole.USER,
-            parts=(ModelTextPart(text),),
-            created_at=snapshot.committed_at.unix_seconds,
-            metadata=metadata,
-        )
-        size = len(
-            json.dumps(
-                {
-                    "id": seed.id,
-                    "text": text,
-                    "metadata": dict(metadata),
-                    "created_at": seed.created_at,
-                },
-                ensure_ascii=False,
-                allow_nan=False,
-            ).encode()
-        )
+            existing.add(message.id)
 
-        if any(
-            value.context_id == context_id
-            and (value.input_id == seed.id or any(item.id == seed.id for _, item in value.records))
-            for value in self._turns.values()
-        ):
-            raise ModelProtocolError("Context input identity was reused")
-
-        self._make_room(target=key, add_bytes=size, add_items=1, add_turn=True)
-        self._turns[key] = _Turn(
-            context_id, snapshot.turn_id, snapshot.input_id, snapshot.cutoff.sequence, seed, size
+    async def _accept_through(
+        self,
+        snapshot: TurnSnapshot,
+        context_id: str,
+        build: Callable[[TurnSnapshot, ModelInput], Awaitable[ModelInput]],
+    ) -> ModelInput:
+        # Read from the commit stream so a superseded run still contributes its input.
+        stream = self._turn_events
+        batch = stream.read_pending(consumer_id=self.CONSUMER_ID)
+        end = next(
+            (index + 1 for index, event in enumerate(batch.items) if event.snapshot is snapshot),
+            None,
         )
-        self._bytes, self._items = self._bytes + size, self._items + 1
-        self._latest_cutoff = max(self._latest_cutoff, snapshot.cutoff.sequence)
-        return ModelInput(items=(seed,))
-
-    def capture(self, snapshot: TurnSnapshot, context_id: str, current: ModelInput) -> ModelInput:
-        self._ensure_open()
-        if (
-            len(current.items) != 1
-            or not isinstance(current.items[0], ModelInputMessage)
-            or (current.items[0].id != snapshot.input_id or current.items[0].role != ModelRole.USER)
-        ):
-            raise ValueError(
-                "Context preparation requires exactly the current committed input seed"
-            )
-
-        self.drain()
-        key = context_id, snapshot.turn_id
-        if key not in self._turns:
+        if end is None:
             raise RuntimeError("Current turn is not retained in context history")
-        if current.realtime is not None or current.items != (self._turns[key].seed,):
-            raise ValueError("Current input differs from its canonical committed Turn seed")
+        if batch.has_gap:
+            logger.warning(
+                "Context history missed %d committed turns; using the retained tail",
+                batch.missed_count,
+            )
 
+        cursor = batch.committed_cursor_seq
+        try:
+            for event in batch.items[:end]:
+                turn = event.snapshot
+                if turn is snapshot:
+                    self.drain()
+                    result = await build(turn, self._project(context_id))
+                    self._accept_turn(turn, result)
+                    cursor = event.sequence
+                    return result
+                if turn.context_ids:
+                    self._accept_turn(turn, await build(turn, ModelInput(items=())))
+                cursor = event.sequence
+        finally:
+            if cursor > batch.committed_cursor_seq:
+                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=cursor)
+
+        raise RuntimeError("Current turn is not retained in context history")
+
+    async def capture(
+        self,
+        snapshot: TurnSnapshot,
+        context_id: str,
+        build: Callable[[TurnSnapshot, ModelInput], Awaitable[ModelInput]],
+    ) -> ModelInput:
+        async with self._capture_lock:
+            self._start()
+            key = context_id, snapshot.turn_id
+            if key not in self._turns:
+                return await self._accept_through(snapshot, context_id, build)
+
+            self.drain()
+            return await build(snapshot, self._project(context_id, current=key))
+
+    def _project(self, context_id: str, *, current: tuple[str, str] | None = None) -> ModelInput:
         items = []
+        realtime = None
         for entry_key, turn in self._turns.items():
-            if entry_key == key:
-                items.extend(current.items)
+            if entry_key == current:
+                items.append(turn.message)
+                realtime = turn.realtime
                 break
             if turn.context_id == context_id:
                 items.extend(turn.project())
@@ -372,7 +321,7 @@ class ContextHistory:
         if len(ids) != len(set(ids)) or len(call_ids) != len(set(call_ids)):
             raise ModelProtocolError("Captured canonical history has duplicate identities")
 
-        return ModelInput(items=tuple(items))
+        return ModelInput(items=tuple(items), realtime=realtime)
 
     async def _run(self) -> None:
         while await self._journal.wait_for_pending(consumer_id=self.CONSUMER_ID):
@@ -390,6 +339,8 @@ class ContextHistory:
                 self._worker.cancel()
             await asyncio.gather(self._worker, return_exceptions=True)
             self._observe(self._worker)
+
+        self._turn_events.clear_consumer(self.CONSUMER_ID)
         if self._registered and self._failure is None:
             self._journal.unregister(self.CONSUMER_ID)
             self._registered = False

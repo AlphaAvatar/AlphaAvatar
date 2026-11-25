@@ -18,23 +18,30 @@ from typing import Any
 
 from alphaavatar.core.env import EnvAnnotation
 from alphaavatar.core.env.enums import AnnotationKind
-from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSegmentRef
+from alphaavatar.core.env.schemas import (
+    DeviceId,
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
+from alphaavatar.core.turn.schemas import TurnNotice, normalize_turn_notices
 
 from ..enums import (
     AddressingEvidenceKind,
     AddressingMode,
+    AssessmentLabel,
     InteractionEntityKind,
     TurnTakingAction,
     TurnTakingMode,
 )
 
 
-def _validate_candidate(turn_candidate_id: str, candidate_revision: int, confidence: float) -> None:
-    if not turn_candidate_id:
-        raise ValueError("turn_candidate_id cannot be empty")
-    if candidate_revision <= 0:
-        raise ValueError("candidate_revision must be positive")
+def _validate_input(input_id: str, revision: int, confidence: float) -> None:
+    if not input_id:
+        raise ValueError("input_id cannot be empty")
+    if revision <= 0:
+        raise ValueError("revision must be positive")
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be between 0 and 1")
 
@@ -59,11 +66,12 @@ def _annotation(
 class InteractionEntityRef:
     kind: InteractionEntityKind
     entity: PerceptionEntityRef | None = None
-    transport_participant_id: str | None = None
+    device_id: DeviceId | None = None
+    source: PerceptionSourceRef | None = None
 
     def __post_init__(self) -> None:
-        if self.transport_participant_id == "":
-            raise ValueError("transport_participant_id cannot be empty")
+        if self.device_id == "":
+            raise ValueError("device_id cannot be empty")
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"kind": self.kind.value}
@@ -71,18 +79,23 @@ class InteractionEntityRef:
         if self.entity is not None:
             data["entity"] = self.entity.to_dict()
 
-        if self.transport_participant_id is not None:
-            data["transport_participant_id"] = self.transport_participant_id
+        if self.device_id is not None:
+            data["device_id"] = self.device_id
+
+        if self.source is not None:
+            data["source"] = self.source.to_dict()
 
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InteractionEntityRef:
         entity = data.get("entity")
+        source = data.get("source")
         return cls(
             kind=InteractionEntityKind(data["kind"]),
             entity=PerceptionEntityRef.from_dict(entity) if entity else None,
-            transport_participant_id=data.get("transport_participant_id"),
+            device_id=data.get("device_id"),
+            source=PerceptionSourceRef.from_dict(source) if source else None,
         )
 
 
@@ -95,11 +108,14 @@ class InteractionAddressingEvidence:
     addressing_mode: AddressingMode
     confidence: float
 
+    label: AssessmentLabel = AssessmentLabel.UNKNOWN
     evidence_label: str | None = None
     raw_score: float | None = None
     evidence_observation_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.label, AssessmentLabel):
+            raise TypeError("Addressing evidence label must be an AssessmentLabel")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
 
@@ -114,7 +130,7 @@ class InteractionAddressingEvidence:
 
     @property
     def abstains(self) -> bool:
-        return self.addressing_mode == AddressingMode.UNKNOWN
+        return self.label == AssessmentLabel.UNKNOWN
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -123,6 +139,7 @@ class InteractionAddressingEvidence:
             "addressees": [addressee.to_dict() for addressee in self.addressees],
             "addressing_mode": self.addressing_mode.value,
             "confidence": self.confidence,
+            "label": self.label.value,
             "evidence_observation_ids": list(self.evidence_observation_ids),
         }
 
@@ -145,6 +162,7 @@ class InteractionAddressingEvidence:
             ),
             addressing_mode=AddressingMode(data["addressing_mode"]),
             confidence=float(data["confidence"]),
+            label=AssessmentLabel(data["label"]),
             evidence_label=data.get("evidence_label"),
             raw_score=(float(data["raw_score"]) if data.get("raw_score") is not None else None),
             evidence_observation_ids=tuple(data.get("evidence_observation_ids", ())),
@@ -174,114 +192,59 @@ class InteractionAddressingEvidence:
 
 
 @dataclass(frozen=True, slots=True)
-class InteractionAddressing:
-    turn_candidate_id: str
-    candidate_revision: int
-    speaker: InteractionEntityRef
-    addressees: tuple[InteractionEntityRef, ...]
-    addressing_mode: AddressingMode
-    confidence: float
-    evidence_observation_ids: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        _validate_candidate(self.turn_candidate_id, self.candidate_revision, self.confidence)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "turn_candidate_id": self.turn_candidate_id,
-            "candidate_revision": self.candidate_revision,
-            "speaker": self.speaker.to_dict(),
-            "addressees": [entity.to_dict() for entity in self.addressees],
-            "addressing_mode": self.addressing_mode.value,
-            "confidence": self.confidence,
-            "evidence_observation_ids": list(self.evidence_observation_ids),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> InteractionAddressing:
-        return cls(
-            turn_candidate_id=data["turn_candidate_id"],
-            candidate_revision=int(data["candidate_revision"]),
-            speaker=InteractionEntityRef.from_dict(data["speaker"]),
-            addressees=tuple(
-                InteractionEntityRef.from_dict(entity) for entity in data.get("addressees", ())
-            ),
-            addressing_mode=AddressingMode(data["addressing_mode"]),
-            confidence=float(data["confidence"]),
-            evidence_observation_ids=tuple(data.get("evidence_observation_ids", ())),
-        )
-
-    @classmethod
-    def from_annotation(cls, annotation: EnvAnnotation) -> InteractionAddressing:
-        if annotation.kind != AnnotationKind.INTERACTION_ADDRESSING:
-            raise ValueError(
-                f"Expected {AnnotationKind.INTERACTION_ADDRESSING.value}, "
-                f"got {annotation.kind.value}"
-            )
-        return cls.from_dict(annotation.data)
-
-    def to_annotation(
-        self, *, source: str, observation_id: str | None = None, frame_id: str | None = None
-    ) -> EnvAnnotation:
-        return _annotation(
-            kind=AnnotationKind.INTERACTION_ADDRESSING,
-            source=source,
-            data=self.to_dict(),
-            observation_id=observation_id,
-            frame_id=frame_id,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class TurnTakingDecision:
-    turn_candidate_id: str
-    candidate_revision: int
+    input_id: str
+    revision: int
     turn_mode: TurnTakingMode
     action: TurnTakingAction
     confidence: float
 
-    actor: InteractionEntityRef | None = None
     addressees: tuple[InteractionEntityRef, ...] = ()
     input_observation_ids: tuple[str, ...] = ()
+
+    system_notices: tuple[TurnNotice, ...] = ()
+
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_candidate(self.turn_candidate_id, self.candidate_revision, self.confidence)
+        _validate_input(self.input_id, self.revision, self.confidence)
+        notices = normalize_turn_notices(self.system_notices)
+        if notices and self.action != TurnTakingAction.COMMIT:
+            raise ValueError("System notices require a commit decision")
+        object.__setattr__(self, "system_notices", notices)
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "turn_candidate_id": self.turn_candidate_id,
-            "candidate_revision": self.candidate_revision,
+            "input_id": self.input_id,
+            "revision": self.revision,
             "turn_mode": self.turn_mode.value,
             "action": self.action.value,
             "confidence": self.confidence,
             "addressees": [entity.to_dict() for entity in self.addressees],
             "input_observation_ids": list(self.input_observation_ids),
+            "system_notices": [notice.to_dict() for notice in self.system_notices],
         }
-
-        if self.actor is not None:
-            data["actor"] = self.actor.to_dict()
 
         if self.reason is not None:
             data["reason"] = self.reason
-
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TurnTakingDecision:
-        actor = data.get("actor")
         return cls(
-            turn_candidate_id=data["turn_candidate_id"],
-            candidate_revision=int(data["candidate_revision"]),
+            input_id=data["input_id"],
+            revision=int(data["revision"]),
             turn_mode=TurnTakingMode(data["turn_mode"]),
             action=TurnTakingAction(data["action"]),
             confidence=float(data["confidence"]),
-            actor=InteractionEntityRef.from_dict(actor) if actor else None,
             addressees=tuple(
                 InteractionEntityRef.from_dict(entity) for entity in data.get("addressees", ())
             ),
             input_observation_ids=tuple(data.get("input_observation_ids", ())),
             reason=data.get("reason"),
+            system_notices=tuple(
+                TurnNotice.from_dict(notice) for notice in data.get("system_notices", ())
+            ),
         )
 
     @classmethod
@@ -332,11 +295,10 @@ class TurnTakingAudioEvidence:
 
 @dataclass(frozen=True, slots=True)
 class TurnTakingEvidence:
-    turn_candidate_id: str
-    candidate_revision: int
+    input_id: str
+    revision: int
     turn_mode: TurnTakingMode
 
-    speaker: InteractionEntityRef
     started_at: RuntimeTime
     updated_at: RuntimeTime
 
@@ -350,40 +312,45 @@ class TurnTakingEvidence:
     has_perception_gap: bool = False
 
     def __post_init__(self) -> None:
-        if not self.turn_candidate_id:
-            raise ValueError("turn_candidate_id cannot be empty")
-        if self.candidate_revision <= 0:
-            raise ValueError("candidate_revision must be positive")
+        if not self.input_id:
+            raise ValueError("input_id cannot be empty")
+        if self.revision <= 0:
+            raise ValueError("revision must be positive")
 
 
 @dataclass(frozen=True, slots=True)
 class TurnTakingAssessment:
-    turn_candidate_id: str
-    candidate_revision: int
+    input_id: str
+    revision: int
     turn_mode: TurnTakingMode
 
     confidence: float
     addressing_confidence: float | None = None
 
-    end_of_turn_probability: float | None = None
+    speech_completion: AssessmentLabel = AssessmentLabel.UNKNOWN
+    speech_completion_probability: float | None = None
+    addressing: AssessmentLabel = AssessmentLabel.UNKNOWN
     interruption_probability: float | None = None
     proactive_probability: float | None = None
 
     addressees: tuple[InteractionEntityRef, ...] = ()
     addressing_mode: AddressingMode = AddressingMode.UNKNOWN
-    addressing_evidence_observation_ids: tuple[str, ...] = ()
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.turn_candidate_id:
-            raise ValueError("turn_candidate_id cannot be empty")
-        if self.candidate_revision <= 0:
-            raise ValueError("candidate_revision must be positive")
+        if not isinstance(self.speech_completion, AssessmentLabel) or not isinstance(
+            self.addressing, AssessmentLabel
+        ):
+            raise TypeError("Assessment judgments must be AssessmentLabel values")
+        if not self.input_id:
+            raise ValueError("input_id cannot be empty")
+        if self.revision <= 0:
+            raise ValueError("revision must be positive")
 
         for name, value in (
             ("confidence", self.confidence),
             ("addressing_confidence", self.addressing_confidence),
-            ("end_of_turn_probability", self.end_of_turn_probability),
+            ("speech_completion_probability", self.speech_completion_probability),
             ("interruption_probability", self.interruption_probability),
             ("proactive_probability", self.proactive_probability),
         ):

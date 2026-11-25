@@ -42,15 +42,41 @@ test = [
     "tiktoken>=0.9.0",
 ]
 typing = ["mypy>=1.14,<2"]
-build = ["build>=1.2,<2", "hatchling>=1.27,<2", "twine>=7.0,<8"]
+# scikit-build-core, CMake and Ninja build the llama-cpp-python wheel packaging/linux ships.
+build = [
+    "build>=1.2,<2",
+    "cmake>=3.31,<5",
+    "hatchling>=1.27,<2",
+    "ninja>=1.11,<2",
+    "scikit-build-core>=0.11,<1",
+    "twine>=7.0,<8",
+]
 dev = [{ include-group = "lint" }, { include-group = "test" }, { include-group = "typing" }]
 docs = ["pdoc3", "setuptools"]
+# What `alphaavatar setup` can install on Linux: packaging/linux builds its catalog from these.
+setup-catalog = [
+    "alpha-avatar-agents[lancedb,qdrant]",
+    "alpha-avatar-host[livekit]",
+    "alpha-avatar-plugins-context",
+    "alpha-avatar-plugins-deepresearch",
+    "alpha-avatar-plugins-loop",
+    "alpha-avatar-plugins-mcp",
+    "alpha-avatar-plugins-memory",
+    "alpha-avatar-plugins-persona[face,speaker]",
+    "alpha-avatar-plugins-provider[langchain,openai]",
+    "alpha-avatar-plugins-router[semantic,turn-taking]",
+    "alpha-avatar-plugins-status",
+    "alpha-avatar-plugins-voice[silero]",
+]
 avatar-agent-all = [
-    "alpha-avatar-agents[vdb]",
+    "alpha-avatar-agents[lancedb,qdrant]",
     "alpha-avatar-host[livekit]",
     "alpha-avatar-plugins-context",
     "alpha-avatar-plugins-loop",
+    "alpha-avatar-plugins-persona[face,speaker]",
     "alpha-avatar-plugins-provider[langchain,openai]",
+    "alpha-avatar-plugins-router[semantic,turn-taking]",
+    "alpha-avatar-plugins-voice[silero]",
 ]
 
 [tool.ruff]
@@ -72,6 +98,8 @@ ignore = ["E501", "B904"]
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["alphaavatar"]
+# The PyPI library, not the repository's packaging/ directory of build scripts.
+known-third-party = ["packaging"]
 split-on-trailing-comma = false
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
@@ -86,7 +114,26 @@ skip-magic-trailing-comma = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["--import-mode=importlib", "--ignore=examples"]
+# Large samples come from their Dataset only when asked for: pytest -m large_samples.
+addopts = [
+    "--import-mode=importlib",
+    "--ignore=examples",
+    "--strict-markers",
+    "--strict-config",
+    "-m",
+    "not large_samples",
+]
+testpaths = ["avatar-core/tests", "avatar-agents/tests", "avatar-host/tests", "avatar-plugins/*/*/tests"]
+# Spawned inference children resolve test runners by module name; tests share small samples.
+pythonpath = ["avatar-agents/tests", "avatar-agents/tests/runtime/inference", "avatar-host/tests"]
+xfail_strict = true
+markers = [
+    "stress: synthetic pressure test; --stress-seconds extends it beyond one bounded round",
+    "large_samples(*names): needs these samples of tests/fixtures/large_samples.json, fetched",
+]
+faulthandler_timeout = 60
+tmp_path_retention_policy = "failed"
+filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]
 
 [tool.mypy]
 python_version = "3.13"

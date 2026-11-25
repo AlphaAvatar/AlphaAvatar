@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import math
 import os
 
@@ -20,20 +21,25 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
+from alphaavatar.agents.runtime.plugin import plugin_requirement
 
-from ...log import logger
-from .fbank import FBank
+from ...namespace import NAMESPACE
 from .model_files import SpeakerModelType, resolve_speaker_model_path
+
+logger = logging.getLogger(__name__)
 
 
 class SpeakerVectorRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.speaker.vector"
-    MODEL_TYPE: SpeakerModelType = "eres2netv2"
+    REQUIRES = (plugin_requirement(NAMESPACE, "speaker"),)
+    MODEL_TYPE: SpeakerModelType = "campplus"
 
     def initialize(self) -> None:
         import onnxruntime as ort
 
-        path = resolve_speaker_model_path(self.MODEL_TYPE)
+        from .fbank import FBank
+
+        path = resolve_speaker_model_path(self.MODEL_TYPE, models_dir=self.launch.models_dir)
         options = ort.SessionOptions()
         options.intra_op_num_threads = max(1, min(math.ceil(available_cpu_count()) // 2, 4))
         options.inter_op_num_threads = 1
@@ -49,7 +55,7 @@ class SpeakerVectorRunner(InferenceRunner):
             providers = available
 
         self._session = ort.InferenceSession(path, providers=providers, sess_options=options)
-        self._input_names = [item.name for item in self._session.get_inputs()]
+        (self._input_name,) = (item.name for item in self._session.get_inputs())
         self._output_names = [item.name for item in self._session.get_outputs()]
         logger.info(
             "%s ready providers=%s threads=%d",
@@ -63,6 +69,6 @@ class SpeakerVectorRunner(InferenceRunner):
         waveform = np.frombuffer(data, dtype=np.float32)
         if not waveform.size or not np.isfinite(waveform).all():
             raise ValueError("Speaker waveform must contain finite float32 samples")
-        inputs = {"feature": self._feature_extractor(waveform)}
+        inputs = {self._input_name: self._feature_extractor(waveform)}
         embedding = self._session.run(None, inputs)[0]
         return embedding.tobytes()

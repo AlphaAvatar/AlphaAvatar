@@ -21,7 +21,8 @@ from collections.abc import Sequence
 from alphaavatar.core.log.diagnostics import format_error
 
 
-def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
+def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
+    describe = format_error
     logs = None
     stage = "configure Host logging"
     result = 2
@@ -30,26 +31,54 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
 
         logs = HostLog(devmode=devmode)
         stage = "import configuration loader"
-        from alphaavatar.agents.env import init_env
-        from alphaavatar.host.configs.loader import load_application
+        from alphaavatar.host.configs import (
+            check_application_paths,
+            check_capabilities,
+            format_failure,
+            load_application,
+            select_configuration,
+            validate_plugin_settings,
+        )
+        from alphaavatar.host.configs.credentials import load_environment
+
+        describe = format_failure
 
         stage = "load environment"
-        init_env()
+        # The .env file, then the credentials setup stored, from one read of the settings.
+        settings = load_environment(overrides)
         logs.refresh_secrets()
+
+        stage = "select application configuration"
+        source = select_configuration(target, overrides, settings)  # The same read's default.
         stage = "load application configuration"
-        config = load_application(path, overrides)
+        config = load_application(source, overrides, settings)  # And the credentials it names.
+        logs.refresh_secrets()
+        stage = "validate plugin settings"
+        validate_plugin_settings(config)
+        stage = "check the installed capabilities"
+        check_capabilities(config)  # Before anything starts: downloads belong to setup.
+
+        stage = "prepare application paths"
+        from alphaavatar.agents.workspace import prepare_workspace
+        from alphaavatar.host.workspace import prepare_application
+
+        check_application_paths(config)
+        prepare_application(config.paths)
+        prepare_workspace(config.workspace)
+
         stage = "activate Host logging"
-        logs.activate(config.host.log, workspace=config.avatar.avatar.work_dir)
+        logs.activate(config.host.log, workspace=str(config.workspace.root))
         result = 1
 
         async def serve() -> None:
             nonlocal stage
             stage = "import Host"
-            from alphaavatar.host.application.application import AvatarHost
-            from alphaavatar.host.application.signals import shutdown_signals
+            from alphaavatar.host.service.application.application import AvatarHost
+            from alphaavatar.host.service.application.signals import shutdown_signals
 
             stage = "construct Host"
             host = AvatarHost(config, devmode=devmode)
+
             stage = "run Host"
             with shutdown_signals(host.stop_event.set):
                 await host.run()
@@ -61,7 +90,7 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
     except KeyboardInterrupt:
         result = 130
     except Exception as error:
-        diagnostic = format_error(error, details=devmode)
+        diagnostic = describe(error, details=devmode)
         try:
             if logs is None:
                 raise RuntimeError("Host logging is unavailable")

@@ -16,10 +16,9 @@ from .chunk import OutputTextChunk, OutputTranscriptChunk
 from .control import OutputCompletionBarrier, OutputControl
 from .decision import OutputStatusDecision
 from .event import OutputEvent, OutputJournalEvent
-from .identity import OutputIdentity
+from .identity import OutputIdentity, OutputScope, OutputSource
 from .playback import OutputPlayback
-from .records import OutputExecutionSignal, OutputRecordBatch, OutputScope
-from .source import OutputSource
+from .records import OutputExecutionSignal, OutputRecordBatch
 from .timeline import OutputAudioSummary, OutputTimelineEntry
 
 __all__ = [

@@ -25,7 +25,6 @@ class RAGRequest(BaseModel):
     data_source: str = Field(default="all", min_length=1)
     query: str | None = Field(default=None, min_length=1)
     file_paths_or_dir: list[str] | None = Field(default=None, min_length=1)
-    monologue: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def validate_operation(self) -> RAGRequest:

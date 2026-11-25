@@ -21,12 +21,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProvidersConfig
 from alphaavatar.agents.utils import sha256_text
 
 from .base import LLMBase, StreamingLLMBase
 from .errors import ModelCapabilityError
 from .registry import ProviderRegistry
-from .schemas import ModelRequest, ProviderResult, ProvidersConfig, ProviderTraceRecord
+from .schemas import ModelRequest, ProviderResult, ProviderTraceRecord
 from .schemas.prompt import ModelPrompt
 from .schemas.stream import ModelStreamEvent
 from .trace import ProviderTracer, safe_json_dumps, to_jsonable
@@ -66,6 +67,11 @@ class ProviderGateway:
             if require_streaming and not isinstance(model, StreamingLLMBase):
                 raise ModelCapabilityError(f"Task {task_name!r} requires a streaming model")
             model.validate_input(require_input_adapter=require_input_adapter)
+
+    def prepare(self, task_names: Iterable[str]) -> None:
+        """Start each task model's own preparation, before its first request (O-15)."""
+        for task_name in task_names:
+            self._model(task_name).prepare()
 
     async def _invoke_structured(
         self,

@@ -6,8 +6,7 @@ The default Context manager is created by Host against a partial AvatarRuntime a
 
 Use `runtime.foundation.context` through the public ContextManager contract:
 
-- `accept_turn(snapshot)` accepts a committed Turn and supplies its current input seed.
-- `prepare(ContextPrepareRequest)` captures the native history, perception and query prefix.
+- `prepare(ContextPrepareRequest)` accepts the committed Turn from Loop and prepares its history, perception and query prefix.
 - `build(prefix, continuation=...)` appends execution continuation without refreshing State.
 
 There is no parallel query-manager API. ContextContribution and ContextPrepareRequest live in the public `alphaavatar.agents.avatar.context.schemas` namespace.
@@ -18,9 +17,9 @@ State and static `loop_budget` use the synthetic `alphaavatar_runtime_context` f
 
 ## Native history
 
-The manager retains bounded history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns; Engine does not reconstruct assistant/tool records from a LoopResult or inject Memory writes.
+The manager retains the whole history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns, including turns superseded before preparation. A system notice enters the current user message as a typed text part at the corresponding speech segment. History preserves the notice facts and their order when the snapshot retains the timing evidence.
 
-Incomplete tool-call/output pairs are excluded from the next model input. Retiring Run results remain associated with their original identity and do not resurrect evicted Turns. Context acknowledgement is independent of Memory acknowledgement and is not a database-persistence guarantee.
+Incomplete tool-call/output pairs are excluded from the next model input. Retiring Run results remain associated with their original identity. Context acknowledgement is independent of Memory acknowledgement and is not a database-persistence guarantee.
 
 ```yaml
 context:
@@ -28,12 +27,11 @@ context:
   init_config:
     behavior_rules: "Follow the application's execution and authorization policies."
     max_pending_preparations: 16
-    history_max_turns: 32
-    history_max_items: 4096
-    history_max_bytes: 8388608
 ```
 
-The history byte limit bounds serialized retained content, not total process memory or shared media caches. Eviction respects whole-Turn history ownership.
+History keeps the complete user message throughout the session, as ContextBuilder first built it, including the order and captured content of its media. After capture, the manager uses ContextCompressor to replace historical image payloads with `<image_not_replayed />` at their original position in the outgoing request. The current Turn carries its complete user message and its own runtime context.
+
+Profiles that still set `history_max_turns`, `history_max_items` or `history_max_bytes` load, and those values are ignored.
 
 StateRuntime.global_behavior_rules may originate from client metadata. It is captured as reference/preferences, not promoted into application system instructions. Binding Memory/Persona sources does not transfer their ownership.
 

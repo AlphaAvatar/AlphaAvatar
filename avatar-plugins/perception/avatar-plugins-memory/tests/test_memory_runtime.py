@@ -1,0 +1,1117 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Memory extraction input, checkpoints and shutdown order on a real SQLite workspace."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from collections.abc import Awaitable, Callable
+from datetime import date
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import alphaavatar.plugins.memory  # noqa: F401  Registers the default Memory plugin.
+from alphaavatar.agents.avatar.provider.base import LLMBase
+from alphaavatar.agents.avatar.provider.enums import ModelRole
+from alphaavatar.agents.avatar.provider.records import model_record_batch
+from alphaavatar.agents.avatar.provider.schemas.model_input import (
+    ModelFunctionCall,
+    ModelFunctionOutput,
+    ModelInputMessage,
+    ModelTextPart,
+)
+from alphaavatar.agents.avatar.provider.schemas.model_result import ProviderModelResult
+from alphaavatar.agents.memory.enums import MemoryKind, MemoryOwnerKind, MemoryScopeKind, MemoryType
+from alphaavatar.agents.memory.schemas import (
+    MemoryCheckpointAdvance,
+    MemoryContextRef,
+    MemoryItem,
+    MemoryOwnerRef,
+    MemoryScope,
+)
+from alphaavatar.agents.memory.store import MemoryCheckpointConflict, MemoryStoreConflict
+from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
+from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
+from alphaavatar.core.media import TextPayload
+from alphaavatar.core.output import OutputRuntime
+from alphaavatar.core.output.schemas import OutputScope
+from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.session import SessionRuntime
+from alphaavatar.core.session.enums import EntityKind, IdentityOutcome, IdentitySource
+from alphaavatar.core.session.schemas import IdentityBasis, IdentityRequest
+from alphaavatar.core.time import RuntimeTimeRange
+from alphaavatar.core.turn import TurnRuntime
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
+from alphaavatar.plugins.memory.processors.environment.config import EnvironmentSchedulerConfig
+from alphaavatar.plugins.memory.processors.environment.scheduler import EnvMemoryScheduler
+from alphaavatar.plugins.memory.schemas.patch import MemoryDelta, PatchOp
+from alphaavatar.plugins.memory.state import MemoryContextState
+from alphaavatar.plugins.memory.storage.sqlite import SQLiteMemoryStore
+
+HANG_GUARD = 30
+Script = Callable[[str], Awaitable[MemoryDelta]]
+
+
+class ScriptedLLM(LLMBase):
+    """Offline structured model; each configured task model name selects one script."""
+
+    def __init__(self, script: Script) -> None:
+        self.script, self.prompts = script, []
+
+    def validate_input(self, *, require_input_adapter: bool = False) -> None:
+        pass
+
+    async def ainvoke_structured(self, model_input, *, output_schema, include_raw=False):
+        prompt = "\n".join(item.text or "" for item in model_input.items)
+        self.prompts.append(prompt)
+        return ProviderModelResult(output=await self.script(prompt))
+
+    async def aclose(self) -> None:
+        pass
+
+
+class ScriptedProviders(ProviderService):
+    def __init__(self, **scripts: Script) -> None:
+        super().__init__()
+        self.models = {name: ScriptedLLM(script) for name, script in scripts.items()}
+
+    def model(self, config):
+        self._ensure_open()
+        return self.models[config.model]
+
+
+class RecordingInference:
+    """In-process stand-in for the Memory VDB runner transport."""
+
+    def __init__(self) -> None:
+        self.operations: list[str] = []
+
+    async def do_inference(self, method: str, data: bytes) -> bytes:
+        request = json.loads(data)
+        self.operations.append(request["op"])
+        if request["op"] == "search_similar_batch":
+            return json.dumps({"results": [[] for _ in request["param"]["texts"]]}).encode()
+        return json.dumps({"candidates": [], "saved": True}).encode()
+
+    async def close(self) -> None:
+        pass
+
+
+async def empty(prompt: str) -> MemoryDelta:
+    return MemoryDelta()
+
+
+def gateway(model: str) -> dict:
+    return {"trace": {"enabled": False}, "tasks": {"task": {"model": model}}}
+
+
+def avatar_runtime(root: Path, providers: ProviderService) -> AvatarRuntime:
+    workspace = WorkspacePaths.from_root(root / "avatar")
+    prepare_workspace(workspace)
+    session = SessionRuntime(session_id="session")
+    session_path = workspace.data.sessions.get("session", date(2026, 11, 2))
+    prepare_session_path(session_path)
+    perception = PerceptionRuntime(
+        session_id="session",
+        stream_maxlens=dict.fromkeys(PerceptionStreamKind, 64),
+        clock=session.clock,
+    )
+    # A short Turn window proves Memory retains its own references to unextracted input.
+    turn = TurnRuntime(perception=perception, max_snapshots=16, event_maxlen=512)
+    return AvatarRuntime(
+        clock=session.clock,
+        workspace=workspace,
+        session_path=session_path,
+        session=session,
+        perception=perception,
+        turn=turn,
+        output=OutputRuntime(session_id="session", clock=session.clock),
+        state=StateRuntime(),
+        participants=ParticipantRuntime(session=session, workspace=workspace, turn=turn),
+        inference=RecordingInference(),
+        foundation=SimpleNamespace(provider=providers, aclose=providers.aclose),
+    )
+
+
+def memory_for(runtime: AvatarRuntime, *, environment: bool = False):
+    """Memory as configured for these tests; with ``environment``, its capture on too."""
+    init_config = {
+        "retrieval": {"enabled": False},
+        "conversation": {
+            "provider": {"task": "task", "gateway": gateway("conversation")},
+            "pipeline": {"consolidation": {"mode": "off"}},
+        },
+        "tool": {"provider": {"task": "task", "gateway": gateway("tool")}},
+    }
+    if environment:
+        init_config["environment"] = {
+            "enabled": True,
+            "provider": {"task": "task", "gateway": gateway("environment")},
+        }
+    return AvatarModulePlugin.create(
+        AvatarModule.MEMORY,
+        "default",
+        runtime=runtime,
+        avatar_id="avatar",
+        maximum_memory_num=24,
+        vdb_config={},
+        init_config=init_config,
+    )
+
+
+async def wait_until(condition: Callable[[], bool], failure: str) -> None:
+    try:
+        async with asyncio.timeout(HANG_GUARD):
+            while not condition():
+                await asyncio.sleep(0.001)
+    except TimeoutError:
+        pytest.fail(failure, pytrace=False)
+
+
+async def checkpoint(runtime: AvatarRuntime, context_id: str, processor: str) -> int:
+    backend = SQLiteMemoryStore(runtime.workspace.data.memory.records_file)
+    await backend.initialize()
+    return await backend.get_checkpoint(context_id=context_id, processor=processor)
+
+
+def commit_turn(runtime: AvatarRuntime, actor: TurnEntityRef, index: int, text: str, *contexts):
+    """Typed on the participant's own device: the Turn's participant is read from it."""
+    device = f"device-{actor.participant_id}"
+    runtime.participants.bind_device(device, actor.participant_id)
+    observation = EnvObservation(
+        kind=ObservationKind.TEXT_INPUT,
+        time_range=RuntimeTimeRange.point(runtime.perception.clock.now()),
+        source=PerceptionSourceRef(device, 1),
+        payload=TextPayload.create(text=text),
+        device_id=device,
+    )
+    return runtime.turn.commit_input(
+        input_id=f"input-{index}",
+        modality=TurnInputModality.TEXT,
+        text=text,
+        final_observations=(observation,),
+        context_ids=contexts,
+    )
+
+
+def speaker(runtime: AvatarRuntime) -> TurnEntityRef:
+    participant = runtime.participants.join(user_id="alice", primary=True)
+    return TurnEntityRef(
+        participant_id=participant.participant_id,
+        user_id=participant.user_id,
+        identity_revision=participant.identity_revision,
+    )
+
+
+def memory_tasks() -> set[asyncio.Task]:
+    return {task for task in asyncio.all_tasks() if task.get_name().startswith("memory")}
+
+
+@pytest.mark.parametrize("outcome", ["provider-failure", "empty-success"])
+async def test_failed_extraction_keeps_checkpoint_and_input_while_empty_success_advances(
+    outcome: str, tmp_path: Path
+) -> None:
+    async def conversation(prompt: str) -> MemoryDelta:
+        if outcome == "provider-failure":
+            raise ConnectionError("provider offline")
+        return MemoryDelta()
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=conversation, tool=empty))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    snapshots = [commit_turn(runtime, actor, index, f"fact {index}") for index in range(2)]
+    state = memory.context_state(memory.root_context_id)
+    await wait_until(lambda: state.message_sequence == 2, "Memory never received both Turns")
+
+    if outcome == "provider-failure":
+        with pytest.raises(ExceptionGroup) as failed:
+            await memory.on_stop()
+        assert failed.group_contains(ConnectionError)
+    else:
+        await memory.on_stop()
+
+    expected = 0 if outcome == "provider-failure" else 2
+    assert await checkpoint(runtime, state.context_id, "conversation") == expected
+    # The tool extractor has no tool evidence; its empty success still acknowledges input.
+    assert await checkpoint(runtime, state.context_id, "tool") == 2
+    assert all(
+        held is snapshot
+        for held, snapshot in zip(state.messages_between(0, 2), snapshots, strict=True)
+    )
+    assert not memory_tasks()
+    await runtime.aclose()
+
+
+async def test_a_turn_is_ready_for_context_before_memory_records_it(tmp_path: Path) -> None:
+    # Context reads nothing Memory records from a Turn, so its readiness never waits for
+    # Memory's Turn consumer, which records the Turn on its own.
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    snapshot = commit_turn(runtime, actor, 0, "hello")
+    state = memory.context_state(memory.root_context_id)
+    assert state.message_sequence == 0  # Memory has not run since the commit
+    assert runtime.turn.pending_context_consumers(snapshot) == ()
+    assert await runtime.turn.wait_context_ready(snapshot, timeout=0)
+
+    await wait_until(lambda: state.message_sequence == 1, "Memory never recorded the Turn")
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+async def test_each_context_consumer_logs_how_long_it_held_the_turn(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The consumers are awaited together: each says what it alone held the Turn's Context for.
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+
+    async def slow(snapshot: object) -> None:
+        await asyncio.sleep(0.02)
+
+    runtime.turn.register_context_consumer("test.slow", waiter=slow)
+    snapshot = commit_turn(runtime, speaker(runtime), 0, "hello")
+    with caplog.at_level(logging.DEBUG, logger="alphaavatar.core.turn"):
+        assert await runtime.turn.wait_context_ready(snapshot, timeout=1)
+    (line,) = (
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Turn context consumer consumer_id=test.slow ")
+    )
+    assert f"turn_id={snapshot.turn_id} outcome=done wait_ms=" in line
+    assert float(line.rsplit("wait_ms=", 1)[1]) >= 20
+    runtime.turn.unregister_context_consumer("test.slow")
+    await runtime.aclose()
+
+
+async def test_finalization_extracts_complete_untruncated_input_without_background_updates(
+    tmp_path: Path,
+) -> None:
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+
+    oversized = "".join(f"<{index:05d}>" for index in range(6000))
+    first = commit_turn(runtime, actor, 0, oversized)
+    runtime.output.publish_records(
+        model_record_batch(
+            batch_id="records-0",
+            source="test",
+            scope=OutputScope(context_id=memory.root_context_id, turn_id=first.turn_id),
+            identity_basis=runtime.participants.identity_basis(first),
+            items=(
+                ModelInputMessage(
+                    id="assistant-0", role=ModelRole.ASSISTANT, parts=(ModelTextPart("noted"),)
+                ),
+                ModelFunctionCall(id="call-0", call_id="c0", name="lookup", arguments='{"q":1}'),
+                ModelFunctionOutput(
+                    id="output-0",
+                    call_id="c0",
+                    name="lookup",
+                    parts=(ModelTextPart("tool says hi"),),
+                    is_error=False,
+                ),
+            ),
+        )
+    )
+    later = [commit_turn(runtime, actor, index, f"turn {index}") for index in range(1, 151)]
+    state = memory.context_state(memory.root_context_id)
+    await wait_until(lambda: state.message_sequence == 154, "Memory did not retain every input")
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    models = runtime.foundation.provider.models
+    assert not models["conversation"].prompts and not models["tool"].prompts
+    held = [
+        item
+        for item in state.messages_between(0, state.message_sequence)
+        if isinstance(item, TurnSnapshot)
+    ]
+    assert all(left is right for left, right in zip(held, [first, *later], strict=True))
+    # Core already evicted the early Turn; Memory still owns its unextracted reference.
+    assert runtime.turn.get(first.input_id) is None
+
+    await memory.on_stop()
+    (conversation,) = models["conversation"].prompts
+    (tool,) = models["tool"].prompts
+    assert oversized in conversation and "turn 150" in conversation
+    assert '{"q":1}' in tool and "tool says hi" in tool and oversized in tool
+    for processor in ("conversation", "tool"):
+        assert await checkpoint(runtime, state.context_id, processor) == 154
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("extraction failed"), asyncio.CancelledError()])
+async def test_failed_or_cancelled_context_waits_for_all_finalization_before_store_closes(
+    failure: BaseException, tmp_path: Path
+) -> None:
+    entered, failed, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def conversation(prompt: str) -> MemoryDelta:
+        if "side context" in prompt:
+            entered.set()
+            await release.wait()
+            return MemoryDelta()
+        failed.set()
+        raise failure
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=conversation, tool=empty))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    root = memory.context_state(memory.root_context_id)
+    side = memory.open_context(
+        context=MemoryContextRef(
+            episode_id=root.context.episode_id,
+            context_id="side",
+            session_id="session",
+            parent_context_id=root.context_id,
+        ),
+        provider_dir=runtime.session_path.provider_dir,
+        owner_refs=[MemoryOwnerRef.avatar("avatar")],
+    )
+    commit_turn(runtime, actor, 0, "root context")
+    commit_turn(runtime, actor, 1, "side context", "side")
+    await wait_until(
+        lambda: root.message_sequence == side.message_sequence == 1, "Turns were not routed"
+    )
+
+    stopping = asyncio.create_task(memory.on_stop())
+    async with asyncio.timeout(HANG_GUARD):
+        await asyncio.gather(entered.wait(), failed.wait())
+    for _ in range(10):
+        await asyncio.sleep(0)
+    # The failed context has settled, yet the Store stays open for the other one: its
+    # finalization still commits after the release below.
+    assert not stopping.done()
+
+    release.set()
+    with pytest.raises(ExceptionGroup) as stopped:
+        await stopping
+    assert stopped.group_contains(type(failure) if isinstance(failure, Exception) else RuntimeError)
+    assert await checkpoint(runtime, "side", "conversation") == 1
+    assert await checkpoint(runtime, root.context_id, "conversation") == 0
+    assert await checkpoint(runtime, root.context_id, "tool") == 1
+    assert not memory_tasks()
+    await runtime.aclose()
+
+
+def tool_records(
+    runtime: AvatarRuntime,
+    context_id: str,
+    snapshot: TurnSnapshot,
+    tag: str,
+    basis: IdentityBasis | None = None,
+) -> None:
+    runtime.output.publish_records(
+        model_record_batch(
+            batch_id=f"records-{tag}",
+            source="test",
+            scope=OutputScope(context_id=context_id, turn_id=snapshot.turn_id),
+            identity_basis=runtime.participants.identity_basis(snapshot)
+            if basis is None
+            else basis,
+            items=(
+                ModelFunctionCall(
+                    id=f"call-{tag}", call_id=f"c-{tag}", name="lookup", arguments='{"q":2}'
+                ),
+                ModelFunctionOutput(
+                    id=f"output-{tag}",
+                    call_id=f"c-{tag}",
+                    name="lookup",
+                    parts=(ModelTextPart(f"<{tag} result>"),),
+                    is_error=False,
+                ),
+            ),
+        )
+    )
+
+
+def open_side(runtime: AvatarRuntime, memory, *participants) -> MemoryContextState:
+    root = memory.context_state(memory.root_context_id)
+    return memory.open_context(
+        context=MemoryContextRef(
+            episode_id=root.context.episode_id,
+            context_id="side",
+            session_id="session",
+            parent_context_id=root.context_id,
+        ),
+        provider_dir=runtime.session_path.provider_dir,
+        owner_refs=[MemoryOwnerRef.avatar("avatar")],
+        participants=participants,
+    )
+
+
+async def test_failed_tool_extraction_keeps_its_checkpoint_and_surfaces_at_close(
+    tmp_path: Path,
+) -> None:
+    async def tool(prompt: str) -> MemoryDelta:
+        raise ConnectionError("tool provider offline")
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=tool))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    turn = commit_turn(runtime, actor, 0, "look this up")
+    tool_records(runtime, memory.root_context_id, turn, "root")
+    state = memory.context_state(memory.root_context_id)
+    await wait_until(lambda: state.message_sequence == 3, "Memory never received the tool records")
+    held = state.messages_between(0, 3)
+
+    with pytest.raises(ExceptionGroup) as failed:
+        await memory.on_stop()
+    assert failed.group_contains(ConnectionError)
+    assert await checkpoint(runtime, state.context_id, "tool") == 0
+    # The failed processor does not stop another processor's finalization.
+    assert await checkpoint(runtime, state.context_id, "conversation") == 3
+    assert held[0] is turn
+    assert all(
+        left is right for left, right in zip(state.messages_between(0, 3), held, strict=True)
+    )
+    assert not memory.memory_state.get(memory_type=MemoryType.TOOLS)
+    assert not memory_tasks()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("tool failed"), asyncio.CancelledError()], ids=["error", "cancelled"]
+)
+async def test_tool_failure_in_one_context_never_fail_fasts_the_other_contexts(
+    failure: BaseException, tmp_path: Path
+) -> None:
+    entered, failed, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def tool(prompt: str) -> MemoryDelta:
+        if "<side result>" in prompt:
+            entered.set()
+            await release.wait()
+            return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="side lookup kept")])
+        failed.set()
+        raise failure
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=tool))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    root, side = memory.context_state(memory.root_context_id), open_side(runtime, memory)
+    tool_records(runtime, root.context_id, commit_turn(runtime, actor, 0, "root context"), "root")
+    tool_records(runtime, "side", commit_turn(runtime, actor, 1, "side context", "side"), "side")
+    await wait_until(
+        lambda: root.message_sequence == side.message_sequence == 3, "Records were not routed"
+    )
+    (processor,) = (item for item in memory._processors if item.name == "tool")
+
+    stopping = asyncio.create_task(memory.on_stop())
+    async with asyncio.timeout(HANG_GUARD):
+        await asyncio.gather(entered.wait(), failed.wait())
+    for _ in range(20):
+        await asyncio.sleep(0)
+    # The failed context has settled; Tool finalization and the Store stay open, as the
+    # checkpoints committed after the release below show.
+    assert processor.started and not stopping.done()
+
+    release.set()
+    with pytest.raises(ExceptionGroup) as stopped:
+        await stopping
+    assert stopped.group_contains(type(failure) if isinstance(failure, Exception) else RuntimeError)
+    for context_id, name, expected in (
+        ("side", "tool", 3),
+        ("side", "conversation", 3),
+        (root.context_id, "conversation", 3),
+        (root.context_id, "tool", 0),
+    ):
+        assert await checkpoint(runtime, context_id, name) == expected
+    (item,) = memory.memory_state.get(memory_type=MemoryType.TOOLS)
+    assert (item.value, item.context.context_id) == ("side lookup kept", "side")
+    assert not memory_tasks()
+    await runtime.aclose()
+
+
+def correct(runtime: AvatarRuntime, participant_id: str, user_id: str | None) -> None:
+    current = runtime.participants.get(participant_id)
+    request = IdentityRequest(
+        participant_id=participant_id,
+        user_id=user_id,
+        source=IdentitySource.AGENT,
+        expected_revision=current.identity_revision,
+        reason="The user corrected their name",
+    )
+    assert runtime.participants.bind_user(request) is IdentityOutcome.APPLIED
+
+
+@pytest.mark.parametrize("correction", ["none", "before-execution", "after-execution"])
+async def test_model_records_are_attributed_by_their_own_identity_basis(
+    correction: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="alphaavatar.plugins.memory")
+
+    async def tool(prompt: str) -> MemoryDelta:
+        return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers window seats")])
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=tool))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    # Agent tool work is recorded in a child context; the user's Turn lives in the parent.
+    side = open_side(runtime, memory, *runtime.session.participants.values())
+    turn = commit_turn(runtime, actor, 0, "book my usual seat")
+    if correction == "before-execution":
+        correct(runtime, actor.participant_id, "bob")
+    basis = runtime.participants.identity_basis(turn)  # Captured when the execution starts.
+    if correction == "after-execution":
+        correct(runtime, actor.participant_id, "bob")
+    tool_records(runtime, "side", turn, "side", basis=basis)
+    await wait_until(lambda: side.message_sequence == 2, "Memory never received the records")
+    await memory.on_stop()
+
+    (item,) = memory.memory_state.get(memory_type=MemoryType.TOOLS)
+    (ref,) = basis.participants
+    # Durable evidence keeps the record's own basis, not the Turn's or the current identity.
+    assert item.extra_data["session_identity"]["participants"] == [
+        {
+            "participant_id": ref.participant_id,
+            "user_id": ref.user_id,
+            "identity_revision": ref.identity_revision,
+        }
+    ]
+    owners = {(owner.kind, owner.id) for owner in item.owner_refs}
+    kept = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Memory items kept")
+    ]
+    if correction == "after-execution":
+        # A record admitted under a superseded identity never reaches the corrected user.
+        assert ref.user_id == "alice"
+        assert owners == {(MemoryOwnerKind.AVATAR, "avatar")}
+        assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
+        # The log says the batch was kept in its context, and why.
+        assert kept == [
+            f"Memory items kept in their context context_id=side "
+            f"memory_type={MemoryType.TOOLS.value} items=1 reason=unattributed_input"
+        ]
+    else:
+        assert kept == []
+        assert ref.user_id == ("bob" if correction == "before-execution" else "alice")
+        assert owners == {(MemoryOwnerKind.USER, ref.user_id)}
+        assert item.scope.kind is MemoryScopeKind.OWNER
+        assert "unattributed_input" not in item.extra_data
+    await runtime.aclose()
+
+
+def spoken(runtime: AvatarRuntime, text: str) -> tuple[TurnSnapshot, PerceptionSegmentRef, int]:
+    """A transcribed utterance committed as Engine admits it: its speaker association, which
+    Persona settles, still pending."""
+    perception = runtime.perception
+    segment = PerceptionSegmentRef(perception.next_source("microphone"), "segment-1")
+    token = runtime.participants.observe_segment(segment)
+    now = perception.clock.now()
+    transcript = EnvObservation.transcript_segment(
+        time_range=RuntimeTimeRange.point(now),
+        source=segment.source,
+        segment=segment,
+        payload=TextPayload.create(text=text),
+    )
+    perception.publish_observation(transcript)
+    turn = runtime.turn.commit_event_input(
+        input_id="input-0",
+        modality=TurnInputModality.AUDIO,
+        text=text,
+        started_at=now,
+        committed_at=now,
+        cutoff_sequence=perception.latest_event_sequence,
+        input_observation_ids=(transcript.observation_id,),
+        context_ids=(runtime.state.context_id,),
+    )
+    return turn, segment, token
+
+
+@pytest.mark.parametrize("bound", [True, False], ids=["bound-after-admission", "never-bound"])
+async def test_speech_whose_speaker_is_known_only_after_admission_is_the_users_memory(
+    bound: bool, tmp_path: Path
+) -> None:
+    """KD-49: Memory reads a Turn's participants when it extracts, at the session's end, not
+    as Engine admitted it. An utterance whose association settled after its admission, its
+    microphone retired since, is the user's memory; one never associated stays in its
+    context."""
+
+    async def remember(prompt: str) -> MemoryDelta:
+        return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers green tea")])
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=remember, tool=empty))
+    alice = runtime.participants.join(user_id="alice", primary=True)
+    memory = memory_for(runtime)
+    await memory.on_start()
+    turn, segment, token = spoken(runtime, "I prefer green tea")
+    assert [entry.participant_id for entry in runtime.participants.of_turn(turn)] == [None]
+    if bound:
+        voice = PerceptionEntityRef("voice-alice")
+        runtime.participants.ensure_entity(
+            segment.source, voice, kind=EntityKind.SPEAKER, participant_id=alice.participant_id
+        )
+        assert runtime.participants.bind_segment(segment, voice, token=token)
+    runtime.participants.retire_source(segment.source)  # The microphone ends with the session.
+    await memory.on_stop()
+
+    (item,) = memory.memory_state.get(memory_type=MemoryType.CONVERSATION)
+    owners = {(owner.kind, owner.id) for owner in item.owner_refs}
+    if bound:
+        assert item.scope.kind is MemoryScopeKind.OWNER
+        assert owners == {(MemoryOwnerKind.USER, "alice")}
+        assert "unattributed_input" not in item.extra_data
+    else:
+        assert item.scope.kind is MemoryScopeKind.CONTEXT
+        assert owners == {(MemoryOwnerKind.AVATAR, "avatar")}
+        assert item.extra_data["unattributed_input"]
+    await runtime.aclose()
+
+
+def joined(runtime: AvatarRuntime, user_id: str) -> TurnEntityRef:
+    participant = runtime.participants.join(user_id=user_id)
+    return TurnEntityRef(
+        participant_id=participant.participant_id,
+        user_id=participant.user_id,
+        identity_revision=participant.identity_revision,
+    )
+
+
+@pytest.mark.parametrize("batch", ["with-an-unattributed-turn", "of-two-people"])
+async def test_a_batch_kept_in_its_context_stays_its_users_and_only_they_recall_it(
+    batch: str, tmp_path: Path
+) -> None:
+    """A batch kept in its context, for an unattributed Turn or for more than one person, is
+    still its verified users': a recall for one of them finds it, from any context, since a
+    memory is read by its type and owners, never its scope. An anonymous speaker's recall,
+    which only the Avatar's own memory answers, does not; nor does another user's."""
+
+    async def remember(prompt: str) -> MemoryDelta:
+        return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers green tea")])
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=remember, tool=empty))
+    memory, alice = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    if batch == "with-an-unattributed-turn":
+        spoken(runtime, "I prefer green tea")  # Its speaker is never associated.
+        users = ["alice"]
+    else:
+        commit_turn(runtime, joined(runtime, "bob"), 0, "So do I")
+        users = ["alice", "bob"]
+    commit_turn(runtime, alice, 1, "Green tea, please")
+    await memory.on_stop()
+
+    (item,) = memory.memory_state.get(memory_type=MemoryType.CONVERSATION)
+    assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
+    assert {(ref.kind, ref.id) for ref in item.owner_refs} == {
+        (MemoryOwnerKind.USER, user) for user in users
+    }
+    store = SQLiteMemoryStore(runtime.workspace.data.memory.records_file)
+    await store.initialize()
+    avatar = MemoryOwnerRef.avatar("avatar")
+    for owners, found in [
+        *(([avatar, MemoryOwnerRef.user(user)], True) for user in users),
+        ([avatar], False),
+        ([avatar, MemoryOwnerRef.user("carol")], False),
+    ]:
+        visible = await store.resolve_current([item.memory_id], owner_refs=owners)
+        assert [found.memory_id for found in visible] == ([item.memory_id] if found else [])
+    await runtime.aclose()
+
+
+async def test_an_owner_never_verified_is_never_kept(tmp_path: Path) -> None:
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory = memory_for(runtime)
+    speaker(runtime)
+    await memory.on_start()
+    memory.sync_session()
+    state = memory.context_state(memory.root_context_id)
+    (processor,) = (item for item in memory._processors if item.name == "conversation")
+    alice, mallory = MemoryOwnerRef.user("alice"), MemoryOwnerRef.user("mallory")
+
+    for owners, kept in (([alice, mallory], ["user:alice"]), ([mallory], ["avatar:avatar"])):
+        (item,) = processor.build_memory_items(
+            state=state,
+            memory_type=MemoryType.CONVERSATION,
+            patches=[PatchOp(value="prefers green tea")],
+            owner_refs=owners,
+            participant_refs=[],
+            source_refs=[],
+            scope=MemoryScope.owner(),
+            identity=state.capture_identity(),
+        )
+        assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
+        assert [ref.key for ref in item.owner_refs] == kept
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("primary", ["recognized", "provisional", "unbound"])
+async def test_environment_memory_is_its_primary_participants_and_the_avatars_alone(
+    primary: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Environment capture is for whoever opened the session, seen or not: each batch is the
+    session's primary participant's and the Avatar's, never a bystander's, and a stranger in
+    view leaves it in no doubt. The primary participant is a recognized user, or the
+    provisional one a newcomer is given; with no user at all, the batch is the Avatar's alone,
+    which no recall reads. Either way, the extractor sees what it observed before."""
+    caplog.set_level(logging.INFO, logger="alphaavatar.plugins.memory")
+    providers = ScriptedProviders(conversation=empty, tool=empty, environment=empty)
+    runtime = avatar_runtime(tmp_path, providers)
+    opener = runtime.participants.join(
+        user_id="alice" if primary == "recognized" else None, primary=True
+    )
+    if primary == "unbound":
+        correct(runtime, opener.participant_id, None)
+    user = runtime.participants.get(opener.participant_id).user_id
+    bob = joined(runtime, "bob")  # Recognized in view, a bystander.
+    runtime.participants.join()  # A stranger in view.
+    memory = memory_for(runtime, environment=True)
+    await memory.on_start()
+    (processor,) = (item for item in memory._processors if item.name == "environment")
+    previous: list[str | None] = []
+
+    async def extract(*, previous_env_memory: str | None, **_: object) -> SimpleNamespace:
+        previous.append(previous_env_memory)
+        return SimpleNamespace(env_memory_entries=[PatchOp(value=f"lamp {len(previous)} on")])
+
+    processor._provider.extract = extract
+    root = memory.root_context_id
+    start = await checkpoint(runtime, root, "environment")
+    for sequence in (start, start + 1):
+        batch = SimpleNamespace(
+            context_id=root,
+            from_sequence=sequence,
+            to_sequence=sequence + 1,
+            events=(),
+            memory_input=SimpleNamespace(slices=(), observations=()),
+            conversation_context=None,
+            trigger_text="test",
+            missed_count=0,
+            committed=False,
+        )
+        await processor._process_batch(batch, timeout=5.0)
+
+    assert previous[0] is None and "lamp 1 on" in previous[1]
+    items = memory.memory_state.get(memory_type=MemoryType.ENV)
+    owners = {"avatar:avatar", *(() if user is None else (f"user:{user}",))}
+    assert [{ref.key for ref in item.owner_refs} for item in items] == [owners, owners]
+    assert all(item.scope == MemoryScope.context(root) for item in items)
+    kept = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Memory items kept")
+    ]
+    assert len(kept) == (2 if user is None else 0)
+    store = SQLiteMemoryStore(runtime.workspace.data.memory.records_file)
+    await store.initialize()
+    avatar, ids = MemoryOwnerRef.avatar("avatar"), [item.memory_id for item in items]
+    opener_reads = [([avatar, MemoryOwnerRef.user(user)], True)] if user is not None else []
+    for readers, found in [
+        *opener_reads,
+        ([avatar, MemoryOwnerRef.user(bob.user_id)], False),
+        ([avatar], False),
+    ]:
+        visible = await store.resolve_current(ids, owner_refs=readers)
+        assert sorted(item.memory_id for item in visible) == (sorted(ids) if found else [])
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_memory_is_read_by_its_type_and_owners_never_its_scope(tmp_path: Path) -> None:
+    """The Avatar's own memory is every reader's; each user memory, conversation, tools or
+    environment, is its users' only, from any context. A user memory the Avatar owns as well,
+    or alone, is read by no one through the Avatar. SQLite and what is kept for the current
+    Turn agree."""
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory, alice = memory_for(runtime), speaker(runtime)
+    bob = joined(runtime, "bob")
+    await memory.on_start()
+    state = memory.context_state(memory.root_context_id)
+    earlier = state.context.model_copy(update={"context_id": "earlier", "session_id": "earlier"})
+    avatar, a, b = (
+        MemoryOwnerRef.avatar("avatar"),
+        MemoryOwnerRef.user("alice"),
+        MemoryOwnerRef.user("bob"),
+    )
+    kinds = {
+        "the Avatar's": (MemoryType.Avatar, [avatar], MemoryScope.owner()),
+        "alice's, kept in an earlier context": (MemoryType.CONVERSATION, [a], "earlier"),
+        "alice's tools": (MemoryType.TOOLS, [a], MemoryScope.owner()),
+        "alice's surroundings": (MemoryType.ENV, [a, avatar], "earlier"),
+        "unattributed, the Avatar's alone": (MemoryType.CONVERSATION, [avatar], "earlier"),
+        "observed for no one known": (MemoryType.ENV, [avatar], "earlier"),
+        "bob's": (MemoryType.CONVERSATION, [b], MemoryScope.owner()),
+    }
+    items = {
+        name: MemoryItem(
+            context=earlier if scope == "earlier" else state.context,
+            scope=MemoryScope.context("earlier") if scope == "earlier" else scope,
+            owner_refs=owners,
+            value=name,
+            memory_type=memory_type,
+        )
+        for name, (memory_type, owners, scope) in kinds.items()
+    }
+    people = (alice, bob)
+    for context_id in ("earlier", state.context_id):
+        await memory.store.commit(
+            [item for item in items.values() if item.context.context_id == context_id],
+            context_id=context_id,
+            processor="test",
+            idempotency_key=f"seed:{context_id}",
+            participants=people,
+        )
+    turns = {
+        "alice": commit_turn(runtime, alice, 1, "hi", state.context_id),
+        "bob": commit_turn(runtime, bob, 2, "hi", state.context_id),
+        "anonymous": spoken(runtime, "hi")[0],  # input-0
+    }
+    readable = {
+        "alice": {"the Avatar's", *(name for name in items if name.startswith("alice's"))},
+        "bob": {"the Avatar's", "bob's"},
+        "anonymous": {"the Avatar's"},
+    }
+    ids = [item.memory_id for item in items.values()]
+    of_turn = runtime.participants.of_turn
+    for reader, turn in turns.items():
+        identity = state.capture_identity([turn], of_turn=of_turn)
+        owners = [avatar, *(() if identity.unattributed else identity.owner_refs)]
+        stored = await memory.store._backend.resolve_current(ids, owner_refs=owners)
+        kept = memory.visible_items(list(items.values()), identity=identity)
+        assert {item.value for item in stored} == readable[reader], reader
+        assert {item.value for item in kept} == readable[reader], reader
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+async def test_consolidation_looks_for_candidates_in_its_own_scope_alone(tmp_path: Path) -> None:
+    """Consolidation merges only within one scope, so it looks only there: no other scope's
+    hit takes a candidate's place."""
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory, alice = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    state = memory.context_state(memory.root_context_id)
+    scope = MemoryScope.context(state.context_id)
+    fields = {
+        "context": state.context,
+        "scope": scope,
+        "owner_refs": [MemoryOwnerRef.user("alice")],
+        "value": "prefers green tea",
+        "memory_type": MemoryType.CONVERSATION,
+    }
+    atomic = MemoryItem(**fields)
+    item = MemoryItem(**fields, kind=MemoryKind.CONSOLIDATED, source_memory_ids=[atomic.memory_id])
+    items = [atomic, item]
+    await memory.store.commit(
+        items,
+        context_id=state.context_id,
+        processor="test",
+        idempotency_key="seed",
+        participants=(alice,),
+    )
+    # The vector search answers with that memory, recording what it was asked.
+    asked, answer = [], runtime.inference.do_inference
+
+    async def candidates(method: str, data: bytes) -> bytes:
+        request = json.loads(data)
+        if request["op"] != "search_similar_batch":
+            return await answer(method, data)
+        asked.append(request["param"])
+        return json.dumps({"results": [[{"memory_id": item.memory_id, "score": 0.9}]]}).encode()
+
+    runtime.inference.do_inference = candidates
+    (hits,) = await memory.store.search_similar_batch(
+        ["green tea"],
+        owner_refs=[MemoryOwnerRef.user("alice")],
+        scope=scope,
+        memory_type=MemoryType.CONVERSATION,
+        kind=MemoryKind.CONSOLIDATED,
+        top_k=3,
+        participants=(alice,),
+    )
+    (param,) = asked
+    assert param["scope_keys"] == [scope.key] and param["owner_keys"] == ["user:alice"]
+    assert [hit.memory.memory_id for hit in hits] == [item.memory_id]
+    await memory.on_stop()
+    await runtime.aclose()
+
+
+def text_event(perception: PerceptionRuntime) -> None:
+    now = perception.clock.now()
+    perception.publish_observation(
+        EnvObservation(
+            kind=ObservationKind.TEXT_INPUT,
+            time_range=RuntimeTimeRange.point(now),
+            source=PerceptionSourceRef("keyboard", 1),
+        )
+    )
+
+
+@pytest.mark.parametrize("attempts", [2, 1], ids=["recovered", "exhausted"])
+async def test_env_retry_keeps_its_own_range_and_never_absorbs_a_newer_batch(
+    attempts: int, tmp_path: Path
+) -> None:
+    perception = PerceptionRuntime(
+        session_id="session", stream_maxlens=dict.fromkeys(PerceptionStreamKind, 64)
+    )
+    state = MemoryContextState(
+        context=MemoryContextRef(episode_id="episode", context_id="context", session_id="session"),
+        provider_dir=tmp_path,
+        owner_refs=[MemoryOwnerRef.avatar("avatar")],
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls: list[tuple[int, int, int]] = []
+
+    async def process(batch, timeout: float) -> None:
+        calls.append((batch.from_sequence, batch.to_sequence, batch.attempts))
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+            raise ConnectionError("extraction failed")
+
+    scheduler = EnvMemoryScheduler(
+        perception_runtime=perception,
+        context_state=state,
+        initial_cutoff=perception.capture_cutoff(),
+        process=process,
+        render_messages=lambda messages: None,
+        include_audio=False,
+        config=EnvironmentSchedulerConfig(max_attempts=attempts),
+    )
+    await scheduler.start()
+    for _ in range(3):
+        text_event(perception)
+    scheduler.request("first")
+    async with asyncio.timeout(HANG_GUARD):
+        await entered.wait()
+    for _ in range(2):
+        text_event(perception)
+    scheduler.request("second")
+    await wait_until(
+        lambda: scheduler.status["pending_batches"] == 1, "The newer batch was not captured"
+    )
+
+    release.set()
+    if attempts == 2:
+        await wait_until(
+            lambda: scheduler.status["committed_sequence"] == 5, "ENV did not recover in order"
+        )
+        assert calls == [(0, 3, 1), (0, 3, 2), (3, 5, 1)]
+    else:
+        await wait_until(lambda: scheduler.status["state"] == "failed", "ENV failure not surfaced")
+        assert scheduler.status["failure"] == "retry_exhausted"
+    await scheduler.stop(finalize=True)
+    if attempts == 1:
+        # The failed range stays unacknowledged; its successor is never committed over the hole.
+        assert calls == [(0, 3, 1)]
+        assert scheduler.status["committed_sequence"] == 0
+
+
+async def test_env_durable_replay_cannot_rewind_or_overwrite_a_newer_checkpoint(
+    tmp_path: Path,
+) -> None:
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
+    memory = memory_for(runtime)
+    await memory.store.start()
+    context = MemoryContextRef(episode_id="episode", context_id="context", session_id="session")
+
+    def batch(value: str) -> list[MemoryItem]:
+        return [
+            MemoryItem(
+                context=context,
+                scope=MemoryScope.context("context"),
+                owner_refs=[MemoryOwnerRef.avatar("avatar")],
+                value=value,
+                memory_type=MemoryType.ENV,
+            )
+        ]
+
+    async def commit(items: list[MemoryItem], start: int, end: int, key: str | None = None):
+        return await memory.store.commit(
+            items,
+            context_id="context",
+            processor="environment",
+            idempotency_key=key or f"context:environment:{start}:{end}",
+            checkpoint=MemoryCheckpointAdvance(from_sequence=start, to_sequence=end),
+        )
+
+    older, newer = batch("lamp turned on"), batch("door opened")
+    await commit(older, 0, 3)
+    await commit(newer, 3, 5)
+    assert (await commit(older, 0, 3)).duplicate
+    with pytest.raises(MemoryStoreConflict):
+        await commit(batch("re-extracted lamp"), 0, 3)
+    with pytest.raises(MemoryCheckpointConflict):
+        await commit(batch("lamp again"), 0, 3, key="recovery")
+    assert await checkpoint(runtime, "context", "environment") == 5
+    stored = await memory.store.get_many([item.memory_id for item in (*older, *newer)])
+    assert sorted(item.value for item in stored) == ["door opened", "lamp turned on"]
+    await memory.store.stop()
+    await runtime.aclose()
+
+
+async def extract_under_load(root: Path) -> int:
+    runtime = avatar_runtime(root, ScriptedProviders(conversation=empty, tool=empty))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    expected = 0
+    for index in range(300):
+        snapshot = commit_turn(runtime, actor, index, f"<turn {index}>")
+        expected += 1
+        if index % 3 == 0:
+            runtime.output.publish_records(
+                model_record_batch(
+                    batch_id=f"records-{index}",
+                    source="test",
+                    scope=OutputScope(context_id=memory.root_context_id, turn_id=snapshot.turn_id),
+                    identity_basis=runtime.participants.identity_basis(snapshot),
+                    items=(
+                        ModelInputMessage(
+                            id=f"reply-{index}",
+                            role=ModelRole.ASSISTANT,
+                            parts=(ModelTextPart(f"<reply {index}>"),),
+                        ),
+                    ),
+                )
+            )
+            expected += 1
+        if index % 50 == 0:
+            await asyncio.sleep(0)
+    state = memory.context_state(memory.root_context_id)
+    await wait_until(lambda: state.message_sequence == expected, "Memory lost input under load")
+    await memory.on_stop()
+    (prompt,) = runtime.foundation.provider.models["conversation"].prompts
+    assert all(f"<turn {index}>" in prompt for index in range(300))
+    assert all(f"<reply {index}>" in prompt for index in range(0, 300, 3))
+    assert await checkpoint(runtime, state.context_id, "conversation") == expected
+    await runtime.aclose()
+    return expected
+
+
+@pytest.mark.stress
+async def test_sustained_turns_and_records_are_all_extracted_once_at_close(
+    tmp_path: Path, stress_seconds: float
+) -> None:
+    deadline, rounds, inputs = time.monotonic() + stress_seconds, 0, 0
+    while rounds == 0 or time.monotonic() < deadline:
+        inputs += await extract_under_load(tmp_path / f"round-{rounds}")
+        rounds += 1
+    print(f"memory stress rounds={rounds} inputs={inputs} seconds={stress_seconds}")

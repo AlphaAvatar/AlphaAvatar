@@ -19,7 +19,14 @@ class ModelError(Exception):
 
 
 class ModelCapabilityError(ModelError):
-    """The selected backend cannot represent the requested operation without data loss."""
+    """The selected backend cannot represent the requested operation without data loss.
+
+    ``code`` names the capability when the backend knows which one, such as ``image_input``.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class ModelProtocolError(ModelError):

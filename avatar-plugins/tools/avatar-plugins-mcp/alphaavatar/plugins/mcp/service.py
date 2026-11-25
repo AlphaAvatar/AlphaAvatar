@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.capability.schemas import AvatarCapability
 from alphaavatar.agents.tools import ToolBase
 
 from .enums import MCPOp
@@ -42,9 +42,11 @@ Configured MCP server scopes:
 
 
 class MCPToolService(ToolBase):
-    def __init__(self, *, runtime: AvatarRuntime, servers: dict[str, dict[str, Any]]) -> None:
+    def __init__(
+        self, *, runtime: AvatarRuntime, servers: dict[str, dict[str, Any]], inference_method: str
+    ) -> None:
         super().__init__(runtime=runtime)
-        self._service = MCPHost(runtime=runtime, servers=servers)
+        self._service = MCPHost(runtime=runtime, servers=servers, inference_method=inference_method)
         self.capabilities = (
             AvatarCapability(
                 name="MCP",

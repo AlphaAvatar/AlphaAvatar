@@ -18,12 +18,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, ChatMessage, HumanMessage, SystemMessage
 
 from alphaavatar.agents.avatar.provider.enums import ModelRole
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelInput,
-    ModelInputMessage,
-    ModelTextPart,
-    ProviderTaskConfig,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelInput, ModelInputMessage, ModelTextPart
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
 
 class LangChainTextInputAdapter:

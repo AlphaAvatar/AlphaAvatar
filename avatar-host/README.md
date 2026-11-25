@@ -10,14 +10,21 @@ do not depend on Host. The App is not required to run the service.
 alphaavatar/host/
 ├── main.py             # Public alphaavatar command.
 ├── version.py
-├── cli/                # dev/start, arguments, help and version.
+├── cli/                # Commands (dev/start, config, setup, upgrade, cleanup, doctor), arguments and rendering.
 ├── configs/            # Strict Host/Avatar configuration loading.
-├── application/        # Bootstrap, shared services, health and signals.
-├── execution/          # Hosted execution ownership and end policies.
-├── processes/          # Execution subprocesses, IPC and bounded cleanup.
-├── sessions/           # Attachments, modes and backend selection.
-│   └── livekit/        # Native dispatch, connections and Character transport.
-└── log/                # Console, JSONL, previews and optional event diagnostics.
+├── workspace/          # Application, config and cache paths; Workspace continuity.
+├── log/                # Console, JSONL, previews and optional event diagnostics.
+├── service/            # The running Host.
+│   ├── application/    # Bootstrap, shared services, health and signals.
+│   ├── execution/      # Hosted execution ownership and end policies.
+│   ├── processes/      # Execution subprocesses, IPC and bounded cleanup.
+│   └── sessions/       # Attachments, modes and backend selection.
+│       └── livekit/    # Native dispatch, connections and Character transport.
+└── tools/              # Run on demand, beside the service.
+    ├── doctor/         # Static and runtime diagnosis.
+    ├── setup/          # Installation planning and environments.
+    ├── upgrade/        # Switching an installation to another build once checked.
+    └── cleanup/        # Removing the environments and builds current does not use.
 ```
 
 [Startup overview](../.github/assets/avatar-host/start-up-flow.png) ·
@@ -39,7 +46,26 @@ alphaavatar start examples/agent_configs/mm/pipeline_openai_tools.yaml
 
 `dev` defaults to DEBUG and an available health port; it does not watch or reload code.
 `start` defaults to INFO and port 8081. Help/version do not start models or require RTC
-credentials. Configuration overrides use `key=value` after the filename.
+credentials. Each command takes a bundle name, a YAML/JSON file, or nothing for the default
+bundle; configuration overrides use `key=value` after it.
+
+Create a bundle (with its profiles, and as the default if none is set), and optionally check
+it without starting anything:
+
+```bash
+alphaavatar config init my-avatar --avatar-id my-avatar
+alphaavatar config check my-avatar voice.tts.speed=1.2
+alphaavatar doctor my-avatar          # installation, configuration, a diagnostic session
+alphaavatar dev                       # the default bundle
+```
+
+`start` and `dev` run the same validation before starting. See [docs/cli](../docs/cli/) for
+every command and the bundle layout. The Python entry points live in
+`alphaavatar.host.configs` (`select_configuration`, `load_application`,
+`check_application_paths`, `validate_plugin_settings`, `create_bundle`, `read_settings`,
+`describe_summary`, `describe_application`, `describe_error`, `format_failure`,
+`output_scrubber`); Doctor's report comes from `alphaavatar.host.tools.doctor.diagnose` (async),
+or `prepare` and `Diagnosis.run` to run the static checks first.
 
 ## Configuration
 
@@ -59,12 +85,12 @@ host:
 ```
 
 LiveKit requires `LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`. Model and
-tool providers need their own credentials. Remote endpoints require TLS.
+tool providers need their own credentials. Remote services require TLS.
 
 | Connection mode | Behavior |
 | --- | --- |
 | `dispatch` | Registers using `avatar.name` and waits for matching explicit dispatches. The assignment supplies the room. Host remains available after a session ends. |
-| `direct` | Requires `room_name`, optionally selects `participant_identity`, and exits after its single execution ends. It still requires LiveKit. |
+| `direct` | Requires `room_name`, optionally selects `device_id`, and exits after its single execution ends. It still requires LiveKit. |
 
 The remote participant's `session_type` metadata selects `chat`, `agent`, `audio` or
 `video`; the default is `video`. This is independent of connection mode and `dev/start`.
@@ -91,7 +117,10 @@ PCM streams at the provider's native pace; caption publication and network sendi
 pace audio capture. PCM-only providers use estimated word timing, corrected by measured
 audio duration. LiveKit playback feedback measures the local audio queue, not remote speakers.
 
-The health endpoints are `/live`, `/ready` and `/status`; restrict their network exposure.
+The health check paths are `/live`, `/ready` and `/status`. They are unauthenticated and bind
+to `127.0.0.1` by default; set `host.health.bind` explicitly only behind network controls.
+`/status` reports readiness, runner startup states and recent execution ids and codes; it
+returns no configuration or credentials.
 Execution supervision requires POSIX. Process groups are not complete descendant sandboxes;
 deployments that need containment of detached browsers require an external cgroup/container.
 One attachment per execution is supported. Reattachment, persistent execution recovery and
@@ -100,7 +129,7 @@ it does not replay model or tool work. Disconnecting does not delete the room.
 
 ## More information
 
-[Deployment](../DEPLOY.md) · [Development](../CONTRIBUTING.md) ·
+[Deployment](../docs/DEPLOY.md) · [Development](../CONTRIBUTING.md) ·
 [Avatar workspace](../docs/avatar-workspace-layout.md) ·
 [Model cache](../docs/models-cache-layout.md) ·
 [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md)

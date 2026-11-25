@@ -21,13 +21,15 @@ from typing import Any
 
 from alphaavatar.agents.memory.enums import MemoryKind
 from alphaavatar.agents.memory.schemas import MemoryItem, MemorySearchHit
+from alphaavatar.core.turn.schemas import TurnEntityRef
 
-from ....log import logger
 from .candidates import RecalledCandidateCache, consolidated_from_hits, merge_candidates
 from .config import CandidateSource, ConsolidationConfig, ConsolidationMode
 from .consolidation_op import apply_assignments
 from .prompts import render_candidates, render_incoming
 from .schema import ConsolidationPlan, ConsolidationResult
+
+logger = logging.getLogger(__name__)
 
 CandidateSearch = Callable[..., Awaitable[list[list[MemorySearchHit]]]]
 PlanConsolidation = Callable[..., Awaitable[ConsolidationPlan]]
@@ -128,6 +130,8 @@ class MemoryConsolidator:
         session_content: str,
         updated_at: datetime,
         trace_metadata: dict[str, Any],
+        identity_is_current: Callable[[], bool],
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> list[MemoryItem]:
         return (
             await self._consolidate_session(
@@ -135,6 +139,8 @@ class MemoryConsolidator:
                 session_content=session_content,
                 updated_at=updated_at,
                 trace_metadata=trace_metadata,
+                identity_is_current=identity_is_current,
+                participants=participants,
             )
         ).all_writes()
 
@@ -145,6 +151,8 @@ class MemoryConsolidator:
         session_content: str,
         updated_at: datetime,
         trace_metadata: dict[str, Any],
+        identity_is_current: Callable[[], bool],
+        participants: tuple[TurnEntityRef, ...] = (),
     ) -> ConsolidationResult:
         if not items:
             return ConsolidationResult(source_items=[], to_insert=[], to_rewrite=[])
@@ -152,11 +160,13 @@ class MemoryConsolidator:
         first = _validate_batch(items)
         fallback = ConsolidationResult(source_items=list(items), to_insert=[], to_rewrite=[])
 
-        if not self.enabled:
+        if not self.enabled or not identity_is_current():
             return fallback
 
         try:
-            candidates = await self._collect_candidates(items)
+            candidates = await self._collect_candidates(items, participants=participants)
+            if not identity_is_current():
+                return fallback
 
             plan = await self._invoke(
                 items,
@@ -196,7 +206,9 @@ class MemoryConsolidator:
 
         return result
 
-    async def _collect_candidates(self, items: list[MemoryItem]) -> list[MemoryItem]:
+    async def _collect_candidates(
+        self, items: list[MemoryItem], *, participants: tuple[TurnEntityRef, ...] = ()
+    ) -> list[MemoryItem]:
         first = _validate_batch(items)
 
         if self._config.mode is ConsolidationMode.SESSION_SUMMARY:
@@ -214,7 +226,8 @@ class MemoryConsolidator:
             hits = await self._candidate_search(
                 [item.embedding_text() for item in items],
                 owner_refs=first.owner_refs,
-                context=first.context,
+                scope=first.scope,
+                participants=participants,
             )
 
             _log_hit_scores(items, hits, threshold=self._config.similarity_threshold)

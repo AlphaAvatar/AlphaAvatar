@@ -23,6 +23,9 @@ class SileroVADPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
+    def inference_runners(self, config):
+        return (SileroVADRunner,)
+
     def get_plugin(self, *args, **kwargs):
         return SileroVAD(**kwargs)
 

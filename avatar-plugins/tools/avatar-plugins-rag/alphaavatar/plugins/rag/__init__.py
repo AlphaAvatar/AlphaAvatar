@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .version import __version__
 
@@ -32,6 +32,3 @@ class RAGToolPlugin(AvatarModulePlugin):
         from .service import RAGService
 
         return RAGService(runtime=runtime, init_config=init_config)
-
-
-AvatarModulePlugin.register(AvatarModule.RAG, "default", RAGToolPlugin())

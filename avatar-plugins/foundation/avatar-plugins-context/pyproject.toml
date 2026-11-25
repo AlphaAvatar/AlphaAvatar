@@ -19,7 +19,7 @@ classifiers = [
 dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "pydantic>=2,<3"]
 
 [project.entry-points."alphaavatar.context"]
-default = "alphaavatar.plugins.context"
+default = "alphaavatar.plugins.context:ContextPlugin"
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"

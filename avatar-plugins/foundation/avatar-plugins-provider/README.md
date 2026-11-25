@@ -12,12 +12,13 @@ Provider stores neither conversation history nor tool authorization. The resourc
 
 ## Backend selection
 
-`backend` selects an installed implementation; `provider` selects its vendor/endpoint family. Factory discovery uses AvatarModulePlugin and does not itself make a model request.
+`backend` selects an installed implementation; `provider` selects its vendor/API family. Factory discovery uses AvatarModulePlugin and does not itself make a model request.
 
 | Backend | Current role |
 | --- | --- |
 | `openai` | Native Responses streaming used by the foreground realtime Loop. |
 | `langchain` | Structured-task model bindings used by plugin-owned extraction gateways. |
+| `langchain` (embedding) | Embedding bindings, `alphaavatar.provider.embedding`, used by the vector-store runners. |
 
 Streaming contracts being public does not make every backend stream-capable. The current LangChain task backend does not advertise StreamingLLMBase. Loop initialization checks the selected model binding; use `backend: openai` explicitly for the native main model.
 
@@ -60,6 +61,6 @@ Tracing is best-effort diagnostics, not a lossless audit log. Saturation increme
 
 ## Current boundary
 
-Native Engine/Loop generation, typed Output publication and Router/RTC delivery are implemented. Obsolete SDK model/tool/record bridges are removed. Voice owns native OpenAI and Voice.ai HTTP/PCM synthesis; it does not borrow ProviderService LLM bindings. Character uses native browser/transport lifecycle without borrowing ProviderService. SDK worker hosting remains elsewhere in the workspace; real renderer/RTC validation remains a separate requirement.
+Native Engine/Loop generation, typed Output publication and Router/RTC delivery are implemented. Obsolete SDK model/tool/record bridges are removed. Voice owns native OpenAI and Voice.ai HTTP/PCM synthesis; it does not borrow ProviderService LLM bindings. Character uses native browser/transport lifecycle without borrowing ProviderService. Real renderer/RTC validation remains a separate requirement.
 
 VDB worker processes still own their Embedding instances; no SDK client is passed across process boundaries. Execution remains Host-scoped, without new persistent recovery or Dream scheduling.

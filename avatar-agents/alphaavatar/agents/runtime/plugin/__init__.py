@@ -11,6 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .module import AvatarModule, AvatarModulePlugin
+from .module import AvatarModule, AvatarModulePlugin, plugin_requirement
+from .resolution import PluginError, UnavailablePlugins, resolve_plugin, resolve_plugins
+from .schemas import PluginSelection, ResolvedPlugin
 
-__all__ = ["AvatarModule", "AvatarModulePlugin"]
+__all__ = [
+    "AvatarModule",
+    "AvatarModulePlugin",
+    "PluginError",
+    "PluginSelection",
+    "ResolvedPlugin",
+    "UnavailablePlugins",
+    "plugin_requirement",
+    "resolve_plugin",
+    "resolve_plugins",
+]

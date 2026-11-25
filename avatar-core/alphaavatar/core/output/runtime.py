@@ -21,6 +21,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
+from math import isfinite
 from uuid import uuid4
 
 from alphaavatar.core.cleanup import wait_for_cleanup
@@ -79,6 +80,7 @@ class _OutputRecord:
     source_sealed: bool = False
     transcript_finalized: bool = False
     failed: bool = False
+    last_text_sequence: int = 0
     last_audio_sequence: int = 0
     last_alignment_sequence: int = 0
     text_pending: int = 0
@@ -117,6 +119,7 @@ class OutputRuntime:
         execution_max_events: int = 2048,
         output_max_records: int = 4096,
         output_retired_records: int = 1024,
+        terminal_timeout_sec: float = 2.0,
     ) -> None:
         identifier(session_id, "session_id")
         if any(
@@ -124,6 +127,14 @@ class OutputRuntime:
             for value in (output_max_records, output_retired_records)
         ):
             raise ValueError("Output record capacities must be positive integers")
+        if (
+            isinstance(terminal_timeout_sec, bool)
+            or not isfinite(terminal_timeout_sec)
+            or terminal_timeout_sec <= 0
+        ):
+            raise ValueError("Terminal publication timeout must be finite and positive")
+
+        self._terminal_timeout_sec = terminal_timeout_sec
         self._record_limit, self._retired_limit = output_max_records, output_retired_records
         self._retired: OrderedDict[str, tuple[OutputIdentity, str | None]] = OrderedDict()
         self.session_id, self.clock = session_id, clock or RuntimeClock()
@@ -156,6 +167,7 @@ class OutputRuntime:
         self._delivery_failure: Exception | None = None
         self._delivery_close_task: asyncio.Task[None] | None = None
         self._foreground_run: str | None = None
+        self._foreground_guard: Callable[[], bool] | None = None
         self._foreground_turn: str | None = None
         self._status_scope: OutputScope | None = None
         self._status_revision = 0
@@ -255,6 +267,7 @@ class OutputRuntime:
         try:
             if self._closed:
                 return None
+
             self._check_delivery()
             async with self._sequence_lock:
                 if self._closed:
@@ -276,18 +289,22 @@ class OutputRuntime:
                 # A frame may reach one subscriber before another suspends in backpressure.
                 # Its terminal barrier must still await a playback receipt after interruption.
                 if record is not None:
-                    if output.kind == OutputKind.AUDIO_FRAME:
+                    if output.kind == OutputKind.TEXT_CHUNK:
+                        record.last_text_sequence = event.sequence
+                    elif output.kind == OutputKind.AUDIO_FRAME:
                         record.last_audio_sequence = event.sequence
                     elif output.kind == OutputKind.ALIGNMENT:
                         record.last_alignment_sequence = event.sequence
             if guard is not None and not guard():
                 return None
+
             try:
                 await self.stream.publish(event, guard=guard)
             except RuntimeError:
                 if not self._closed:
                     raise
                 return None
+
             if not self._closed:
                 self._check_delivery()
             return event if not self._closed and (guard is None or guard()) else None
@@ -301,7 +318,10 @@ class OutputRuntime:
                 )
                 or (isinstance(output.payload, OutputTranscriptChunk) and output.payload.is_final)
             )
-            if terminal and not self._closed:
+            superseded = (
+                isinstance(failure, asyncio.CancelledError) and guard is not None and not guard()
+            )
+            if terminal and not self._closed and not superseded:
                 try:
                     await self._fail_delivery(failure)
                 except BaseException as cleanup:
@@ -309,7 +329,10 @@ class OutputRuntime:
             raise
 
     async def _own_publication(
-        self, operation: Coroutine[object, object, OutputEvent | None]
+        self,
+        operation: Coroutine[object, object, OutputEvent | None],
+        *,
+        guard: Callable[[], bool] | None = None,
     ) -> OutputEvent | None:
         try:
             self._check_delivery()
@@ -317,28 +340,75 @@ class OutputRuntime:
             operation.close()
             raise
 
-        # Register before suspension, including before a terminal task's first execution.
-        task = asyncio.create_task(operation, name="output_terminal_publication")
+        async def publish() -> OutputEvent | None:
+            try:
+                async with asyncio.timeout(self._terminal_timeout_sec):
+                    return await operation
+            except (asyncio.CancelledError, TimeoutError) as failure:
+                superseded = guard is not None and not guard() and self._delivery_failure is None
+                if not self._closed and not superseded:
+                    try:
+                        await self._fail_delivery(failure)
+                    except BaseException as cleanup:
+                        raise failure from cleanup
+                if isinstance(failure, TimeoutError) and superseded:
+                    return None
+                raise
+
+        # Ownership bounds cleanup; it must not shield a blocked terminal from its caller's budget.
+        task = asyncio.create_task(publish(), name="output_terminal_publication")
         self._publications.add(task)
         task.add_done_callback(self._publications.discard)
-        return await wait_for_cleanup(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError as failure:
+            task.cancel()
+            try:
+                await wait_for_cleanup(task)
+            except asyncio.CancelledError:
+                pass
+            except Exception as cleanup:
+                raise failure from cleanup
+            if (
+                task.cancelled()
+                and not self._closed
+                and self._delivery_failure is None
+                and (guard is None or guard())
+            ):
+                await self._fail_delivery(failure)
+            raise
+        finally:
+            if task.done():
+                operation.close()
 
-    def activate_run(self, run_id: str) -> None:
+    def activate_run(self, run_id: str, *, guard: Callable[[], bool] | None = None) -> None:
+        """Attach a nonblocking execution predicate, rechecked at every delivery boundary."""
         self._check_delivery()
         identifier(run_id, "run_id")
+        if guard is not None and not callable(guard):
+            raise TypeError("Run delivery guard must be callable")
+
         self._foreground_run = run_id
+        self._foreground_guard = guard
         self._compact_outputs()
 
     def revoke_run(self, run_id: str) -> None:
         identifier(run_id, "run_id")
         if self._foreground_run == run_id:
             self._foreground_run = None
+            self._foreground_guard = None
 
     def accepts_run(self, run_id: str | None) -> bool:
         return (
             not self._closed
             and self._delivery_failure is None
-            and (run_id is None or run_id == self._foreground_run)
+            and (
+                run_id is None
+                or (
+                    run_id == self._foreground_run
+                    and (self._foreground_guard is None or self._foreground_guard())
+                )
+            )
         )
 
     def update_status_scope(self, scope: OutputScope | None, revision: int) -> None:
@@ -410,6 +480,16 @@ class OutputRuntime:
     def output_identity(self, output_id: str) -> OutputIdentity | None:
         record = self._outputs.get(output_id)
         return record.identity if record is not None else None
+
+    def text_sequence(self, output_id: str) -> int:
+        """Last locally admitted text sequence; not a transport or playback receipt."""
+        record = self._outputs.get(output_id)
+        return record.last_text_sequence if record is not None else 0
+
+    def audio_sequence(self, output_id: str) -> int:
+        """Last admitted audio sequence; the frame may have reached only some consumers."""
+        record = self._outputs.get(output_id)
+        return record.last_audio_sequence if record is not None else 0
 
     def can_deliver(self, output_id: str) -> bool:
         record = self._outputs.get(output_id)
@@ -679,10 +759,15 @@ class OutputRuntime:
             return await self._dispatch(
                 self._control(
                     record, OutputControlType.TEXT_COMPLETE, "source_text_completed", fields
-                )
+                ),
+                guard=lambda: self._delivery_guard(record),
             )
 
-        return await self._own_publication(finish())
+        return await self._own_publication(
+            finish(),
+            guard=lambda: (record := self._outputs.get(output_id)) is not None
+            and self._delivery_guard(record),
+        )
 
     async def finish_audio(
         self,
@@ -752,10 +837,15 @@ class OutputRuntime:
                 record.terminal = OutputControlType.COMPLETE
                 record.terminal_reason = "output_completed"
             return await self._dispatch(
-                self._control(record, OutputControlType.COMPLETE, "output_completed", fields)
+                self._control(record, OutputControlType.COMPLETE, "output_completed", fields),
+                guard=lambda: self._delivery_guard(record),
             )
 
-        return await self._own_publication(finish())
+        return await self._own_publication(
+            finish(),
+            guard=lambda: (record := self._outputs.get(output_id)) is not None
+            and self._delivery_guard(record),
+        )
 
     async def interrupt(
         self,
@@ -827,8 +917,14 @@ class OutputRuntime:
         async def publish() -> OutputEvent | None:
             try:
                 await self.stream.discard_pending(
-                    lambda event: event.output.kind == OutputKind.AUDIO_FRAME
-                    and event.output.output_id in ids
+                    lambda event: event.output.output_id in ids
+                    and (
+                        event.output.kind in (OutputKind.TEXT_CHUNK, OutputKind.AUDIO_FRAME)
+                        or (
+                            event.output.kind == OutputKind.CONTROL
+                            and event.output.payload.type == OutputControlType.TEXT_COMPLETE
+                        )
+                    )
                 )
             except BaseException as failure:
                 if not self._closed:
@@ -845,6 +941,7 @@ class OutputRuntime:
         async with self._state_lock:
             self._closed = True
             self._foreground_run = None
+            self._foreground_guard = None
             self._status_scope = None
             self.records.close()
             self.execution.close()

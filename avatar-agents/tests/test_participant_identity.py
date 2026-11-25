@@ -1,0 +1,368 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Participant, device and user identities with Turn history and captured-write ownership."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryOwnerRef
+from alphaavatar.agents.runtime.modules.participants import ParticipantBindings, ParticipantRuntime
+from alphaavatar.agents.runtime.modules.participants.schemas import ParticipantInput
+from alphaavatar.agents.workspace import WorkspacePaths
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
+from alphaavatar.core.media import TextPayload
+from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.session import (
+    EntityKind,
+    IdentityOutcome,
+    IdentityRequest,
+    IdentitySource,
+    Participant,
+    SessionRuntime,
+)
+from alphaavatar.core.time import RuntimeTimeRange
+from alphaavatar.core.turn import TurnRuntime
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnSnapshot
+from alphaavatar.plugins.memory.state import MemoryContextState
+
+
+def participants(tmp_path: Path, **limits: int) -> ParticipantRuntime:
+    session = SessionRuntime(session_id="session-1")
+    perception = PerceptionRuntime(
+        session_id="session-1",
+        stream_maxlens=dict.fromkeys(PerceptionStreamKind, 64),
+        clock=session.clock,
+    )
+    return ParticipantRuntime(
+        session=session,
+        workspace=WorkspacePaths.from_root(tmp_path / "workspace"),
+        turn=TurnRuntime(perception=perception),
+        **limits,
+    )
+
+
+def correct(
+    runtime: ParticipantRuntime,
+    participant: Participant,
+    user_id: str | None,
+    source: IdentitySource = IdentitySource.PERCEPTION,
+) -> IdentityOutcome:
+    return runtime.bind_user(
+        IdentityRequest(
+            participant_id=participant.participant_id,
+            user_id=user_id,
+            source=source,
+            expected_revision=participant.identity_revision,
+            reason=f"{source.value} evidence for {user_id}",
+        )
+    )
+
+
+def commit(runtime: ParticipantRuntime, input_id: str, *people: Participant) -> TurnSnapshot:
+    """What each person typed on a device of their own: the Turn's participants are read
+    from those devices."""
+    inputs = []
+    for person in people:
+        device = f"device-{person.participant_id}"
+        runtime.bind_device(device, person.participant_id)
+        inputs.append(
+            EnvObservation(
+                kind=ObservationKind.TEXT_INPUT,
+                time_range=RuntimeTimeRange.point(runtime.turn.perception.clock.now()),
+                source=PerceptionSourceRef(device, 1),
+                payload=TextPayload.create(text=f"text for {input_id}"),
+                device_id=device,
+            )
+        )
+    return runtime.turn.commit_input(
+        input_id=input_id,
+        modality=TurnInputModality.TEXT,
+        text=f"text for {input_id}",
+        final_observations=tuple(inputs),
+        context_ids=("context-1",),
+    )
+
+
+def test_device_participant_and_user_identifiers_stay_separate(tmp_path: Path) -> None:
+    runtime = participants(tmp_path)
+    owner = runtime.join(primary=True)
+    runtime.bind_device("phone-1", owner.participant_id)
+    assert len({"phone-1", owner.participant_id, owner.user_id}) == 3
+
+    camera, face = PerceptionSourceRef("camera-1", 1), PerceptionEntityRef("face-b")
+    guest = runtime.ensure_entity(camera, face, kind=EntityKind.FACE)
+    assert guest.participant_id != owner.participant_id
+    assert guest.user_id not in {None, owner.user_id}
+    # The device names its explicit submitter only; it never claims people seen through it.
+    assert runtime.resolve("phone-1") is None
+    assert runtime.resolve("phone-1", by_device=True) == owner
+    assert runtime.resolve(source=camera, entity=face) == guest
+
+    # Sharing a user binding never merges participants.
+    twin = runtime.join(user_id=owner.user_id)
+    assert twin.participant_id != owner.participant_id
+    assert runtime.session.get_participant(user_id=owner.user_id) is None
+
+    assert correct(runtime, owner, "user-a") is IdentityOutcome.APPLIED
+    resolved = runtime.resolve("phone-1", by_device=True)
+    assert (resolved.participant_id, resolved.user_id, resolved.identity_revision) == (
+        owner.participant_id,
+        "user-a",
+        1,
+    )
+    assert runtime.resolve(source=camera, entity=face) == guest
+    assert runtime.user_path(resolved) == runtime.workspace.users.get("user-a")
+    assert not (tmp_path / "workspace").exists()
+
+
+def test_a_turn_reads_its_current_identity_and_a_captured_basis_keeps_its_own(
+    tmp_path: Path,
+) -> None:
+    runtime = participants(tmp_path)
+    person = runtime.join(user_id="user-b", primary=True)
+    turn = commit(runtime, "input-1", person)
+    captured = runtime.identity_basis(turn)
+
+    assert correct(runtime, person, "user-a") is IdentityOutcome.APPLIED
+    assert correct(runtime, runtime.get(person.participant_id), "user-c", IdentitySource.AGENT) is (
+        IdentityOutcome.APPLIED
+    )
+
+    assert runtime.turn.get("input-1") is turn
+    # The Turn fixes no identity: read now, its participant is the corrected user.
+    (projected,) = runtime.of_turn(turn)
+    assert (projected.participant_id, projected.user_id, projected.identity_revision) == (
+        person.participant_id,
+        "user-c",
+        2,
+    )
+    assert not runtime.identity_basis_is_current(captured)
+    assert runtime.identity_basis_is_current(runtime.identity_basis(turn))
+
+    # A captured write keeps its accepted target; the old snapshot cannot open new reads.
+    assert runtime.user_path(person, current=False) == runtime.workspace.users.get("user-b")
+    with pytest.raises(PermissionError):
+        runtime.user_path(person)
+
+    assert correct(runtime, runtime.get(person.participant_id), None) is IdentityOutcome.APPLIED
+    with pytest.raises(PermissionError):
+        runtime.user_path(runtime.get(person.participant_id))
+    assert runtime.of_turn(turn)[0].user_id is None
+
+
+async def test_agent_identity_decisions_use_their_own_turn_and_version(tmp_path: Path) -> None:
+    runtime = participants(tmp_path)
+    person = runtime.join(user_id="user-a", primary=True)
+    commit(runtime, "input-1", person)
+
+    # C was never perceived or nominated; the Agent's reasoned decision is enough.
+    applied = await runtime.invoke(
+        ParticipantInput(user_id="user-c", reason="The user introduced themselves as C"),
+        input_id="input-1",
+    )
+    assert applied == {
+        "outcome": "applied",
+        "participant_id": person.participant_id,
+        "user_id": "user-c",
+        "identity_revision": 1,
+    }
+    event = runtime.session.identity_history(person.participant_id)[-1]
+    assert (event.source, event.previous_user_id) == (IdentitySource.AGENT, "user-a")
+
+    stale = await runtime.invoke(
+        ParticipantInput(user_id="user-d", reason="Retrying an old decision", expected_revision=0),
+        input_id="input-1",
+    )
+    assert (stale["outcome"], stale["user_id"], stale["identity_revision"]) == (
+        "stale",
+        "user-c",
+        1,
+    )
+    reassessed = await runtime.invoke(
+        ParticipantInput(user_id="user-d", reason="New evidence names D", expected_revision=1),
+        input_id="input-1",
+    )
+    assert (reassessed["outcome"], reassessed["user_id"]) == ("applied", "user-d")
+
+    # Decisions bind to the calling execution's committed input, never the latest Turn.
+    commit(runtime, "input-2", runtime.join(user_id="user-e"))
+    for input_id in (None, "unknown-input"):
+        with pytest.raises(ValueError):
+            await runtime.invoke(
+                ParticipantInput(user_id="user-x", reason="No committed input"), input_id=input_id
+            )
+    with pytest.raises(ValueError):
+        await runtime.invoke(
+            ParticipantInput(
+                user_id="user-x",
+                reason="Not a participant of this Turn",
+                participant_id=runtime.session.get_participant(user_id="user-e").participant_id,
+            ),
+            input_id="input-1",
+        )
+    assert runtime.get(person.participant_id).user_id == "user-d"
+
+
+def test_late_recognition_cannot_reopen_retired_or_evicted_associations(tmp_path: Path) -> None:
+    runtime = participants(tmp_path, max_segments=1)
+    microphone, voice = PerceptionSourceRef("microphone-1", 1), PerceptionEntityRef("speaker-1")
+    person = runtime.ensure_entity(microphone, voice, kind=EntityKind.SPEAKER)
+    segment = PerceptionSegmentRef(microphone, "segment-1")
+    token = runtime.observe_segment(segment)
+    assert runtime.bind_segment(segment, voice, token=token)
+    late = IdentityRequest(
+        participant_id=person.participant_id,
+        user_id="user-x",
+        source=IdentitySource.PERCEPTION,
+        expected_revision=person.identity_revision,
+        reason="Slow voiceprint match",
+    )
+
+    # A user correction leaves the established physical association intact.
+    assert correct(runtime, person, "user-a", IdentitySource.MODEL) is IdentityOutcome.APPLIED
+    assert runtime.resolve(segment=segment).user_id == "user-a"
+    assert runtime.bind_user(late) is IdentityOutcome.STALE
+
+    # Eviction retires the admission token even when the same segment reappears.
+    runtime.observe_segment(PerceptionSegmentRef(microphone, "segment-2"))
+    reopened = runtime.observe_segment(segment)
+    assert reopened != token and not runtime.bind_segment(segment, voice, token=token)
+    assert runtime.resolve(segment=segment) is None
+
+    runtime.retire_source(microphone)
+    assert not runtime.bind_segment(segment, voice, token=reopened)
+    assert runtime.resolve(source=microphone, entity=voice) is None
+    # Retiring media releases its segments' associations, never the entity's participant or
+    # its accepted history.
+    assert runtime.resolve(entity=voice) == runtime.get(person.participant_id)
+    assert runtime.get(person.participant_id).user_id == "user-a"
+    assert len(runtime.session.identity_history(person.participant_id)) == 2
+
+
+def test_an_entity_keeps_its_participant_on_every_source_and_generation(tmp_path: Path) -> None:
+    runtime = participants(tmp_path)
+    voice = PerceptionEntityRef("speaker-a")
+    first, later = PerceptionSourceRef("microphone-1", 1), PerceptionSourceRef("microphone-1", 2)
+    laptop = PerceptionSourceRef("microphone-2", 1)
+    person = runtime.ensure_entity(first, voice, kind=EntityKind.SPEAKER)
+    segment = PerceptionSegmentRef(first, "segment-1")
+    assert runtime.bind_segment(segment, voice, token=runtime.observe_segment(segment))
+
+    # A new generation releases its predecessor's segments, never the entity's participant.
+    assert runtime.ensure_entity(later, voice, kind=EntityKind.SPEAKER) == person
+    assert runtime.resolve(segment=segment) is None
+    assert runtime.resolve(source=first, entity=voice) is None  # Retired: nothing resolves there
+    assert runtime.resolve(source=later, entity=voice) == person
+    assert person.participant_id in runtime.active_participant_ids
+
+    # Another device's source is the same entity's, and retiring it keeps the entity's binding.
+    assert runtime.ensure_entity(laptop, voice, kind=EntityKind.SPEAKER) == person
+    runtime.retire_source(laptop)
+    assert runtime.resolve(source=later, entity=voice) == person
+
+
+def test_a_participant_has_one_entity_of_each_kind(tmp_path: Path) -> None:
+    runtime = participants(tmp_path)
+    camera, microphone = PerceptionSourceRef("camera-1", 1), PerceptionSourceRef("microphone-1", 1)
+    face, voice, other = (
+        PerceptionEntityRef(name) for name in ("face-a", "speaker-a", "speaker-b")
+    )
+    person = runtime.ensure_entity(camera, face, kind=EntityKind.FACE)
+    named = person.participant_id
+    assert (
+        runtime.ensure_entity(microphone, voice, kind=EntityKind.SPEAKER, participant_id=named)
+        == person
+    )
+
+    # A second voice for the same participant is refused, and nothing of it is kept.
+    with pytest.raises(ValueError, match="already has a speaker entity"):
+        runtime.ensure_entity(microphone, other, kind=EntityKind.SPEAKER, participant_id=named)
+    assert runtime.resolve(entity=other) is None
+    # A bound entity keeps its kind and its participant.
+    with pytest.raises(ValueError, match="another kind"):
+        runtime.ensure_entity(camera, face, kind=EntityKind.SPEAKER)
+    stranger = runtime.join()
+    with pytest.raises(ValueError, match="another participant"):
+        runtime.ensure_entity(
+            microphone, voice, kind=EntityKind.SPEAKER, participant_id=stranger.participant_id
+        )
+
+    # Only a face or a voice is associated; anything else is refused before anything changes.
+    with pytest.raises(ValueError, match="must be face or speaker"):
+        runtime.ensure_entity(camera, PerceptionEntityRef("hand-a"), kind="hand")
+    assert runtime.resolve(entity=PerceptionEntityRef("hand-a")) is None
+
+
+def test_bindings_keep_an_entitys_participant_and_kind_and_one_entity_of_each_kind() -> None:
+    bindings = ParticipantBindings()
+    face, speaker = EntityKind.FACE, EntityKind.SPEAKER
+    bindings.bind_entity("speaker-a", "participant-1", speaker)
+    bindings.bind_entity("face-a", "participant-1", face)
+    bindings.bind_entity("speaker-a", "participant-1", speaker)  # Again: the same binding
+    for entity_id, participant_id, kind, refused in (
+        ("speaker-a", "participant-2", speaker, "another participant"),
+        ("speaker-a", "participant-1", face, "another kind"),
+        ("speaker-b", "participant-1", speaker, "already has a speaker entity"),
+    ):
+        with pytest.raises(ValueError, match=refused):
+            bindings.bind_entity(entity_id, participant_id, kind)
+    assert (bindings.get_entity("speaker-a"), bindings.get_entity("speaker-b")) == (
+        "participant-1",
+        None,
+    )
+
+
+def test_memory_reads_earlier_turns_as_their_participants_corrected_user(tmp_path: Path) -> None:
+    """The Session's identity is the one that counts: once corrected, a participant's earlier
+    Turns read as the corrected user too."""
+    runtime = participants(tmp_path)
+    person = runtime.join(user_id="user-b", primary=True)
+    state = MemoryContextState(
+        context=MemoryContextRef(
+            episode_id="episode-1", context_id="context-1", session_id="session-1"
+        ),
+        provider_dir=tmp_path,
+        owner_refs=[MemoryOwnerRef.avatar("avatar-1")],
+        participants=(person,),
+    )
+    state.sync_identity(runtime.session.snapshot())
+    spoken_by_b = commit(runtime, "input-1", person)
+    state.add_turn(spoken_by_b)
+    of_turn = runtime.of_turn
+    assert (
+        MemoryOwnerRef.user("user-b")
+        in state.capture_identity([spoken_by_b], of_turn=of_turn).owner_refs
+    )
+
+    assert correct(runtime, person, "user-a") is IdentityOutcome.APPLIED
+    state.sync_identity(runtime.session.snapshot())
+    spoken_by_a = commit(runtime, "input-2", runtime.get(person.participant_id))
+    state.add_turn(spoken_by_a)
+
+    assert state.messages_between(0, state.message_sequence) == [spoken_by_b, spoken_by_a]
+    for turn in (spoken_by_b, spoken_by_a):
+        owners = state.capture_identity([turn], of_turn=of_turn).owner_refs
+        assert MemoryOwnerRef.user("user-a") in owners
+        assert MemoryOwnerRef.user("user-b") not in owners

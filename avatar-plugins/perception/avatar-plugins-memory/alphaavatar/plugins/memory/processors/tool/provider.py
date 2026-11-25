@@ -14,14 +14,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
-from ...log import logger
 from ...schemas.patch import MemoryDelta
 from .config import ToolProviderConfig
 from .prompt import TOOL_DELTA_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 class ToolProvider:
@@ -53,11 +55,11 @@ class ToolProvider:
 
         except TimeoutError:
             logger.warning("Tool provider timeout task=%s timeout=%s", self._task, timeout)
-            return MemoryDelta()
+            raise
 
         except asyncio.CancelledError:
             raise
 
         except Exception:
             logger.exception("Tool provider failed task=%s", self._task)
-            return MemoryDelta()
+            raise

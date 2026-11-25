@@ -32,8 +32,9 @@ jobs:
         run: uv sync --locked --only-group lint --no-install-workspace
       - name: Check workspace and hooks
         run: |
-          uv run --no-sync python scripts/check_workspace.py
+          uv run --no-sync python scripts/quality/check_workspace.py
           uv run --no-sync pre-commit validate-config
+          bash -n packaging/linux/build.sh packaging/linux/install.sh
       - name: Ruff lint
         if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
         run: uv run --no-sync ruff check .
@@ -72,6 +73,16 @@ jobs:
           uv build --all-packages --no-sources --build-constraints "$constraints"
           uv run --no-sync twine check dist/*
           git diff --exit-code
+      - name: Read Doctor's samples from the built Host wheel alone
+        run: |
+          python="$RUNNER_TEMP/doctor-samples/bin/python"
+          constraints="$RUNNER_TEMP/alphaavatar-constraints.txt"
+          uv venv "$RUNNER_TEMP/doctor-samples"
+          uv export --locked --all-packages --no-emit-workspace --no-hashes \
+            --output-file "$constraints" > /dev/null
+          uv pip install --python "$python" --constraint "$constraints" numpy
+          uv pip install --python "$python" --no-deps dist/alpha_avatar_host-*.whl
+          "$python" -I scripts/quality/doctor_samples.py check --installed
 
   install:
     runs-on: ubuntu-latest
@@ -130,8 +141,8 @@ jobs:
               ("alphaavatar.rtc.livekit.video.input", "LiveKitVideoInput"),
               ("alphaavatar.rtc.livekit.status.output", "LiveKitStatusOutput"),
               ("alphaavatar.rtc.livekit.transcript.output", "LiveKitTranscriptOutput"),
-              ("alphaavatar.host.sessions.livekit.connection", "LiveKitConnection"),
-              ("alphaavatar.host.sessions.livekit.character", "LiveKitCharacterTransport"),
+              ("alphaavatar.host.service.sessions.livekit.connection", "LiveKitConnection"),
+              ("alphaavatar.host.service.sessions.livekit.character", "LiveKitCharacterTransport"),
           )
           for module, name in adapters:
               component = getattr(importlib.import_module(module), name)
@@ -142,6 +153,15 @@ jobs:
                       raise TypeError(f"Missing async lifecycle hook: {module}.{name}.{hook}")
               print(f"Lifecycle contract verified: {module}.{name}")
           PYCODE
+      - name: Run deterministic offline tests
+        timeout-minutes: 20
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          git status --porcelain --ignored > "$RUNNER_TEMP/checkout-before.txt"
+          uv run --no-sync pytest -p no:cacheprovider --basetemp="$RUNNER_TEMP/pytest" --durations=10
+          git status --porcelain --ignored > "$RUNNER_TEMP/checkout-after.txt"
+          diff -u "$RUNNER_TEMP/checkout-before.txt" "$RUNNER_TEMP/checkout-after.txt"
       - name: Verify lightweight public entrypoint
         run: |
           uv run --no-sync alphaavatar --help
