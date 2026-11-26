@@ -45,7 +45,11 @@ DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 ITEM_STATUS = {"proposed", "planned", "in-progress", "implemented", "done"}
 RELEASE_STATE = {"released", "in-development", "planned", "unscheduled"}
-ITEM_HEADERS = ("| ID | Item | Status | Date | Notes |", "| ID | 事项 | 状态 | 日期 | 说明 |")
+PRIORITY = {"🔸", "🔹", "—"}
+ITEM_HEADERS = (
+    "| ID | Item | Status | Priority | Date | Notes |",
+    "| ID | 事项 | 状态 | 优先级 | 日期 | 说明 |",
+)
 TIMELINE_HEADERS = ("| Milestone |", "| 里程碑 |")
 AREA_HEADERS = ("| Code |", "| 代码 |")
 ITEM_ID = re.compile(r"[A-Z]{2,4}-\d{2}")
@@ -258,7 +262,7 @@ def _parse_roadmap(rel: str, problems: list[str]) -> tuple[list[tuple], dict[str
             if not match or match.group(1) != match.group(2):
                 problems.append(f"{where}: milestone cell must link to its own anchor")
                 continue
-            timeline.append((match.group(1), cells[1], cells[3], cells[4]))
+            timeline.append((match.group(1), cells[1], cells[3], cells[4], cells[5]))
             if cells[3] not in RELEASE_STATE:
                 problems.append(f"{where}: release state {cells[3]!r}")
             if not DATE.fullmatch(cells[4]):
@@ -275,15 +279,17 @@ def _parse_roadmap(rel: str, problems: list[str]) -> tuple[list[tuple], dict[str
                 problems.append(f"{where}: {item_id} is outside a milestone")
             if cells[2] not in ITEM_STATUS:
                 problems.append(f"{where}: {item_id} status {cells[2]!r}")
-            if not DATE.fullmatch(cells[3]):
-                problems.append(f"{where}: {item_id} date {cells[3]!r}")
-            items[item_id] = (milestone, cells[2], cells[3], cells[4], where)
+            if cells[3] not in PRIORITY:
+                problems.append(f"{where}: {item_id} priority {cells[3]!r}")
+            if not DATE.fullmatch(cells[4]):
+                problems.append(f"{where}: {item_id} date {cells[4]!r}")
+            items[item_id] = (milestone, cells[2], cells[3], cells[4], cells[5], where)
 
     milestones = {m[0]: m for m in timeline}
     for name in milestones:
         if name not in anchors:
             problems.append(f"{rel}: milestone {name} has no section")
-    for item_id, (milestone, status, _, notes, where) in items.items():
+    for item_id, (milestone, status, _, _, notes, where) in items.items():
         if item_id.split("-")[0] not in areas:
             problems.append(f"{where}: {item_id} has no area in the Areas table")
         if milestone not in milestones:
@@ -296,9 +302,45 @@ def _parse_roadmap(rel: str, problems: list[str]) -> tuple[list[tuple], dict[str
     return timeline, items
 
 
+def _check_releases(rel: str, timeline: list[tuple], manifest: dict, problems: list[str]) -> None:
+    """A released version matches its release notes entry; other milestones link none."""
+    releases = {d.get("applies_to"): d for d in manifest["documents"] if d["type"] == "release"}
+    for milestone, version, state, date, notes in timeline:
+        where = f"{rel}: Timeline {milestone}"
+        links = re.findall(r"\]\(([^)#\s]+\.md)\)", notes)
+        if not VERSION.fullmatch(milestone):
+            # earlier summarizes several versions, backlog is none: no single release notes.
+            if links:
+                problems.append(f"{where}: links release notes")
+            continue
+
+        if version != milestone:
+            problems.append(f"{where}: version {version!r}")
+        if state != "released":
+            if date != "—" or links:
+                problems.append(f"{where}: {state}, yet has a release date or release notes")
+            continue
+
+        entry = releases.get(milestone)
+        if entry is None:
+            problems.append(f"{where}: no release notes entry in the manifest")
+            continue
+        release = entry.get("release") or {}
+        if release.get("tag") != version:
+            problems.append(f"{where}: manifest release.tag {release.get('tag')!r}")
+        if str(release.get("published")) != date:
+            problems.append(f"{where}: released {date}, manifest {release.get('published')}")
+        paths = {((ROOT / rel).parent / link).resolve() for link in links}
+        if paths != {(ROOT / entry["path"]).resolve()}:
+            linked = sorted(p.relative_to(ROOT).as_posix() for p in paths if p.is_relative_to(ROOT))
+            problems.append(f"{where}: release notes link {linked}, manifest {entry['path']}")
+
+
 def _check_roadmaps(manifest: dict, problems: list[str]) -> None:
     roadmaps = [d["path"] for d in manifest["documents"] if d["type"] == "roadmap"]
     parsed = {rel: _parse_roadmap(rel, problems) for rel in roadmaps}
+    for rel, (timeline, _) in parsed.items():
+        _check_releases(rel, timeline, manifest, problems)
     if len(parsed) < 2:
         return
 
@@ -309,8 +351,10 @@ def _check_roadmaps(manifest: dict, problems: list[str]) -> None:
         for item_id in items.keys() ^ other_items.keys():
             problems.append(f"{rel}: {item_id} is in only one of it and {first}")
         for item_id in items.keys() & other_items.keys():
-            if items[item_id][:3] != other_items[item_id][:3]:
-                problems.append(f"{rel}: {item_id} milestone, status or date differs from {first}")
+            if items[item_id][:4] != other_items[item_id][:4]:
+                problems.append(
+                    f"{rel}: {item_id} milestone, status, priority or date differs from {first}"
+                )
 
 
 def main() -> int:
