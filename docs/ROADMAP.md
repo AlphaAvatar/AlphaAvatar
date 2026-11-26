@@ -1016,8 +1016,10 @@ For tools that read these files, such as the docs site.
 - Release notes are separate documents, one per version; the Roadmap links to them and the
   list of releases does not replace it.
 - Both language versions hold the same milestones, item IDs, statuses, priorities and dates.
-- For a released version, the Timeline's version, release date and release notes link match its
-  release notes entry in [manifest.yaml](manifest.yaml) (`release.tag`, `release.published`,
-  `path`). `earlier` summarizes several versions; unreleased milestones have no date or release
-  notes.
+- For a released version, the Timeline's release notes link points to a release notes entry of
+  that version in [manifest.yaml](manifest.yaml), whose `release.tag` and `release.published`
+  match the Timeline's version and date. Translations of one version's release notes share the
+  tag and date. A Roadmap links the release notes in its own language when they exist, otherwise
+  those in an existing language. `earlier` summarizes several versions; unreleased milestones
+  have no date or release notes.
 - `scripts/docs/check_docs.py` checks these rules.

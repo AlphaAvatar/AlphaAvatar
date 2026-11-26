@@ -205,6 +205,20 @@ def _check_manifest(problems: list[str]) -> dict:
             if not DAY.fullmatch(str(release.get("published", ""))):
                 problems.append(f"{label}: release.published must be YYYY-MM-DD")
 
+    by_version: dict[str, list[dict]] = {}
+    for doc in documents:
+        if doc.get("type") == "release" and "applies_to" in doc:
+            by_version.setdefault(str(doc["applies_to"]), []).append(doc)
+    for version, entries in sorted(by_version.items()):
+        release = [doc.get("release") or {} for doc in entries]
+        for key in ("tag", "published"):
+            values = sorted({str(r.get(key)) for r in release})
+            if len(values) > 1:
+                problems.append(f"manifest: {version} release notes differ in {key}: {values}")
+        langs = [doc.get("lang") for doc in entries]
+        for lang in sorted({lang for lang in langs if langs.count(lang) > 1}):
+            problems.append(f"manifest: {version} has two {lang} release notes")
+
     by_group: dict[str, set[str]] = {}
     for doc in documents:
         if "translation_group" in doc:
@@ -302,9 +316,14 @@ def _parse_roadmap(rel: str, problems: list[str]) -> tuple[list[tuple], dict[str
     return timeline, items
 
 
-def _check_releases(rel: str, timeline: list[tuple], manifest: dict, problems: list[str]) -> None:
-    """A released version matches its release notes entry; other milestones link none."""
-    releases = {d.get("applies_to"): d for d in manifest["documents"] if d["type"] == "release"}
+def _check_releases(
+    roadmap: dict, timeline: list[tuple], manifest: dict, problems: list[str]
+) -> None:
+    """A released version links release notes of that version, in the Roadmap's language when
+    they exist, else in one that does; other milestones link none."""
+    rel = roadmap["path"]
+    entries = [d for d in manifest["documents"] if d["type"] == "release"]
+    by_path = {(ROOT / d["path"]).resolve(): d for d in entries}
     for milestone, version, state, date, notes in timeline:
         where = f"{rel}: Timeline {milestone}"
         links = re.findall(r"\]\(([^)#\s]+\.md)\)", notes)
@@ -321,26 +340,35 @@ def _check_releases(rel: str, timeline: list[tuple], manifest: dict, problems: l
                 problems.append(f"{where}: {state}, yet has a release date or release notes")
             continue
 
-        entry = releases.get(milestone)
-        if entry is None:
+        own = [d for d in entries if d.get("applies_to") == milestone]
+        if not own:
             problems.append(f"{where}: no release notes entry in the manifest")
             continue
-        release = entry.get("release") or {}
-        if release.get("tag") != version:
-            problems.append(f"{where}: manifest release.tag {release.get('tag')!r}")
-        if str(release.get("published")) != date:
-            problems.append(f"{where}: released {date}, manifest {release.get('published')}")
-        paths = {((ROOT / rel).parent / link).resolve() for link in links}
-        if paths != {(ROOT / entry["path"]).resolve()}:
-            linked = sorted(p.relative_to(ROOT).as_posix() for p in paths if p.is_relative_to(ROOT))
-            problems.append(f"{where}: release notes link {linked}, manifest {entry['path']}")
+        if not links:
+            problems.append(f"{where}: links no release notes")
+        same_lang = sorted(d["path"] for d in own if d["lang"] == roadmap["lang"])
+        for link in links:
+            entry = by_path.get(((ROOT / rel).parent / link).resolve())
+            if entry is None or entry.get("applies_to") != milestone:
+                found = "nothing in the manifest" if entry is None else entry["applies_to"]
+                problems.append(f"{where}: link {link} is {found}, not {milestone} release notes")
+                continue
+            release = entry.get("release") or {}
+            if release.get("tag") != version:
+                problems.append(f"{where}: {entry['path']} release.tag {release.get('tag')!r}")
+            if str(release.get("published")) != date:
+                problems.append(
+                    f"{where}: released {date}, {entry['path']} {release.get('published')}"
+                )
+            if same_lang and entry["path"] not in same_lang:
+                problems.append(f"{where}: links {entry['path']}, not its own language {same_lang}")
 
 
 def _check_roadmaps(manifest: dict, problems: list[str]) -> None:
-    roadmaps = [d["path"] for d in manifest["documents"] if d["type"] == "roadmap"]
-    parsed = {rel: _parse_roadmap(rel, problems) for rel in roadmaps}
-    for rel, (timeline, _) in parsed.items():
-        _check_releases(rel, timeline, manifest, problems)
+    roadmaps = [d for d in manifest["documents"] if d["type"] == "roadmap"]
+    parsed = {d["path"]: _parse_roadmap(d["path"], problems) for d in roadmaps}
+    for roadmap in roadmaps:
+        _check_releases(roadmap, parsed[roadmap["path"]][0], manifest, problems)
     if len(parsed) < 2:
         return
 

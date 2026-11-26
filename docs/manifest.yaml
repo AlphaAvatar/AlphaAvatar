@@ -20,7 +20,8 @@
 #                    available), historical (describes a past version), illustrative (sample
 #                    output, not evidence of a run or of performance)
 # applies_to         snapshot, or the version a release document describes; not a Roadmap target
-# release            release notes only: the tag and the GitHub Release publication day (UTC)
+# release            release notes only: the tag and the GitHub Release publication day (UTC);
+#                    release notes of one version in several languages share both
 # format             html for a page that is not Markdown
 schema: 1
 repository: AlphaAvatar/AlphaAvatar

@@ -961,5 +961,5 @@
 - 规划说明（`<a id="pn-…"></a>`）是方案，不是当前行为。
 - Release 文档是独立的文档，每个版本一份；路线图链接它们，发布列表不替代路线图。
 - 中英两版的里程碑、事项 ID、状态、优先级和日期相同。
-- 已发布的具体版本，时间线中的版本、发布日期和 Release 文档链接，与 [manifest.yaml](manifest.yaml) 中对应 Release 条目的 `release.tag`、`release.published` 和 `path` 一致。`earlier` 汇总多个版本；未发布的里程碑没有发布日期和 Release 文档。
+- 已发布的具体版本，时间线中的 Release 文档链接指向 [manifest.yaml](manifest.yaml) 中该版本的 Release 条目，该条目的 `release.tag`、`release.published` 与时间线的版本和发布日期一致。同一版本各语言的 Release 文档共用 tag 和发布日期。路线图链接与自身同语言的 Release 文档；没有该语言时，链接已有语言的版本。`earlier` 汇总多个版本；未发布的里程碑没有发布日期和 Release 文档。
 - `scripts/docs/check_docs.py` 检查这些规则。
