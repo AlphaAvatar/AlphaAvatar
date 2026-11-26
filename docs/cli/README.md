@@ -14,7 +14,7 @@ In a source checkout it is the command of the `alpha-avatar-host` package.
 | [`alphaavatar doctor`](doctor.md) | Diagnose the installation and a configuration: static checks, then the runtime diagnosis, its spoken scenario in rounds |
 | [`alphaavatar start`](start.md) | Run the Host as a long-running service |
 | [`alphaavatar dev`](dev.md) | Run the Host for development |
-| [`alphaavatar test`](test.md) | Planned: scenarios and benchmarks |
+| [`alphaavatar test`](test.md) | Planned, not available; whether to offer it is undecided: scenarios and benchmarks |
 
 `config check`, `doctor`, `start` and `dev` choose a configuration and read credentials the same
 way: see [choosing a configuration](config.md#choosing-a-configuration) and
@@ -25,7 +25,9 @@ way: see [choosing a configuration](config.md#choosing-a-configuration) and
 
 `config init`, `config check`, `setup`, `upgrade`, `cleanup` and `doctor` print their text
 reports the same way. [cli.html](cli.html), a page that opens offline, shows those of all but
-`upgrade` and `cleanup` as a terminal shows them, colors and all:
+`upgrade` and `cleanup` as a terminal shows them, colors and all. That page is recorded sample
+output, not a run of the current source and not evidence of behavior or performance. A report
+starts like this:
 
 ```text
 AlphaAvatar / Doctor

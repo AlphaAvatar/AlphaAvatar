@@ -48,7 +48,7 @@ AlphaAvatar 是可自行托管、可配置、可插拔的实时多模态个人�
 App 目录目前只为未来客户端工作预留；Host 无需 App 即可运行。
 移动端运行时交付、其他传输方式和持久执行恢复仍是独立工作。
 
-计划中的里程碑及其注明的状态见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+按版本组织的里程碑、事项状态和发布状态见 [docs/ROADMAP.md](docs/ROADMAP.md)（中文版 [ROADMAP-zh.md](docs/ROADMAP-zh.md)）。
 修改行为前，通过当前代码和测试确认实际行为。
 发布说明和带日期的实验记录只描述各自版本与条件下的情况。
 
@@ -592,6 +592,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | Doctor 指标 | 生产者追踪边界 → Core 追踪 schema → Host 测量 → 对比脚本、测试与文档。 |
 | 新插件或包 | 插件边界指南 → 入口点与工厂 → 元数据、工作区与锁文件 → 目录与测试。 |
 | 未来的 App 展示 | App 设计与实现 → Core/RTC 交付契约 → 前端检查。 |
+| 文档或路线图 | 所属文档 → `docs/manifest.yaml` 条目 → 路线图中英两版 → `scripts/docs/check_docs.py`。 |
 | 部署、安装、升级或清理 | Host `tools/setup`、`tools/upgrade`、`tools/cleanup` 或 packaging → `docs/DEPLOY.md` 与 setup、升级或清理指南 → 安装验证。 |
 
 重命名契约前，用 `rg` 搜索其构造函数、序列化器与消费者。
@@ -606,7 +607,9 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 
 | 文档 | 用途与阅读时机 |
 | --- | --- |
-| [ROADMAP.md](docs/ROADMAP.md) | 运行时、能力与客户端的开发方向和里程碑状态。 |
+| [ROADMAP.md](docs/ROADMAP.md) | 版本时间线：已交付、开发中和计划中的里程碑，带稳定 ID 和状态的事项，发布状态和规划说明。 |
+| [ROADMAP-zh.md](docs/ROADMAP-zh.md) | 路线图中文版；里程碑、ID、状态和日期与英文版相同。 |
+| [manifest.yaml](docs/manifest.yaml) | 文档站可发布哪些文档，以及各文档的 ID、路径、标题、类型、语言、路由、导航、公开范围和适用版本。 |
 | [DEPLOY.md](docs/DEPLOY.md) | Linux 与源码部署、服务配置、凭据和操作流程。 |
 | [coding-conventions.md](docs/coding-conventions.md) | 模块与类的顺序、功能分区字符串、方法命名、构造函数字段分组和函数体内的代码块。 |
 | [identifiers-zh.md](docs/identifiers-zh.md) | 标识含义、所有者、唯一性与生命周期、初始化和关联规则。 |
@@ -621,7 +624,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | [cli/doctor.md](docs/cli/doctor.md) | 静态与运行时诊断、外部服务控制、报告、证据和计时指标。 |
 | [cli/dev.md](docs/cli/dev.md) | 开发模式启动、默认值、日志和支持的选项。 |
 | [cli/start.md](docs/cli/start.md) | 服务模式启动、配置覆盖和运行行为。 |
-| [cli/test.md](docs/cli/test.md) | 计划中的 Agent 能力测试命令；目前还不是已实现的 CLI 入口。 |
+| [cli/test.md](docs/cli/test.md) | 能力测试命令的方案；尚不可用，是否提供未定（路线图 QA-06）。 |
 | [cli/cli.html](docs/cli/cli.html) | 已记录的 CLI 展示图集；属于示例输出，不是实时服务或基准测试证据。 |
 | [releases/v0.6.1.md](docs/releases/v0.6.1.md) | 查阅 v0.6.1 的人脸识别、视觉身份、声脸融合与 Persona 持久化变更。用于了解该历史版本。 |
 | [releases/v0.6.2.md](docs/releases/v0.6.2.md) | 查阅 v0.6.2 的统一 Provider 与嵌入、追踪、运行时与多参与者基础，以及嵌套配置迁移。用于了解该历史版本。 |
@@ -674,7 +677,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 - 将实现保持在其所属层级与生命周期内。
 - 一起迁移所有受影响的契约与消费者。
 - 改动涉及异步执行时，验证取消、过期工作与清理。
-- 对行为使用有意义的回归检查；仅改文档时，需要校验链接与路径。
+- 对行为使用有意义的回归检查；仅改文档时，需要校验链接与路径（`scripts/docs/check_docs.py`）。
 - 报告运行了什么、哪些通过，以及哪些仍未验证。
 - 区分特定 SHA 对应的已安装构建、源码测试、远端服务与 CI。
 - 路径或契约移动后，更新相关示例、文档与两份导航文件。

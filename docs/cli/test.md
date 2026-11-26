@@ -1,9 +1,11 @@
 # `alphaavatar test`
 
-**Planned — not available yet.**
+**Planned — not available.** `alphaavatar` has no `test` command. Whether to offer one is
+undecided ([Roadmap QA-06](../ROADMAP.md#backlog)); this page is a proposal, and the commands
+below do not run.
 
-Run selected scenarios and benchmarks to measure correctness, latency and reliability of a
-specific capability.
+The proposal: run selected scenarios and benchmarks to measure correctness, latency and
+reliability of a specific capability.
 
 ```bash
 alphaavatar test list                                   # Available suites and requirements

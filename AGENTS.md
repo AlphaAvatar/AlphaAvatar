@@ -48,7 +48,7 @@ The implemented RTC backend is LiveKit; generic backend contracts do not imply o
 The App directory currently reserves future client work; Host runs without an App.
 Mobile runtime delivery, additional transports and persistent execution recovery remain separate work.
 
-Use [docs/ROADMAP.md](docs/ROADMAP.md) for planned milestones and their stated status.
+Use [docs/ROADMAP.md](docs/ROADMAP.md) for milestones, item status and release state by version.
 Use current code and tests to establish actual behavior before changing it.
 Release notes and dated experiment records describe their own versions and conditions.
 
@@ -593,6 +593,7 @@ Use this table to avoid starting in a convenient but non-owning module.
 | Doctor metric | Producer trace boundary → Core trace schema → Host measurement → compare script/tests/docs. |
 | New plugin/package | Plugin boundary guide → entry points/factory → metadata/workspace/lock → catalog/tests. |
 | Future App presentation | App design/implementation → Core/RTC delivery contract → frontend checks. |
+| Documentation or Roadmap | Owning document → `docs/manifest.yaml` entry → both Roadmap languages → `scripts/docs/check_docs.py`. |
 | Deployment, install, upgrade or cleanup | Host `tools/setup`, `tools/upgrade`, `tools/cleanup` or packaging → `docs/DEPLOY.md` / setup, upgrade or cleanup guide → installation validation. |
 
 Search with `rg` for a contract's constructors, serializers and consumers before renaming it.
@@ -607,7 +608,9 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 
 | Document | Purpose / when to read |
 | --- | --- |
-| [ROADMAP.md](docs/ROADMAP.md) | Development direction and milestone status across runtime, capabilities and clients. |
+| [ROADMAP.md](docs/ROADMAP.md) | Version timeline: delivered, in-development and planned milestones, items with stable IDs and status, release state and planning notes. |
+| [ROADMAP-zh.md](docs/ROADMAP-zh.md) | Chinese version of the Roadmap; same milestones, IDs, statuses and dates. |
+| [manifest.yaml](docs/manifest.yaml) | Which documents the docs site may publish, with ID, path, title, type, language, route, navigation, visibility and applicable version. |
 | [DEPLOY.md](docs/DEPLOY.md) | Linux/source deployment, service configuration, credentials and operating procedures. |
 | [coding-conventions.md](docs/coding-conventions.md) | Module/class ordering, functional section strings, method naming, constructor field groups and function-body blocks. |
 | [identifiers-zh.md](docs/identifiers-zh.md) | Identifier meanings, owners, uniqueness/lifetimes, initialization and correlation rules. |
@@ -622,7 +625,7 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | [cli/doctor.md](docs/cli/doctor.md) | Static/runtime diagnosis, external-service controls, reports, evidence and timing metrics. |
 | [cli/dev.md](docs/cli/dev.md) | Development-mode startup, defaults, logging and supported options. |
 | [cli/start.md](docs/cli/start.md) | Service-mode startup, configuration overrides and operating behavior. |
-| [cli/test.md](docs/cli/test.md) | Planned Agent capability-test command; not an implemented CLI entry today. |
+| [cli/test.md](docs/cli/test.md) | Proposed capability-test command; not available, and whether to offer it is undecided (Roadmap QA-06). |
 | [cli/cli.html](docs/cli/cli.html) | Recorded CLI display gallery; illustrative output, not live service or benchmark evidence. |
 | [releases/v0.6.1.md](docs/releases/v0.6.1.md) | Review v0.6.1 face recognition, visual identity, speaker-face fusion, and Persona persistence changes. Historical version context. |
 | [releases/v0.6.2.md](docs/releases/v0.6.2.md) | Review v0.6.2 unified providers and embeddings, tracing, runtime and multiparticipant foundations, and nested configuration migration. Historical version context. |
@@ -675,7 +678,7 @@ Before handing work back, check the actual behavior and the navigation affected 
 - Keep the implementation within its owning layer and lifecycle.
 - Migrate all affected contracts and consumers together.
 - Validate cancellation, stale work and cleanup when the change touches asynchronous execution.
-- Use meaningful regression checks for behavior; a documentation-only change needs link/path validation.
+- Use meaningful regression checks for behavior; a documentation-only change needs link/path validation (`scripts/docs/check_docs.py`).
 - Report what ran, what passed and what remains unverified.
 - Distinguish installed builds, source tests, remote services and CI for a particular SHA.
 - Update relevant examples, documentation and both navigation files after path/contract moves.

@@ -204,7 +204,7 @@ Integrations for research, document access, and external actions.
 | [**RAG**][plugin-rag] | Ingests documents and retrieves relevant knowledge for model responses.<br>Connects uploaded content to retrieval-augmented workflows. | ![Available][status-available] |
 | **Sandbox** | Will provide isolated execution for external actions.<br>Will support controlled interaction with tools and other agents. | ![Planned][status-planned] |
 
-See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details and the [Roadmap](docs/ROADMAP.md) for planned work.
+See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details.
 
 [plugin-voice]: avatar-plugins/foundation/avatar-plugins-voice/README.md
 [plugin-provider]: avatar-plugins/foundation/avatar-plugins-provider/README.md

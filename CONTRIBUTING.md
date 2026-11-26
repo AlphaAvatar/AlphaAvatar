@@ -49,8 +49,13 @@ UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync python scripts/quality/che
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check .
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format --check .
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync pre-commit validate-config
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync python scripts/docs/check_docs.py
 uv lock --check
 ```
+
+`scripts/docs/check_docs.py` checks [docs/manifest.yaml](docs/manifest.yaml), the relative links
+and anchors of the documents it lists, and the [Roadmap](docs/ROADMAP.md)'s structure and its
+two languages. List a new document in the manifest, or it fails.
 
 `scripts/quality/check_workspace.py` checks package metadata, dependency relationships,
 entrypoint files, licenses and lock policy without importing the runtime. Its `--metadata-only` mode
