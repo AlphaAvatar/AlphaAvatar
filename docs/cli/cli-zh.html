@@ -45,7 +45,7 @@ h2 { font-size: 16px; line-height: 1.35; margin: 0 0 4px; }
 的彩色分组）所影响的面板于 2026-11-24 重新录制，所用的包由该改动的源码构建（0.6.8-a6e75ba8fb56-dirty.20261124093551），经过真实的安装和 setup：Setup
 的面板（setup-first、setup-bundle、setup-cancel、setup-interrupt、setup-nocolor）按同样方式录制，setup
 之后的 config check（check）在干净的 Ubuntu 24.04 root 中录制。Config，以及拒绝诊断或使用 --no-metrics 的 Doctor，此前在干净的 Ubuntu 24.04
-root 上用其所属构建的 Linux 包运行。Doctor 的测量运行使用其测试中的离线测试替身，标为「离线测试替身」：其服务和模型文件都是替身，计时也是替身的计时，来自它们各自单独的轮次。本页没有任何面板含有真实服务的数据：那些数据另行记录在验收日志中。每个数值都止于 Host
+root 上用其所属构建的 Linux 包运行。Doctor 的测量运行使用其测试中的离线测试替身，标为「离线测试替身」：其服务和模型文件都是替身，计时也是替身的计时，来自它们各自单独的轮次。doctor-rounds 于 2026-11-27 由 51e81aeb 的源码（0.6.9）录制，显示 Doctor 当前的布局，录制目录显示为 $WORK；其余测量运行的 Doctor 面板（包括 doctor-partial）属于历史录制：由更早的构建录制，布局早于当前布局。本页没有任何面板含有真实服务的数据：那些数据另行记录在验收日志中。每个数值都止于 Host
 的输出；LiveKit 的传输、客户端的播放和设备另行测量。宽于面板的行是诊断信息和命令，它们会完整打印。</p>
 <nav><ol>
 <li><a href="#install-first">bash install.sh --file alphaavatar-0.6.8-3e5b8e2d9b2a-linux-x86_64.tar.gz — 首次安装，拒绝运行 setup</a></li>
@@ -65,7 +65,8 @@ root 上用其所属构建的 Linux 包运行。Doctor 的测量运行使用其�
 <li><a href="#doctor-agreed-72">alphaavatar doctor --rounds 3 — 同上，72 列</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-voice">alphaavatar doctor --rounds 3 — 关闭视觉：用 voice 代替 voice_vision</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-fetch">alphaavatar doctor --rounds 2 — 权重不在缓存中，按 start 的方式获取</a><span class="tag">离线测试替身</span></li>
-<li><a href="#doctor-partial">alphaavatar doctor --rounds 3 — 关闭视觉，第 2 轮丢失一句</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-rounds">alphaavatar doctor avatar.json --rounds 3 — 关闭视觉，第 2 轮丢失一句；Doctor 当前的布局</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-partial">alphaavatar doctor --rounds 3 — 关闭视觉，第 2 轮丢失一句；历史录制：较早的构建，布局早于 doctor-rounds</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-noimages">alphaavatar doctor --rounds 3 — 拒绝图像的模型，如实报告</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-interrupt">alphaavatar doctor — 在提问处按 Ctrl+C</a><span class="tag">离线测试替身</span></li>
 </ol></nav>
@@ -862,7 +863,177 @@ Next
 
 <span style="font-weight:700">Run again as JSON</span>
   <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 2 --json</span></pre></div></section>
-<section id="doctor-partial"><h2>alphaavatar doctor --rounds 3 — 关闭视觉，第 2 轮丢失一句<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 列</span><span>退出码 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+<section id="doctor-rounds"><h2>alphaavatar doctor avatar.json --rounds 3 — 关闭视觉，第 2 轮丢失一句；Doctor 当前的布局<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 列</span><span>退出码 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+<span style="color:#FCA5A5">FAIL</span>  Diagnostics completed · 12 passed · 2 failed · 1 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#86EFAC">PASS</span>  Environment            3 checks passed
+  <span style="color:#86EFAC">PASS</span>  Configuration          avatar.json · 2 runners
+  <span style="color:#86EFAC">PASS</span>  Directories            3 checks passed
+  <span style="color:#FCA5A5">FAIL</span>  Session and services   3 passed · 2 failed
+        <span style="color:#FCA5A5">FAIL</span>  services.external   2 passed, 1 failed, 3 not verified by the samples
+              <span style="color:#A1A1AA">model providers (scripted): configured, authorized, reached, passed</span>
+              <span style="color:#A1A1AA">speech recognition (openai_segment): configured, authorized, reached, failed (stopped</span>
+              <span style="color:#A1A1AA">at stt.final)</span>
+              <span style="color:#A1A1AA">speech synthesis (openai): configured, authorized, reached, passed</span>
+              <span style="color:#A1A1AA">custom memory &#x27;doctor&#x27;: configured, authorized, reached: not observed, passed: not</span>
+              <span style="color:#A1A1AA">observed (external access unknown)</span>
+              <span style="color:#A1A1AA">custom persona &#x27;doctor&#x27;: configured, authorized, reached: not observed, passed: not</span>
+              <span style="color:#A1A1AA">observed (external access unknown)</span>
+              <span style="color:#A1A1AA">custom provider backend &#x27;scripted&#x27;: configured, authorized, reached: not observed,</span>
+              <span style="color:#A1A1AA">passed: not observed (external access unknown)</span>
+              <span style="color:#A1A1AA">livekit RTC server: not contacted; `alphaavatar dev</span>
+              <span style="color:#A1A1AA">$WORK/avatar.json`</span>
+              <span style="color:#A1A1AA">connects to it</span>
+              → See the failed scenarios&#x27; blocked stages and causes
+        <span style="color:#FCA5A5">FAIL</span>  session.scenarios   voice 2/3 passed, 2 not enabled, 1 no coverage
+              → See each failed round&#x27;s stage, cause and evidence
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#A1A1AA">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        <span style="color:#A1A1AA">LiveKit transport: not measured; the samples end at the Host&#x27;s output</span>
+        <span style="color:#A1A1AA">client playback: not measured; no client takes part</span>
+        <span style="color:#A1A1AA">physical devices: not opened; the samples stand in for them</span>
+        <span style="color:#A1A1AA">camera input: not sent; the picture is a shared screen, so what reads a camera, such as face</span>
+        <span style="color:#A1A1AA">recognition, is not covered</span>
+        → Join a dev session from a client to try its devices
+
+  <span style="color:#A1A1AA">PASS checked · WARN needs attention · FAIL fails as configured · SKIP not run here: why</span>
+
+<span style="font-weight:700">Scenarios · 3 rounds, a session each</span>
+  <span style="color:#FCA5A5">FAIL</span>  voice                  2/3 passed · stopped: 1 at stt.final
+        <span style="color:#A1A1AA">Round 2: The transcript does not hold every sentence of the sample</span>
+        <span style="color:#A1A1AA">Round 2: Sentence 2: the final the Turn took (23 characters) holds another sentence too, and</span>
+        <span style="color:#A1A1AA">leaves this one out</span>
+        → See the transcript and each sentence in --json; another STT model or plugin compares
+  <span style="color:#A1A1AA">SKIP</span>  voice_vision           Vision is off or text only: voice runs instead
+  <span style="color:#A1A1AA">SKIP</span>  image_input            No input transport delivers images to a session yet
+  <span style="color:#A1A1AA">SKIP</span>  visual_output          No Character is configured
+  With model m · stt openai_segment m · tts openai m · vision off
+  Sample sum_question sha256:0f72883c4ad4
+
+<span style="font-weight:700">Failed rounds · voice</span>
+  Round 2 · stopped at stt.final · measured: Runtime first text 466 ms; First audio frame 487 ms;
+  Response complete 716 ms; Text complete 466 ms; Last audio frame 716 ms; Input 412 ms; Context 3.2
+  ms; Output 72 ms
+
+<span style="font-weight:700">Latency · voice · 2 of 3 rounds passed</span>
+  Metric                                               Round 1   n   Median    Range
+  End to end
+    Runtime first text                                  465 ms   1   463 ms   463 ms
+    First audio frame                                   486 ms   1   485 ms   485 ms
+    Response complete                                   715 ms   1   715 ms   715 ms
+    Text complete                                       465 ms   1   464 ms   464 ms
+    Last audio frame                                    714 ms   1   715 ms   715 ms
+  Input                                                 410 ms   1   410 ms   410 ms
+    Final speech → VAD close                            360 ms   1   359 ms   359 ms
+    VAD close → Final transcript                         50 ms   1    51 ms    51 ms
+  Context                                               3.5 ms   1   2.7 ms   2.7 ms
+    Final transcript → Turn commit                      0.8 ms   1   0.7 ms   0.7 ms
+    Turn commit → Context readiness check complete      0.9 ms   1   0.6 ms   0.6 ms
+    Context readiness check complete → Context built    1.2 ms   1   0.9 ms   0.9 ms
+    Context built → Model request sent                  0.6 ms   1   0.5 ms   0.5 ms
+  Output                                                 72 ms   1    73 ms    73 ms
+    Model request sent → First text delta                51 ms   1    51 ms    51 ms
+    First text delta → TTS request                      0.9 ms   1   0.6 ms   0.6 ms
+    TTS request → First PCM                                  —   0        —        —
+    First PCM → First audio frame                            —   0        —        —
+  <span style="color:#A1A1AA">n: later rounds that passed and observed it; the stages add up to First audio frame</span>
+  <span style="color:#A1A1AA">From the final speech, the frame with the sample&#x27;s last voiced sample going in, to the Host&#x27;s</span>
+  <span style="color:#A1A1AA">output boundary; RTC transport and client playback are not in it</span>
+  <span style="color:#A1A1AA">— First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it</span>
+  <span style="color:#A1A1AA">— TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs</span>
+  <span style="color:#A1A1AA">no first PCM</span>
+
+<span style="font-weight:700">Latency · voice · every round, the 1 not passed included</span>
+  Metric                                               Round 1   n   Median        Range
+  End to end
+    Runtime first text                                  465 ms   2   465 ms   463–466 ms
+    First audio frame                                   486 ms   2   486 ms   485–487 ms
+    Response complete                                   715 ms   2   716 ms   715–716 ms
+    Text complete                                       465 ms   2   465 ms   464–466 ms
+    Last audio frame                                    714 ms   2   715 ms   715–716 ms
+  Input                                                 410 ms   2   411 ms   410–412 ms
+    Final speech → VAD close                            360 ms   2   360 ms   359–360 ms
+    VAD close → Final transcript                         50 ms   2    51 ms     51–52 ms
+  Context                                               3.5 ms   2   2.9 ms   2.7–3.2 ms
+    Final transcript → Turn commit                      0.8 ms   2   0.8 ms   0.7–0.9 ms
+    Turn commit → Context readiness check complete      0.9 ms   2   0.7 ms   0.6–0.8 ms
+    Context readiness check complete → Context built    1.2 ms   2   1.0 ms   0.9–1.0 ms
+    Context built → Model request sent                  0.6 ms   2   0.5 ms       0.5 ms
+  Output                                                 72 ms   2    72 ms     72–73 ms
+    Model request sent → First text delta                51 ms   2    51 ms        51 ms
+    First text delta → TTS request                      0.9 ms   2   0.6 ms   0.6–0.7 ms
+    TTS request → First PCM                                  —   0        —            —
+    First PCM → First audio frame                            —   0        —            —
+  <span style="color:#A1A1AA">n: later rounds that observed it; the stages add up to First audio frame</span>
+  <span style="color:#A1A1AA">From the final speech, the frame with the sample&#x27;s last voiced sample going in, to the Host&#x27;s</span>
+  <span style="color:#A1A1AA">output boundary; RTC transport and client playback are not in it</span>
+  <span style="color:#A1A1AA">— First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it</span>
+  <span style="color:#A1A1AA">— TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs</span>
+  <span style="color:#A1A1AA">no first PCM</span>
+
+<span style="font-weight:700">Details · voice · every round, the 1 not passed included</span>
+  Metric                                               Round 1   n    Median        Range
+  STT, the Turn&#x27;s final
+    Segment committed → STT final                        50 ms   2     51 ms     50–51 ms
+    Queued in the plugin                                     —   0         —            —
+    TCP connect                                              —   0         —            —
+    TLS handshake                                            —   0         —            —
+    Upload                                                   —   0         —            —
+    Audio sent → answer headers, network and service         —   0         —            —
+    Answer headers → first event                             —   0         —            —
+    Answer headers → transcript done                         —   0         —            —
+  Turn taking and Context
+    Last assessment queued → started                    0.1 ms   2    0.1 ms       0.1 ms
+    Assessments, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
+    Timed holds, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
+    Semantic addressing queued → started                     —   0         —            —
+    Semantic addressing inference                            —   0         —            —
+    Speech closed → association ready                        —   0         —            —
+    Context readiness wait                              0.0 ms   2    0.0 ms       0.0 ms
+  Model request, first attempt
+    Client ready                                             —   0         —            —
+    Request taken → sent                                     —   0         —            —
+    Encoding                                            0.2 ms   2    0.2 ms       0.2 ms
+    Pictures                                                 0   2         0            0
+    Body sent                                          20.0 KB   2   20.0 KB      20.0 KB
+    Attempts                                                 1   2         1            1
+    Sent → first stream event, network and service      0.1 ms   2    0.1 ms       0.1 ms
+  Audio out
+    Answer audio                                        0.24 s   2    0.24 s       0.24 s
+    Frame interval, median                               21 ms   2     21 ms        21 ms
+    Largest gap between frames                           21 ms   2     21 ms     21–22 ms
+    Underruns of a real-time queue                          11   2        11           11
+    Producing time over audio duration                    0.95   2      0.95    0.95–0.96
+    Output events dropped                                    0   2         0            0
+  Doctor&#x27;s input
+    Sample frames late, at worst                        2.1 ms   2    2.0 ms   2.0–2.1 ms
+  <span style="color:#A1A1AA">n: later rounds that observed it; each row from its own start</span>
+  <span style="color:#A1A1AA">— Queued in the plugin, TCP connect, TLS handshake, Upload, Audio sent → answer headers, network</span>
+  <span style="color:#A1A1AA">and service, Answer headers → first event, Answer headers → transcript done: not measured: its STT</span>
+  <span style="color:#A1A1AA">plugin times no request</span>
+  <span style="color:#A1A1AA">— Semantic addressing queued → started, Semantic addressing inference: not measured: no semantic</span>
+  <span style="color:#A1A1AA">addressing ran for the final, or none is traced</span>
+  <span style="color:#A1A1AA">— Speech closed → association ready: not measured: no association asked for the segment, or no</span>
+  <span style="color:#A1A1AA">resolver records one</span>
+  <span style="color:#A1A1AA">— Client ready, Request taken → sent: not measured: its provider logs no such step</span>
+
+<span style="font-weight:700">Session</span>
+  Ready                  2.7 ms at the median of 3, 2.4–61 ms
+
+<span style="font-weight:700">Runners</span>
+  Runtime start          568 ms · the model cache did not grow (net)
+  <span style="color:#86EFAC">PASS</span>  alphaavatar.voice.vad.silero
+        started in 0.28 s · 1 worker · 162 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+  <span style="color:#86EFAC">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3
+        started in 0.28 s · 1 worker · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor avatar.json --rounds 3 --json</span></pre></div></section>
+<section id="doctor-partial"><h2>alphaavatar doctor --rounds 3 — 关闭视觉，第 2 轮丢失一句；历史录制：较早的构建，布局早于 doctor-rounds<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 列</span><span>退出码 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 <span style="color:#FCA5A5">FAIL</span>  Diagnostics completed · 12 passed · 2 failed · 1 skipped
 
 <span style="font-weight:700">Checks</span>

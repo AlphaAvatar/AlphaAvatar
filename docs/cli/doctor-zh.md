@@ -196,147 +196,9 @@ Doctor 只运行给定的配置，不运行其他任何东西：没有备用配�
 | `2` | 参数无效 |
 | `130` | 被中断；报告仍显示已运行的内容 |
 
-下面是 `voice` 的三轮运行，视觉关闭，使用 Doctor 测试中的离线测试替身（其指标属于替身，而非某个服务；它们的 TTS 不记录 first PCM，其 STT 插件也不为请求计时），其中第二轮的 STT 只给出求和问题的第一句；输出从状态图例开始。[cli.html](cli.html) 展示了更早的运行以及其他命令的输出，包括颜色等全部效果；其中的 Doctor 面板早于当前布局：
+下面是一份完整的报告，按 100 列宽的终端显示，保留颜色等全部效果：`alphaavatar doctor avatar.json --rounds 3`，视觉关闭，于 2026-11-27 由 51e81aeb 的源码（0.6.9）在 Doctor 测试的离线测试替身上录制。替身代替的是模型、STT 和 TTS 服务，Memory 和 Persona 插件，VAD 和 turn taking 的模型，以及朗读的样本；Router、Context、Loop、Engine、输出运行时和共享推理都是生产代码。第 2 轮的 STT 只给出求和问题的第一句，因此该轮停在 `stt.final`，并保留在报告中。其中的数值属于替身，而非某个服务，不能作为真实服务性能的依据；替身的 TTS 不记录 first PCM，其 STT 插件也不为请求计时，所以这些行是 `—` 并说明原因。每个数值都止于 Host 的输出：LiveKit 的传输、客户端的播放和设备都没有测量。`$WORK` 是录制时的目录。[cli-zh.html](cli-zh.html) 收录了这份录制和其他录制；其中其余测量运行的 Doctor 面板属于历史录制，由更早的构建录制，布局早于当前布局：
 
-```text
-  PASS checked · WARN needs attention · FAIL fails as configured · SKIP not run here: why
-
-Scenarios · 3 rounds, a session each
-  FAIL  voice                  2/3 passed · stopped: 1 at stt.final
-        Round 2: The transcript does not hold every sentence of the sample
-        Round 2: Sentence 2: the final the Turn took (23 characters) holds another sentence too, and
-        leaves this one out
-        → See the transcript and each sentence in --json; another STT model or plugin compares
-  SKIP  voice_vision           Vision is off or text only: voice runs instead
-  SKIP  image_input            No input transport delivers images to a session yet
-  SKIP  visual_output          No Character is configured
-  With model m · stt openai_segment m · tts openai m · vision off
-  Sample sum_question sha256:0f72883c4ad4
-
-Failed rounds · voice
-  Round 2 · stopped at stt.final · measured: Runtime first text 705 ms; First audio frame 727 ms;
-  Response complete 957 ms; Text complete 706 ms; Last audio frame 957 ms; Input 651 ms; Context 3.4
-  ms; Output 72 ms
-
-Latency · voice · 2 of 3 rounds passed
-  Metric                                               Round 1   n   Median    Range
-  End to end
-    Runtime first text                                  705 ms   1   705 ms   705 ms
-    First audio frame                                   727 ms   1   727 ms   727 ms
-    Response complete                                   959 ms   1   957 ms   957 ms
-    Text complete                                       706 ms   1   706 ms   706 ms
-    Last audio frame                                    958 ms   1   957 ms   957 ms
-  Input                                                 651 ms   1   652 ms   652 ms
-    Final speech → VAD close                            600 ms   1   601 ms   601 ms
-    VAD close → Final transcript                         51 ms   1    51 ms    51 ms
-  Context                                               3.6 ms   1   2.9 ms   2.9 ms
-    Final transcript → Turn commit                      0.9 ms   1   0.9 ms   0.9 ms
-    Turn commit → Context readiness check complete      0.8 ms   1   0.6 ms   0.6 ms
-    Context readiness check complete → Context built    1.3 ms   1   0.9 ms   0.9 ms
-    Context built → Model request sent                  0.6 ms   1   0.5 ms   0.5 ms
-  Output                                                 73 ms   1    72 ms    72 ms
-    Model request sent → First text delta                51 ms   1    51 ms    51 ms
-    First text delta → TTS request                      0.9 ms   1   0.6 ms   0.6 ms
-    TTS request → First PCM                                  —   0        —        —
-    First PCM → First audio frame                            —   0        —        —
-  n: later rounds that passed and observed it; the stages add up to First audio frame
-  From the final speech, the frame with the sample's last voiced sample going in, to the Host's
-  output boundary; RTC transport and client playback are not in it
-  — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
-  — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
-  no first PCM
-
-Latency · voice · every round, the 1 not passed included
-  Metric                                               Round 1   n   Median        Range
-  End to end
-    Runtime first text                                  705 ms   2   705 ms       705 ms
-    First audio frame                                   727 ms   2   727 ms       727 ms
-    Response complete                                   959 ms   2   957 ms       957 ms
-    Text complete                                       706 ms   2   706 ms       706 ms
-    Last audio frame                                    958 ms   2   957 ms       957 ms
-  Input                                                 651 ms   2   651 ms   651–652 ms
-    Final speech → VAD close                            600 ms   2   601 ms   600–601 ms
-    VAD close → Final transcript                         51 ms   2    51 ms        51 ms
-  Context                                               3.6 ms   2   3.1 ms   2.9–3.4 ms
-    Final transcript → Turn commit                      0.9 ms   2   0.9 ms   0.9–1.0 ms
-    Turn commit → Context readiness check complete      0.8 ms   2   0.6 ms   0.6–0.7 ms
-    Context readiness check complete → Context built    1.3 ms   2   1.1 ms   0.9–1.3 ms
-    Context built → Model request sent                  0.6 ms   2   0.5 ms       0.5 ms
-  Output                                                 73 ms   2    72 ms        72 ms
-    Model request sent → First text delta                51 ms   2    51 ms        51 ms
-    First text delta → TTS request                      0.9 ms   2   0.6 ms   0.6–0.7 ms
-    TTS request → First PCM                                  —   0        —            —
-    First PCM → First audio frame                            —   0        —            —
-  n: later rounds that observed it; the stages add up to First audio frame
-  From the final speech, the frame with the sample's last voiced sample going in, to the Host's
-  output boundary; RTC transport and client playback are not in it
-  — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
-  — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
-  no first PCM
-
-Details · voice · every round, the 1 not passed included
-  Metric                                               Round 1   n    Median        Range
-  STT, the Turn's final
-    Segment committed → STT final                        51 ms   2     51 ms     50–51 ms
-    Queued in the plugin                                     —   0         —            —
-    TCP connect                                              —   0         —            —
-    TLS handshake                                            —   0         —            —
-    Upload                                                   —   0         —            —
-    Audio sent → answer headers, network and service         —   0         —            —
-    Answer headers → first event                             —   0         —            —
-    Answer headers → transcript done                         —   0         —            —
-  Turn taking and Context
-    Last assessment queued → started                    0.1 ms   2    0.1 ms       0.1 ms
-    Assessments, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
-    Timed holds, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
-    Semantic addressing queued → started                     —   0         —            —
-    Semantic addressing inference                            —   0         —            —
-    Speech closed → association ready                        —   0         —            —
-    Context readiness wait                              0.0 ms   2    0.0 ms       0.0 ms
-  Model request, first attempt
-    Client ready                                             —   0         —            —
-    Request taken → sent                                     —   0         —            —
-    Encoding                                            0.2 ms   2    0.2 ms       0.2 ms
-    Pictures                                                 0   2         0            0
-    Body sent                                          20.0 KB   2   20.0 KB      20.0 KB
-    Attempts                                                 1   2         1            1
-    Sent → first stream event, network and service      0.1 ms   2    0.1 ms       0.1 ms
-  Audio out
-    Answer audio                                        0.24 s   2    0.24 s       0.24 s
-    Frame interval, median                               21 ms   2     21 ms        21 ms
-    Largest gap between frames                           22 ms   2     22 ms        22 ms
-    Underruns of a real-time queue                          11   2        11           11
-    Producing time over audio duration                    0.96   2      0.96         0.96
-    Output events dropped                                    0   2         0            0
-  Doctor's input
-    Sample frames late, at worst                        2.1 ms   2    2.0 ms   1.9–2.1 ms
-  n: later rounds that observed it; each row from its own start
-  — Queued in the plugin, TCP connect, TLS handshake, Upload, Audio sent → answer headers, network
-  and service, Answer headers → first event, Answer headers → transcript done: not measured: its STT
-  plugin times no request
-  — Semantic addressing queued → started, Semantic addressing inference: not measured: no semantic
-  addressing ran for the final, or none is traced
-  — Speech closed → association ready: not measured: no association asked for the segment, or no
-  resolver records one
-  — Client ready, Request taken → sent: not observed in any such round
-
-Session
-  Ready                  2.5 ms at the median of 3, 2.2–19 ms
-
-Runners
-  Runtime start          661 ms · the model cache did not grow (net)
-  PASS  alphaavatar.voice.vad.silero
-        started in 0.33 s · 1 worker · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
-  PASS  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.33 s · 1 worker · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
-
-Run again as JSON
-  alphaavatar doctor avatar.json --rounds 3 --json
-```
-
-同一场景在终端中的显示，保留颜色等全部效果；它由更早的构建录制，布局早于上面的文本：使用离线测试替身运行三轮，第二轮丢失一句。其中的数值属于替身，而非某个服务；录制止于 Host 的输出：LiveKit 的传输、客户端的播放和设备都没有测量。
-
-```terminal doctor-partial
+```terminal doctor-rounds
 AlphaAvatar / Doctor
 FAIL  Diagnostics completed · 12 passed · 2 failed · 1 skipped
 
@@ -370,17 +232,11 @@ Not verified
         LiveKit transport: not measured; the samples end at the Host's output
         client playback: not measured; no client takes part
         physical devices: not opened; the samples stand in for them
+        camera input: not sent; the picture is a shared screen, so what reads a camera, such as face
+        recognition, is not covered
         → Join a dev session from a client to try its devices
 
-Session
-  Ready                  2.4 ms at the median of 3, 2.3–18 ms
-
-Runners
-  Runtime start          817 ms · the model cache did not grow (net)
-  PASS  alphaavatar.voice.vad.silero
-        started in 0.43 s · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
-  PASS  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.39 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+  PASS checked · WARN needs attention · FAIL fails as configured · SKIP not run here: why
 
 Scenarios · 3 rounds, a session each
   FAIL  voice                  2/3 passed · stopped: 1 at stt.final
@@ -394,28 +250,35 @@ Scenarios · 3 rounds, a session each
   With model m · stt openai_segment m · tts openai m · vision off
   Sample sum_question sha256:0f72883c4ad4
 
+Failed rounds · voice
+  Round 2 · stopped at stt.final · measured: Runtime first text 466 ms; First audio frame 487 ms;
+  Response complete 716 ms; Text complete 466 ms; Last audio frame 716 ms; Input 412 ms; Context 3.2
+  ms; Output 72 ms
+
 Latency · voice · 2 of 3 rounds passed
   Metric                                               Round 1   n   Median    Range
   End to end
-    Runtime first text                                  706 ms   1   704 ms   704 ms
-    First audio frame                                   727 ms   1   726 ms   726 ms
-    Response complete                                   957 ms   1   957 ms   957 ms
-    Text complete                                       706 ms   1   704 ms   704 ms
-    Last audio frame                                    957 ms   1   957 ms   957 ms
-  Input                                                 652 ms   1   650 ms   650 ms
-    Final speech → VAD close                            601 ms   1   600 ms   600 ms
-    VAD close → Final transcript                         51 ms   1    50 ms    50 ms
-  Context                                               3.5 ms   1   2.8 ms   2.8 ms
-    Final transcript → Turn commit                      1.0 ms   1   1.0 ms   1.0 ms
-    Turn commit → Context readiness check complete      0.7 ms   1   0.5 ms   0.5 ms
-    Context readiness check complete → Context built    1.3 ms   1   1.0 ms   1.0 ms
-    Context built → Model request sent                  0.5 ms   1   0.4 ms   0.4 ms
-  Output                                                 72 ms   1    72 ms    72 ms
+    Runtime first text                                  465 ms   1   463 ms   463 ms
+    First audio frame                                   486 ms   1   485 ms   485 ms
+    Response complete                                   715 ms   1   715 ms   715 ms
+    Text complete                                       465 ms   1   464 ms   464 ms
+    Last audio frame                                    714 ms   1   715 ms   715 ms
+  Input                                                 410 ms   1   410 ms   410 ms
+    Final speech → VAD close                            360 ms   1   359 ms   359 ms
+    VAD close → Final transcript                         50 ms   1    51 ms    51 ms
+  Context                                               3.5 ms   1   2.7 ms   2.7 ms
+    Final transcript → Turn commit                      0.8 ms   1   0.7 ms   0.7 ms
+    Turn commit → Context readiness check complete      0.9 ms   1   0.6 ms   0.6 ms
+    Context readiness check complete → Context built    1.2 ms   1   0.9 ms   0.9 ms
+    Context built → Model request sent                  0.6 ms   1   0.5 ms   0.5 ms
+  Output                                                 72 ms   1    73 ms    73 ms
     Model request sent → First text delta                51 ms   1    51 ms    51 ms
     First text delta → TTS request                      0.9 ms   1   0.6 ms   0.6 ms
     TTS request → First PCM                                  —   0        —        —
     First PCM → First audio frame                            —   0        —        —
   n: later rounds that passed and observed it; the stages add up to First audio frame
+  From the final speech, the frame with the sample's last voiced sample going in, to the Host's
+  output boundary; RTC transport and client playback are not in it
   — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
   — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
   no first PCM
@@ -423,36 +286,89 @@ Latency · voice · 2 of 3 rounds passed
 Latency · voice · every round, the 1 not passed included
   Metric                                               Round 1   n   Median        Range
   End to end
-    Runtime first text                                  706 ms   2   705 ms   704–705 ms
-    First audio frame                                   727 ms   2   726 ms   726–727 ms
-    Response complete                                   957 ms   2   958 ms   957–958 ms
-    Text complete                                       706 ms   2   705 ms   704–706 ms
-    Last audio frame                                    957 ms   2   957 ms   957–958 ms
-  Input                                                 652 ms   2   651 ms   650–651 ms
-    Final speech → VAD close                            601 ms   2   600 ms   600–601 ms
-    VAD close → Final transcript                         51 ms   2    50 ms     50–51 ms
-  Context                                               3.5 ms   2   3.0 ms   2.8–3.1 ms
-    Final transcript → Turn commit                      1.0 ms   2   1.0 ms       1.0 ms
-    Turn commit → Context readiness check complete      0.7 ms   2   0.5 ms       0.5 ms
-    Context readiness check complete → Context built    1.3 ms   2   1.1 ms   1.0–1.2 ms
-    Context built → Model request sent                  0.5 ms   2   0.4 ms       0.4 ms
+    Runtime first text                                  465 ms   2   465 ms   463–466 ms
+    First audio frame                                   486 ms   2   486 ms   485–487 ms
+    Response complete                                   715 ms   2   716 ms   715–716 ms
+    Text complete                                       465 ms   2   465 ms   464–466 ms
+    Last audio frame                                    714 ms   2   715 ms   715–716 ms
+  Input                                                 410 ms   2   411 ms   410–412 ms
+    Final speech → VAD close                            360 ms   2   360 ms   359–360 ms
+    VAD close → Final transcript                         50 ms   2    51 ms     51–52 ms
+  Context                                               3.5 ms   2   2.9 ms   2.7–3.2 ms
+    Final transcript → Turn commit                      0.8 ms   2   0.8 ms   0.7–0.9 ms
+    Turn commit → Context readiness check complete      0.9 ms   2   0.7 ms   0.6–0.8 ms
+    Context readiness check complete → Context built    1.2 ms   2   1.0 ms   0.9–1.0 ms
+    Context built → Model request sent                  0.6 ms   2   0.5 ms       0.5 ms
   Output                                                 72 ms   2    72 ms     72–73 ms
     Model request sent → First text delta                51 ms   2    51 ms        51 ms
     First text delta → TTS request                      0.9 ms   2   0.6 ms   0.6–0.7 ms
     TTS request → First PCM                                  —   0        —            —
     First PCM → First audio frame                            —   0        —            —
   n: later rounds that observed it; the stages add up to First audio frame
+  From the final speech, the frame with the sample's last voiced sample going in, to the Host's
+  output boundary; RTC transport and client playback are not in it
   — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
   — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
   no first PCM
 
-Failed rounds · voice
-  Round 2 · stopped at stt.final · measured: Runtime first text 705 ms; First audio frame 727 ms;
-  Response complete 958 ms; Text complete 706 ms; Last audio frame 958 ms; Input 651 ms; Context 3.1
-  ms; Output 73 ms
+Details · voice · every round, the 1 not passed included
+  Metric                                               Round 1   n    Median        Range
+  STT, the Turn's final
+    Segment committed → STT final                        50 ms   2     51 ms     50–51 ms
+    Queued in the plugin                                     —   0         —            —
+    TCP connect                                              —   0         —            —
+    TLS handshake                                            —   0         —            —
+    Upload                                                   —   0         —            —
+    Audio sent → answer headers, network and service         —   0         —            —
+    Answer headers → first event                             —   0         —            —
+    Answer headers → transcript done                         —   0         —            —
+  Turn taking and Context
+    Last assessment queued → started                    0.1 ms   2    0.1 ms       0.1 ms
+    Assessments, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
+    Timed holds, final → commit                         0.0 ms   2    0.0 ms       0.0 ms
+    Semantic addressing queued → started                     —   0         —            —
+    Semantic addressing inference                            —   0         —            —
+    Speech closed → association ready                        —   0         —            —
+    Context readiness wait                              0.0 ms   2    0.0 ms       0.0 ms
+  Model request, first attempt
+    Client ready                                             —   0         —            —
+    Request taken → sent                                     —   0         —            —
+    Encoding                                            0.2 ms   2    0.2 ms       0.2 ms
+    Pictures                                                 0   2         0            0
+    Body sent                                          20.0 KB   2   20.0 KB      20.0 KB
+    Attempts                                                 1   2         1            1
+    Sent → first stream event, network and service      0.1 ms   2    0.1 ms       0.1 ms
+  Audio out
+    Answer audio                                        0.24 s   2    0.24 s       0.24 s
+    Frame interval, median                               21 ms   2     21 ms        21 ms
+    Largest gap between frames                           21 ms   2     21 ms     21–22 ms
+    Underruns of a real-time queue                          11   2        11           11
+    Producing time over audio duration                    0.95   2      0.95    0.95–0.96
+    Output events dropped                                    0   2         0            0
+  Doctor's input
+    Sample frames late, at worst                        2.1 ms   2    2.0 ms   2.0–2.1 ms
+  n: later rounds that observed it; each row from its own start
+  — Queued in the plugin, TCP connect, TLS handshake, Upload, Audio sent → answer headers, network
+  and service, Answer headers → first event, Answer headers → transcript done: not measured: its STT
+  plugin times no request
+  — Semantic addressing queued → started, Semantic addressing inference: not measured: no semantic
+  addressing ran for the final, or none is traced
+  — Speech closed → association ready: not measured: no association asked for the segment, or no
+  resolver records one
+  — Client ready, Request taken → sent: not measured: its provider logs no such step
+
+Session
+  Ready                  2.7 ms at the median of 3, 2.4–61 ms
+
+Runners
+  Runtime start          568 ms · the model cache did not grow (net)
+  PASS  alphaavatar.voice.vad.silero
+        started in 0.28 s · 1 worker · 162 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+  PASS  alphaavatar.router.turn_taking.smart_turn_v3
+        started in 0.28 s · 1 worker · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
 Run again as JSON
-  alphaavatar doctor $WORK/avatar.json --rounds 3 --json
+  alphaavatar doctor avatar.json --rounds 3 --json
 ```
 
 文本输出按组排列，采用[各命令共用的布局](README.md#output)，先给出结论。标题行给出报告的状态及其计数；会话运行过后显示 `Diagnostics completed`。`Checks` 每组一行，分为环境、配置、目录、会话与服务：全部通过的组只占它自己这一行，任何未通过的检查都在该组下另占一行，附其详情和下一步。什么都没运行的组列在 `Not verified` 下，说明原因以及怎样才能运行；随后一行说明每种状态的含义。接下来是各轮停在哪里：`Scenarios` 给出场景、已运行轮次中通过的轮数以及其余各轮停在哪里，其下是失败轮次的原因（每条原因只列一次，并附上共有该原因的轮次）和下一步，然后是这些轮次运行所用的配置和它们听到的样本；`Failed rounds` 给出每个失败的轮次、它停在的阶段以及它确实测到的内容，包括端到端和每个阶段。然后是端到端和分阶段的数据：基于通过各轮的 `Latency` 表格，先是端到端（Runtime first text、First audio frame、Response complete、Text complete、Last audio frame），然后是 `Input`、`Context` 和 `Output`，每个阶段的总计单独占一行，其各行列在下面，每行从前一个节点起算（见[指标](#指标)），再用一行说明所有指标的起止：从最终语音到 Host 的输出边界，不含 RTC 传输和客户端播放。有某轮未通过时，随后还有第二张表，覆盖观测到各指标的每一轮，包括失败的轮次，并在表头中注明。然后是用于诊断这些数据的内容：`Details` 覆盖每一轮（包括失败的轮次），按各指标所诊断的对象分组（STT，即 Turn 的终稿；轮次判断与 Context；模型请求的首次尝试；音频输出；视觉，仅限 `voice_vision`；Doctor 的输入），每行从自己的起点起算，如其标签所示。最后是 `Session`，给出所有会话就绪时间的中位数，以及 `Runners`，给出运行时的那一次启动及其间模型缓存的变化，然后是每个 runner 的启动、worker（按配置的数量，就绪数较少时还给出就绪了几个）、处理的调用，以及排队等待和执行的峰值；runner 处理过一次调用后才会汇总其调用，因此没有调用的 runner 显示 `no call summary observed`（`calls` 为 `null`）。`Latency` 和 `Details` 的每一行先给出第 1 轮，再给出后续轮数（`n`，在表下注明）、中位数和范围；只有通过各轮的 `Latency` 表格会在有 20 个样本后加上 P95。终端太窄时，每个指标单独占多行。没有任何一轮观测到的指标显示为 `—`，绝不显示为 `0 ms`，表下有一行说明原因；只有第 1 轮未观测到的指标也会说明原因，写法与该轮的指标相同（`…, round 1: …`）；第 1 轮未通过时，通过各轮的表格也会注明这一点。在部分轮次中被合并的行会注明合并的轮数。小于 10 ms 的时间保留一位小数。诊断未运行时，`Latency` 会注明 `Not measured` 及原因。`Run again as JSON` 给出以 JSON 输出同一诊断的命令，使用相同的 `--rounds`：包括每一轮、事件边界、样本数、服务和每条证据。带 `KEY=VALUE` 覆盖项运行时，它会提示给出相同的覆盖项，但不重复列出。`--list` 按相同的分组列出检查项。
