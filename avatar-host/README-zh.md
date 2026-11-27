@@ -128,6 +128,6 @@ LiveKit 播放反馈测量的是本地音频队列，而不是远端的扬声器
 ## 更多信息
 
 [部署](../docs/DEPLOY.md) · [开发](../CONTRIBUTING.md) ·
-[Avatar 工作区](../docs/avatar-workspace-layout.md) ·
-[模型缓存](../docs/models-cache-layout.md) ·
+[Avatar 工作区](../docs/layouts/avatar-workspace.md) ·
+[模型缓存](../docs/layouts/models-cache.md) ·
 [Character 设置](../avatar-plugins/perception/avatar-plugins-character/README.md)

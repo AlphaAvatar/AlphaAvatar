@@ -72,4 +72,4 @@ Context、Turn、Run、输出和分块 ID 不可互换。
 Core 日志在导入时不安装任何 handler。
 各模块使用标准 `logging`；Host 负责收集、格式化和文件轮转。
 可选的 Core 事件诊断是采样的，可能被丢弃，不能代替规范记录或执行结果。
-已保存的日志和备份见 [Host 设置](../avatar-host/README.md)和面向用户的[工作区指南](../docs/avatar-workspace-layout.md)。
+已保存的日志和备份见 [Host 设置](../avatar-host/README.md)和面向用户的[工作区指南](../docs/layouts/avatar-workspace.md)。

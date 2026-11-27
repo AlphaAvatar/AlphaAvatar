@@ -279,12 +279,13 @@ Persona 提供说话者／身份证据；轮次判断不识别人。
 | 说话者／人脸证据 | [Persona 处理器](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/processors/)。 |
 | 片段关联与就绪状态 | [ParticipantRuntime](avatar-agents/alphaavatar/agents/runtime/modules/participants/)。 |
 | 已接受的参与者／用户绑定 | [SessionRuntime](avatar-core/alphaavatar/core/session/)。 |
-| 轮次准入时的主体解析 | `AvatarEngine._decision_actors()`；当前身份投影使用 `ParticipantRuntime.project_turn()`。 |
+| 一个轮次的参与者 | `ParticipantRuntime.of_turn()`：需要时随时根据该轮次的输入观测及为其确定的关联读取；准入时不固定任何结果。 |
 | 限于快照范围的 Persona 访问 | [persona/runtime.py](avatar-plugins/perception/avatar-plugins-persona/alphaavatar/plugins/persona/runtime.py)。 |
 
 - 单凭麦克风、设备或主参与者，不能证明某个片段由谁说出。
 - 实体标签不能独立确立持久用户身份。
-- 一个时序轮次可以包含多个主体或未归属片段。
+- 一个时序轮次可以包含多个参与者或未归属片段。
+- 已确定的关联在整个会话中保留，其来源退役、对应的 Persona 处理器停止后也不丢弃，以便会话结束时的 Memory 等后续读取方仍能看到。
 - 冲突证据不能授予私有用户身份。
 - 关联就绪、身份推断和属性提取各有独立的完成时间。
 - 尽早启动独立标注工作；只等待消费操作所需的依赖。
@@ -416,7 +417,7 @@ InferenceExecutor 拥有客户端连接，Host 负责监督服务。
 | Runner 接口 | [inference/runner.py](avatar-agents/alphaavatar/agents/runtime/inference/runner.py)。 |
 | Worker 选择、服务与池 | [runtime/inference/](avatar-agents/alphaavatar/agents/runtime/inference/)。 |
 | 插件自身的 runner 计划 | 所选插件的工厂和 `inference.py`。 |
-| 模型解析与离线策略 | [模型缓存指南](docs/models-cache-layout.md)。 |
+| 模型解析与离线策略 | [模型缓存指南](docs/layouts/models-cache.md)。 |
 
 - 从已验证的生效配置中选择 runner。
 - 在适当的初始化路径中解析／下载模型文件，不要在模块导入时执行。
@@ -444,7 +445,7 @@ InferenceExecutor 拥有客户端连接，Host 负责监督服务。
 | Avatar 工作区、用户与会话路径 | [Agents WorkspacePaths](avatar-agents/alphaavatar/agents/workspace/paths.py)。 |
 | 显式准备应用目录 | [Host 工作区操作](avatar-host/alphaavatar/host/workspace/operations.py)。 |
 | 显式准备 Avatar 目录 | [Agents 工作区操作](avatar-agents/alphaavatar/agents/workspace/operations.py)。 |
-| 面向用户的布局与备份说明 | [工作区指南](docs/avatar-workspace-layout.md)。 |
+| 面向用户的布局与备份说明 | [工作区指南](docs/layouts/avatar-workspace.md)。 |
 
 - Host 默认选择平台数据目录；`ALPHAAVATAR_HOME` 或 YAML `application.home` 可选择另一个绝对根目录。
 - 保留文档规定的配置、设置、缓存与 Avatar 组织方式。
@@ -615,8 +616,9 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | [quickstart.md](docs/quickstart.md) | 从零到运行中的 Host：前提条件、安装、setup、Doctor、启动、客户端，以及源码路径。 |
 | [coding-conventions.md](docs/coding-conventions.md) | 模块与类的顺序、功能分区字符串、方法命名、构造函数字段分组和函数体内的代码块。 |
 | [identifiers-zh.md](docs/identifiers-zh.md) | 标识含义、所有者、唯一性与生命周期、初始化和关联规则。 |
-| [avatar-workspace-layout.md](docs/avatar-workspace-layout.md) | 应用与 Avatar 数据布局、个人数据、日志和备份边界。 |
-| [models-cache-layout.md](docs/models-cache-layout.md) | 模型缓存的所有权、解析、下载、离线行为和清理。 |
+| [layouts/application-home.md](docs/layouts/application-home.md) | 三个根目录（应用主目录、应用缓存、Avatar 工作区）：各自如何选定、应用主目录存放什么、哪些按需创建或预留。 |
+| [layouts/avatar-workspace.md](docs/layouts/avatar-workspace.md) | Avatar 工作区的布局、个人数据、日志和备份边界。 |
+| [layouts/models-cache.md](docs/layouts/models-cache.md) | 模型缓存的所有权、解析、下载、离线行为和清理。 |
 | [bugs-zh.md](docs/bugs-zh.md) | 已知缺陷、修复和暂缓处理的观察；根据当前修订核实状态。 |
 | [cli/README.md](docs/cli/README.md) | CLI 导航、可用与计划中的命令、配置和退出行为。 |
 | [cli/config.md](docs/cli/config.md) | Bundle/profile 创建，以及生效配置的检查与校验。 |
@@ -628,6 +630,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | [cli/start.md](docs/cli/start.md) | 服务模式启动、配置覆盖和运行行为。 |
 | [cli/test.md](docs/cli/test.md) | 能力测试命令的方案；尚不可用，是否提供未定（路线图 QA-06）。 |
 | [cli/cli.html](docs/cli/cli.html) | 已记录的 CLI 展示图集；属于示例输出，不是实时服务或基准测试证据。 |
+| [cli/cli-output.json](docs/cli/cli-output.json) | 两种语言的 CLI 输出页共用的录制屏幕及各语言文字，两页都由它生成（`scripts/docs/cli_preview.py`）。 |
 | [releases/v0.6.1.md](docs/releases/v0.6.1.md) | 查阅 v0.6.1 的人脸识别、视觉身份、声脸融合与 Persona 持久化变更。用于了解该历史版本。 |
 | [releases/v0.6.2.md](docs/releases/v0.6.2.md) | 查阅 v0.6.2 的统一 Provider 与嵌入、追踪、运行时与多参与者基础，以及嵌套配置迁移。用于了解该历史版本。 |
 | [releases/v0.6.3.md](docs/releases/v0.6.3.md) | 查阅 v0.6.3 的图感知 Memory、节点提及与别名、会话局部实体键，以及 LanceDB 检索。用于了解该历史版本。 |

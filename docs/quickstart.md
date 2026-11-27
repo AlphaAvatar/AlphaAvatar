@@ -119,5 +119,5 @@ from source, use a release's tag ([DEPLOY.md](DEPLOY.md)); for environments and 
 - [DEPLOY.md](DEPLOY.md): credentials, health checks, a systemd service, logs, storage, updates.
 - [Commands](cli/README.md), [config](cli/config.md#credentials), [upgrade](cli/upgrade.md) and
   [cleanup](cli/cleanup.md); [examples](../examples/README.md) of complete configurations.
-- [Avatar workspace](avatar-workspace-layout.md) and [Models and cache](models-cache-layout.md):
+- [Avatar workspace](layouts/avatar-workspace.md) and [Models and cache](layouts/models-cache.md):
   where data and models are kept; [README](../README.md); [CONTRIBUTING.md](../CONTRIBUTING.md).

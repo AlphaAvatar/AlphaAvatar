@@ -92,7 +92,7 @@ Plugin configuration stays with its owning plugin or processor. The main model i
 
 `prepare_inference_runners()` passes the validated AvatarConfig to plugin-owned selectors. Workers reconstruct the selected plan; selected runners resolve and load models during initialization, before serving realtime requests. Imports and factory registration must not download or load models. Changing enabled components requires restarting the application.
 
-`InferenceRunner` is an execution contract, not a global runner registry. See [Model cache](../docs/models-cache-layout.md) for downloads, offline use and cleanup, [Avatar workspace](../docs/avatar-workspace-layout.md) for stored personal data and backups, and [Examples](../examples/README.md) for complete configurations.
+`InferenceRunner` is an execution contract, not a global runner registry. See [Model cache](../docs/layouts/models-cache.md) for downloads, offline use and cleanup, [Avatar workspace](../docs/layouts/avatar-workspace.md) for stored personal data and backups, and [Examples](../examples/README.md) for complete configurations.
 
 ## Workspace maintenance
 

@@ -72,6 +72,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.7.0 · Configuration and versions, new Web/App UI, guided setup, docs and Roadmap, Demo stability
 
 - **Release:** in-development · Branch `dev/v0.7.0`
+- **Summary:** One configuration and version source across CLI, Web and App; the new UI in Web and App, with guided install, configuration and start; organized documentation and this Roadmap on the docs site; a stable, repeatable Demo.
 - **Order:** configuration and versions → Figma, Web and App UI → guided install, configuration and start → documentation and Roadmap → Demo stability and acceptance.
 - **Acceptance path:** open Web or App → guided Host install or connection → configure graphically and save → Doctor → start and interact → see status, locate problems and complete updates.
 - **Open:** which platforms the App delivers first, and their local or remote Host connections (APP-01); whether a TUI or agent-driven configuration is offered (APP-02).
@@ -93,6 +94,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.7.1 · Tool-layer plugins
 
 - **Release:** planned
+- **Summary:** Improve the tool-layer plugins: DeepResearch, MCP and other agents as sub-agents. Whether RAG, a Files plugin and a streaming voice survey are included is still open.
 - **Focus:** the tool-layer plugins.
 - **Open:** whether RAG work is included (RAG-13), whether RAG and Files are one plugin (FIL-01), and whether the streaming voice and embedding survey is included (VOI-02).
 
@@ -110,6 +112,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.7.2 · Perception plugins and multi-person recognition
 
 - **Release:** planned
+- **Summary:** Perception plugins for several people: multimodal Memory and Persona updates, finer memory ownership, multi-person recall and addressing, and identity from face and voice together.
 - **Focus:** perception plugins and recognizing several people.
 - **Depends on:** multi-person recall (MEM-36) and addressing input (RTR-22) use the identity results of the Persona items.
 
@@ -137,6 +140,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.7.3 · WebRTC backend
 
 - **Release:** planned
+- **Summary:** A WebRTC backend beside the existing LiveKit backend. Whether it needs a LiveKit server, which library it uses and how signalling works are still open.
 - **Open:** the WebRTC backend's boundary; see RTC-10.
 
 | ID | Item | Status | Priority | Date | Notes |
@@ -147,6 +151,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.8.0 · Avatar execution independent of interaction connections
 
 - **Release:** planned
+- **Summary:** Avatar execution separate from interaction connections: episodes, persistent Context, pause and resume, wake and sleep, recovery after shutdown, and a Reflection plugin.
 - **Focus:** separate the lifecycle of an interaction connection from the Avatar's execution lifecycle.
 - **Background:** see [execution lifecycle](#pn-execution-lifecycle) for what exists today and the proposed semantics.
 
@@ -168,6 +173,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.8.1 · Configuration initialization; remaining scope open
 
 - **Release:** planned
+- **Summary:** Configuration initialization: init_config validated the way STT settings are. The rest of the version is not decided.
 - **Open:** the rest of this version's scope is not decided.
 
 | ID | Item | Status | Priority | Date | Notes |
@@ -180,6 +186,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.6.9 · Voice reliability, participant ownership and standalone installation
 
 - **Release:** released · 2026-11-25 · [v0.6.9](releases/v0.6.9.md)
+- **Summary:** Reliable speech timing and turn taking, participants and their data owned per person, and a standalone Linux package with setup, upgrade, cleanup and Doctor.
 - **Order:** speech timing and association evidence → configuration service and CLI → runner parallelism and stress validation → installation, upgrade, cleanup and Doctor.
 - **Acceptance path:** clean Linux install → interactive CLI configuration → Doctor run and exported report → start, a real LiveKit call and a normal stop (accepted by the maintainer) → upgrade between two v0.6.9 builds → the current environment stays usable when preparation fails → safe cleanup of old environments.
 - **Setup flow:** capabilities → provider and model → credentials → summary and install confirmation → install dependencies, check, enable the bundle → result and next steps.
@@ -262,6 +269,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.6.8 · Native Host, runtime capabilities and realtime voice
 
 - **Release:** released · 2026-10-22 · [v0.6.8](releases/v0.6.8.md)
+- **Summary:** A native Host and Loop replace livekit.agents, capabilities become a runtime system, plugins form Foundation, Perception and Tools layers, and speech and captions stream in sync.
 - **Version plan, as recorded, and its items:**
   - Persona split into processors with their own lifecycles; business logic moved from Agents into the plugin, Agents keeps the abstractions → PER-18
   - Memory split into processors with their own lifecycles; memory notes, object IDs and storage refactored → MEM-16, MEM-17
@@ -353,6 +361,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.6.7 · Native turn taking, Semantic Addressing and full-duplex interruption
 
 - **Release:** released · 2026-09-05 · [v0.6.7](releases/v0.6.7.md)
+- **Summary:** Native turn taking: multimodal reply decisions replace LiveKit's turn detection, with Semantic Addressing, conversation focus and full-duplex interruption.
 - **Version plan, as recorded, and its items:**
   - Multimodal reply decisions; LiveKit turn detection removed → RTR-05, RTR-10, RUN-09
   - VAD processor in its own module → RTR-21
@@ -394,6 +403,7 @@ are not translated into levels. `—` means the item had no mark.
 ### v0.6.6 · Unified timing, multimodal alignment and capability awareness
 
 - **Release:** released · 2026-08-17 · [v0.6.6](releases/v0.6.6.md)
+- **Summary:** Unified timing aligns input across modalities, the Avatar's prompt says what it can do, ENV Memory takes audio, and the Qdrant and LanceDB stores behave the same.
 - **Version plan, as recorded, and its items:**
   - Fix related bugs → GEN-01
   - Temporal alignment and prompt improvements → CORE-06, CTX-06, CTX-07
@@ -480,6 +490,7 @@ are not translated into levels. `—` means the item had no mark.
 ### Through v0.6.5
 
 - **Release:** released · 2025-11-13 – 2026-07-25
+- **Summary:** Foundations delivered from v0.1.0 to v0.6.5, by area and month; which release shipped each item was not verified.
 - Items delivered before v0.6.6, by area and month. Their release versions were not verified; see the [release notes](releases/) and the README's release history.
 
 #### Core runtime contracts
@@ -644,6 +655,7 @@ are not translated into levels. `—` means the item had no mark.
 ### Unscheduled
 
 - **Release:** unscheduled
+- **Summary:** Directions and work not assigned to a version; the active client direction is AlphaAvatar Web, App and OS.
 - Directions and work not assigned to a version. The active client direction is AlphaAvatar Web, App, and OS; third-party messaging bridges are outside the current implementation scope, while external tools and personal-workspace integrations remain part of the project.
 
 #### Core runtime contracts
@@ -1006,6 +1018,9 @@ For tools that read these files, such as the docs site.
 - Milestone sections start with `<a id="<milestone>"></a>` and a `###` heading. Milestones are
   versions (`vX.Y.Z`), `earlier` and `backlog`. Bullets before the first table are details:
   release, order, acceptance path, open questions.
+- A milestone's `**Summary:**` bullet (Chinese: `**摘要**：`), right after its release bullet,
+  says in at most 240 characters (Chinese: 120) what the milestone is about; the docs site
+  shows it on the milestone's card. Both languages give one for the same milestones.
 - Item tables have the header `| ID | Item | Status | Priority | Date | Notes |` (Chinese:
   `| ID | 事项 | 状态 | 优先级 | 日期 | 说明 |`). A row belongs to the milestone whose anchor last
   precedes it; `####` area headings only group rows.

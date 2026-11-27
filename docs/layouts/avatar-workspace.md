@@ -1,10 +1,10 @@
 # Your Avatar workspace
 
-[中文](avatar-workspace-layout-zh.md)
+[中文](avatar-workspace-zh.md)
 
 An Avatar workspace contains your saved user information, memories, session records and
 files produced by enabled features. It is separate from the source checkout and from the
-[downloaded model cache](models-cache-layout.md).
+[downloaded model cache](models-cache.md).
 
 Treat the workspace as private data. Keep a backup before moving it, clearing files or
 changing the Avatar ID.
@@ -24,24 +24,11 @@ This stores the workspace at exactly `/srv/AlphaAvatarData/my_avatar/`. AlphaAva
 not append the Avatar ID to `avatar.workspace_root`. Use an absolute path without `..`;
 relative paths and a literal `~` in YAML are rejected.
 
-When `avatar.workspace_root` is omitted, the workspace is
-`<application-home>/avatars/<avatar_key>/`. Choose the application home with the
-`ALPHAAVATAR_HOME` launch environment variable, or set `application.home` in YAML to
-override that environment-selected home. Both values must be complete absolute paths.
-Without either setting, Host uses the service account's platform data directory:
-
-| Platform | Default application home |
-| --- | --- |
-| Linux | `$XDG_DATA_HOME/alphaavatar/`, or `~/.local/share/alphaavatar/` |
-| macOS | `~/Library/Application Support/AlphaAvatar/` |
-| Windows | `%LOCALAPPDATA%/AlphaAvatar/`, or `~/AppData/Local/AlphaAvatar/` |
-
-The application home contains `configs/profiles/`, `configs/bundles/`,
-`settings/settings.yaml`, `cache/` and `avatars/`. These paths do not imply that every
-configuration UI or settings workflow has already been implemented. `cache/` contains
-`models/`, `downloads/`, `providers/`, `diagnostics/` and `avatars/<avatar_key>/`.
-Set `application.cache_root` to an absolute path to place the whole application cache
-elsewhere; it is separate from the workspace and its own `.cache/` directory.
+When `avatar.workspace_root` is omitted, the workspace is `<application-home>/avatars/<avatar_key>/`.
+[Application data layout](application-home.md) describes how the application home is chosen,
+with `ALPHAAVATAR_HOME` or `application.home`, and what else it holds. That includes the
+application cache, which `application.cache_root` can place elsewhere; it is separate from the
+workspace and its own `.cache/` directory.
 
 Legacy `avatar.work_dir` and `AVATAR_WORK_DIR` settings are rejected. Remove them and set
 `avatar.workspace_root` to the existing complete Avatar directory. For example, an old
@@ -225,7 +212,7 @@ Host has stopped.
 
 The workspace `.cache/` is separate from downloaded model weights, which normally
 live under `<application-cache>/models/`. Follow the
-[model cache guide](models-cache-layout.md) when moving or clearing model downloads.
+[model cache guide](models-cache.md) when moving or clearing model downloads.
 `env/` is not a replacement for your launch `.env` file and is not automatically a
 credential vault. Keep API keys and configuration files in their intended protected
 locations rather than copying them into a reserved workspace folder.
@@ -249,7 +236,7 @@ removing the old copy. Do not run the old and new deployment against the same lo
 as an informal migration test.
 
 A model-cache move is a separate operation. Follow the
-[model cache guide](models-cache-layout.md) rather than moving model files into `data/`.
+[model cache guide](models-cache.md) rather than moving model files into `data/`.
 
 ## Free up space without losing your data
 

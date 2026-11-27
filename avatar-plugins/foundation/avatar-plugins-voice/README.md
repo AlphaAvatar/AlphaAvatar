@@ -37,7 +37,7 @@ This is a configuration fragment; full examples also select Loop and Context. Mo
 
 Interruption policy belongs to `router.init_config.turn_taking.interruption`. The unused `voice.allow_interruptions` field is removed and rejected; it is not a second interruption switch.
 
-Selecting Silero selects its inference runner. Models are resolved during runner initialization, not plugin import. See [Model cache](../../../docs/models-cache-layout.md) and [Plugin Layout and Boundaries](../../README.md).
+Selecting Silero selects its inference runner. Models are resolved during runner initialization, not plugin import. See [Model cache](../../../docs/layouts/models-cache.md) and [Plugin Layout and Boundaries](../../README.md).
 
 ## Native TTS and media contract
 

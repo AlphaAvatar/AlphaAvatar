@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Check docs/manifest.yaml, links and anchors, and the Roadmap, offline.
+"""Check docs/manifest.yaml, links, anchors and emphasis, the Roadmap and the CLI output pages,
+offline.
 
 The manifest's fields are described in its header, the Roadmap's format in its Format section.
 Exit status 1 lists every problem found.
@@ -20,6 +21,7 @@ Exit status 1 lists every problem found.
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import subprocess
 import sys
@@ -39,7 +41,7 @@ LANGS = {"en", "zh-CN"}
 VISIBILITY = {"public", "internal"}
 DOC_STATUS = {"current", "planned", "historical", "illustrative"}
 REQUIRED = ("id", "path", "title", "type", "lang", "visibility", "status")
-PUBLIC_REQUIRED = ("route", "section", "order", "applies_to")
+PUBLIC_REQUIRED = ("route", "group", "order", "applies_to")
 VERSION = re.compile(r"v\d+\.\d+\.\d+")
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -62,6 +64,9 @@ REF_DEF = re.compile(r"^ {0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)")
 HTML_ATTR = re.compile(r"\b(?:src|href)=\"([^\"]+)\"")
 HTML_ID = re.compile(r"\b(?:id|name)=\"([^\"]+)\"")
 CODE_SPAN = re.compile(r"`+[^`]*`+")
+# A Roadmap milestone's summary bullet, and the longest it may be in each language.
+SUMMARY = re.compile(r"- \*\*(?:Summary:\*\*|摘要\*\*：) ?(.*)")
+SUMMARY_LENGTH = {"en": 240, "zh-CN": 120}
 
 
 def _tracked() -> list[str]:
@@ -154,18 +159,97 @@ def _check_links(rel: str, problems: list[str], cache: dict[Path, set[str]]) -> 
                     problems.append(f"{where}: no such anchor")
 
 
+def _punctuation(ch: str) -> bool:
+    return unicodedata.category(ch)[0] in "PS"
+
+
+def _check_emphasis(rel: str, problems: list[str]) -> None:
+    """A `**` that cannot close the bold text it opened, by CommonMark's flanking rules, is shown
+    as two asterisks: for example `**发布：**planned`, whose second run follows punctuation and
+    comes right before a letter. Each paragraph is checked as a whole, code spans as letters."""
+    block: list[tuple[int, str]] = []
+    for number, line in [*_prose_lines(ROOT / rel), (0, "")]:
+        if line.strip():
+            block.append((number, line))
+            continue
+        text = "\n".join(part for _, part in block)
+        opened: list[int] = []  # Where each open run is.
+        for match in re.finditer(r"(?<![*\\])\*\*(?!\*)", text):
+            before = text[match.start() - 1] if match.start() else " "
+            after = text[match.end()] if match.end() < len(text) else " "
+            left = not after.isspace() and (
+                not _punctuation(after) or before.isspace() or _punctuation(before)
+            )
+            right = not before.isspace() and (
+                not _punctuation(before) or after.isspace() or _punctuation(after)
+            )
+            if right and opened:
+                opened.pop()
+            elif left:
+                opened.append(match.start())
+        for start in opened:
+            line = block[text.count("\n", 0, start)][0]
+            problems.append(f"{rel}:{line}: `**` opens bold text that never closes")
+        block = []
+
+
+def _prose_lines(path: Path) -> list[tuple[int, str]]:
+    """Lines outside fenced code blocks, each code span turned into letters."""
+    out, fenced = [], False
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if FENCE.match(line):
+            fenced = not fenced
+        elif not fenced:
+            out.append((number, CODE_SPAN.sub(lambda m: "x" * len(m.group()), line)))
+    return out
+
+
 """Manifest"""
+
+
+def _texts(value: object, required: bool) -> str | None:
+    """What is wrong with a title or summary: one string, or one per language."""
+    if value is None:
+        return "missing" if required else None
+    if isinstance(value, dict):
+        good = set(value) == LANGS and all(isinstance(v, str) and v for v in value.values())
+        return None if good else f"must give {sorted(LANGS)}"
+    return None if isinstance(value, str) and value else "must be text"
+
+
+def _check_sections(manifest: dict, problems: list[str]) -> dict[str, str | None]:
+    """The sections and their groups, one level of subgroups at most: each group's parent group,
+    None for a section's own."""
+    groups_of: dict[str, str | None] = {}
+    if manifest.get("schema") != 2:
+        problems.append("manifest: schema must be 2")
+    sections = manifest.get("sections") or []
+    if not sections:
+        problems.append("manifest: no sections")
+    for section in sections:
+        where = f"manifest: section {section.get('id')}"
+        for key in ("title", "summary"):
+            if wrong := _texts(section.get(key), True):
+                problems.append(f"{where}: {key} {wrong}")
+        if not section.get("groups"):
+            problems.append(f"{where}: no groups")
+        for group in section.get("groups") or []:
+            for sub in [group, *group.get("groups", [])]:
+                gid = sub.get("id")
+                if gid in groups_of:
+                    problems.append(f"manifest: group {gid} repeats")
+                groups_of[gid] = None if sub is group else group.get("id")
+                for key, required in (("title", True), ("summary", False)):
+                    if wrong := _texts(sub.get(key), required):
+                        problems.append(f"manifest: group {gid}: {key} {wrong}")
+                if sub is not group and sub.get("groups"):
+                    problems.append(f"manifest: group {gid}: groups go one level deep")
+    return groups_of
 
 
 def _check_manifest(problems: list[str]) -> dict:
     manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
-    sections = {s["id"] for s in manifest.get("sections", [])}
-    for section in manifest.get("sections", []):
-        title = section.get("title")
-        if isinstance(title, dict) and set(title) != LANGS:
-            problems.append(f"manifest: section {section['id']}: titles must be {sorted(LANGS)}")
-        elif not isinstance(title, str | dict):
-            problems.append(f"manifest: section {section['id']}: missing title")
+    groups_of = _check_sections(manifest, problems)
     documents, groups = manifest.get("documents", []), manifest.get("groups", [])
     ids, routes, paths = set(), set(), set()
 
@@ -201,8 +285,8 @@ def _check_manifest(problems: list[str]) -> dict:
             if key in routes:
                 problems.append(f"{label}: route {doc['route']} repeats for {doc['lang']}")
             routes.add(key)
-            if doc["section"] not in sections:
-                problems.append(f"{label}: unknown section {doc['section']!r}")
+            if doc["group"] not in groups_of:
+                problems.append(f"{label}: unknown group {doc['group']!r}")
             if not isinstance(doc["order"], int):
                 problems.append(f"{label}: order must be an integer")
         elif "route" in doc:
@@ -252,9 +336,17 @@ def _check_manifest(problems: list[str]) -> dict:
         if len({tuple(v) for v in levels.values()}) > 1:
             problems.append(f"manifest: {group}: heading levels differ between {sorted(levels)}")
 
+    listed = {d["group"] for d in documents if d.get("visibility") == "public" and "group" in d}
+    for group in groups_of:
+        children = [g for g, p in groups_of.items() if p == group]
+        if group not in listed and not listed & set(children):
+            problems.append(f"manifest: group {group} lists no public document")
+
     tracked = _tracked()
     for rel in tracked:
         if not (rel.endswith(".md") or rel.startswith("docs/")) or rel == "docs/manifest.yaml":
+            continue
+        if not (ROOT / rel).is_file():  # Removed in the working tree.
             continue
         if rel not in paths and not any(fnmatch.fnmatch(rel, g["pattern"]) for g in groups):
             problems.append(f"manifest: {rel} is neither listed nor grouped")
@@ -278,7 +370,7 @@ def _table_kind(header: str) -> str:
 
 def _parse_roadmap(rel: str, problems: list[str]) -> tuple[list[tuple], dict[str, tuple]]:
     lines = (ROOT / rel).read_text(encoding="utf-8").splitlines()
-    timeline, items, areas = [], {}, set()
+    timeline, items, areas, summaries = [], {}, set(), {}
     anchors = [m.group(1) for line in lines if (m := re.match(r'<a id="([^"]+)"></a>$', line))]
     table = milestone = None
 
@@ -286,6 +378,10 @@ def _parse_roadmap(rel: str, problems: list[str]) -> tuple[list[tuple], dict[str
         anchor = re.match(r'<a id="([^"]+)"></a>$', line)
         if anchor and number < len(lines) and lines[number].startswith("### "):
             milestone = anchor.group(1)
+        if (summary := SUMMARY.fullmatch(line)) and milestone is not None:
+            if milestone in summaries:
+                problems.append(f"{rel}:{number}: {milestone} has a second summary")
+            summaries[milestone] = summary.group(1).strip()
         if not line.startswith("|"):
             table = None
             continue
@@ -338,7 +434,13 @@ def _parse_roadmap(rel: str, problems: list[str]) -> tuple[list[tuple], dict[str
         for ref in re.findall(r"\b[A-Z]{2,4}-\d{2}\b", notes):
             if ref.split("-")[0] in areas and ref not in items:
                 problems.append(f"{where}: {item_id} refers to unknown {ref}")
-    return timeline, items
+    lang = "zh-CN" if rel.endswith("-zh.md") else "en"
+    for milestone, summary in summaries.items():
+        if not summary:
+            problems.append(f"{rel}: {milestone} summary is empty")
+        elif len(summary) > SUMMARY_LENGTH[lang]:
+            problems.append(f"{rel}: {milestone} summary is longer than {SUMMARY_LENGTH[lang]}")
+    return timeline, items, set(summaries)
 
 
 def _check_releases(
@@ -397,8 +499,10 @@ def _check_roadmaps(manifest: dict, problems: list[str]) -> None:
     if len(parsed) < 2:
         return
 
-    (first, (timeline, items)), *others = parsed.items()
-    for rel, (other_timeline, other_items) in others:
+    (first, (timeline, items, summaries)), *others = parsed.items()
+    for rel, (other_timeline, other_items, other_summaries) in others:
+        for milestone in sorted(summaries ^ other_summaries):
+            problems.append(f"{rel}: {milestone} has a summary in only one of it and {first}")
         if [(m[0], m[2], m[3]) for m in other_timeline] != [(m[0], m[2], m[3]) for m in timeline]:
             problems.append(f"{rel}: Timeline differs from {first}")
         for item_id in items.keys() ^ other_items.keys():
@@ -410,6 +514,31 @@ def _check_roadmaps(manifest: dict, problems: list[str]) -> None:
                 )
 
 
+def _check_cli_pages(problems: list[str]) -> None:
+    """The CLI output pages are what cli_preview.py makes of their one data file."""
+    from cli_preview import page
+
+    data_path = ROOT / "docs" / "cli" / "cli-output.json"
+    data = json.loads(data_path.read_text(encoding="utf-8"))
+    langs = {text["lang"] for text in data["pages"]}
+    incomplete = [
+        f"docs/cli/cli-output.json: {panel['name']} {key} per {sorted(langs)}"
+        for panel in data["panels"]
+        for key in ("title", *(("label",) if "label" in panel else ()))
+        if set(panel[key]) != langs
+    ]
+    problems.extend(incomplete)
+    if incomplete:
+        return
+    for text in data["pages"]:
+        path = data_path.parent / text["file"]
+        if not path.is_file() or path.read_text(encoding="utf-8") != page(data, text["lang"]):
+            problems.append(
+                f"docs/cli/{text['file']}: not generated from cli-output.json; "
+                "run scripts/docs/cli_preview.py html docs/cli/cli-output.json"
+            )
+
+
 def main() -> int:
     problems: list[str] = []
     manifest = _check_manifest(problems)
@@ -418,7 +547,9 @@ def main() -> int:
     for doc in manifest.get("documents", []):
         if doc.get("path", "").endswith(".md") and (ROOT / doc["path"]).is_file():
             _check_links(doc["path"], problems, cache)
+            _check_emphasis(doc["path"], problems)
     _check_roadmaps(manifest, problems)
+    _check_cli_pages(problems)
 
     for problem in problems:
         print(problem, file=sys.stderr)

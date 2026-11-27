@@ -1,8 +1,8 @@
 # 已下载的模型与缓存目录
 
-[English](models-cache-layout.md)
+[English](models-cache.md)
 
-AlphaAvatar 在启动时下载所选配置需要的本地模型，因此首次启动可能比之后的启动耗时更长。模型与你的 [Avatar 工作区](avatar-workspace-layout.md)分开：删除模型缓存不等于删除记忆、画像或对话数据。
+AlphaAvatar 在启动时下载所选配置需要的本地模型，因此首次启动可能比之后的启动耗时更长。模型与你的 [Avatar 工作区](avatar-workspace.md)分开：删除模型缓存不等于删除记忆、画像或对话数据。
 
 ## 查找或选择缓存位置
 
@@ -21,7 +21,7 @@ application:
   cache_root: /srv/alphaavatar-cache
 ```
 
-使用不含 `..` 或字面量 `~` 的绝对路径，并为服务账户授予读写权限。这项设置选择的是整个应用缓存，因此模型存放在 `/srv/alphaavatar-cache/models/` 下；其他缓存区域包括 `downloads/`、`providers/`、`diagnostics/` 和 `avatars/`。它不会自动移动现有文件。
+使用不含 `..` 或字面量 `~` 的绝对路径，并为服务账户授予读写权限。这项设置选择的是整个应用缓存，因此模型存放在 `/srv/alphaavatar-cache/models/` 下；缓存中的 `downloads/`、`providers/`、`diagnostics/` 和 `avatars/` 在启动时创建，属于预留目录：当前版本不在其中存放任何内容。这项设置不会自动移动现有文件。缓存与其他应用目录的关系见[应用数据目录布局](application-home-zh.md)。
 
 Host 会拒绝旧的 `ALPHAAVATAR_MODEL_CACHE` 环境变量。取消设置它，改用 `application.cache_root`。如果之前的模型目录是 `/srv/alphaavatar-models/`，在更改配置之前，把它的全部内容复制到新缓存的 `models/` 目录中。不要把 `application.cache_root` 直接设为那个旧模型目录，否则新布局会在其中再查找一层 `models/` 子目录。
 
@@ -47,7 +47,7 @@ models/
 
 `hub/` 目录可以包含 Hugging Face 的 blob、snapshot 和引用。多个 snapshot 可能共用同一个底层文件。保持其内部名称和链接不变；重命名 snapshot 或只复制单个权重文件，可能导致缓存不可用。完整性 manifest 和锁文件属于缓存管理的一部分，不应手动编辑。
 
-托管的语言模型、远程语音服务、embedding API 和 MCP 服务器不会因为这项缓存设置而变成本地模型。可选的 Character 展示所需的浏览器安装和前端文件也是分开的；见 [Character 设置](../avatar-plugins/perception/avatar-plugins-character/README.md)。
+托管的语言模型、远程语音服务、embedding API 和 MCP 服务器不会因为这项缓存设置而变成本地模型。可选的 Character 展示所需的浏览器安装和前端文件也是分开的；见 [Character 设置](../../avatar-plugins/perception/avatar-plugins-character/README.md)。
 
 ## 移动或复用缓存
 

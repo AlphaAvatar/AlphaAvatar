@@ -37,7 +37,7 @@ voice:
 
 打断策略属于 `router.init_config.turn_taking.interruption`。未使用的 `voice.allow_interruptions` 字段已移除，并会被拒绝；它不是第二个打断开关。
 
-选择 Silero 即同时选择其推理 runner。模型在 runner 初始化期间解析，而不是在插件导入时解析。参见[模型缓存](../../../docs/models-cache-layout.md)和[插件布局与边界](../../README.md)。
+选择 Silero 即同时选择其推理 runner。模型在 runner 初始化期间解析，而不是在插件导入时解析。参见[模型缓存](../../../docs/layouts/models-cache.md)和[插件布局与边界](../../README.md)。
 
 ## 原生 TTS 与媒体契约
 

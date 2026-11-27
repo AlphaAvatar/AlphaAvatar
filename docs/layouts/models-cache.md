@@ -1,10 +1,10 @@
 # Downloaded models and cache folders
 
-[中文](models-cache-layout-zh.md)
+[中文](models-cache-zh.md)
 
 AlphaAvatar downloads the local models needed by your selected configuration during
 startup. A first launch may therefore take longer than later launches. Models are separate
-from your [Avatar workspace](avatar-workspace-layout.md): removing a model cache is not the
+from your [Avatar workspace](avatar-workspace.md): removing a model cache is not the
 same as removing memories, profiles or conversation data.
 
 ## Find or choose the cache location
@@ -30,8 +30,10 @@ application:
 
 Use an absolute path without `..` or a literal `~` and give the service account read/write
 permission. This setting selects the entire application cache, so models are stored under
-`/srv/alphaavatar-cache/models/`; other cache areas include `downloads/`, `providers/`,
-`diagnostics/` and `avatars/`. It does not move existing files automatically.
+`/srv/alphaavatar-cache/models/`. The cache's `downloads/`, `providers/`, `diagnostics/` and
+`avatars/` are created at start and reserved: this version stores nothing there. The setting
+does not move existing files automatically. [Application data layout](application-home.md)
+shows the cache among the other application directories.
 
 The old `ALPHAAVATAR_MODEL_CACHE` environment variable is rejected by Host. Unset it and
 use `application.cache_root`. If the previous model directory was `/srv/alphaavatar-models/`,
@@ -69,7 +71,7 @@ by hand.
 Hosted language models, remote speech services, embedding APIs and MCP servers are not
 turned into local models by this cache setting. Browser installation and frontend files
 for optional Character presentation are also separate; see
-[Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
+[Character setup](../../avatar-plugins/perception/avatar-plugins-character/README.md).
 
 ## Move or reuse a cache
 

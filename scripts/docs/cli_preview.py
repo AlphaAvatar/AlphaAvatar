@@ -11,19 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""docs/cli/cli.html from terminal recordings: what each command shows, colors and all.
+"""docs/cli/cli.html and its translations from terminal recordings: what each command shows,
+colors and all.
 
     python scripts/docs/cli_preview.py record OUT COLS [--answer TEXT ...]
         [--interrupt-at TEXT] -- COMMAND...
-    python scripts/docs/cli_preview.py html OUT [--mask PATH=NAME ...] PANEL...
+    python scripts/docs/cli_preview.py screen DATA NAME OUT EXIT [--mask PATH=NAME ...]
+    python scripts/docs/cli_preview.py html DATA
 
 ``record`` runs a command in a terminal of COLS columns and writes OUT.cast (asciinema v2:
 each output chunk with its time) and OUT.ansi (the bytes as shown). Each --answer goes to the
 next prompt (output ending in ": "); with --interrupt-at, Ctrl+C is typed once the output ends
-with that text. ``html`` writes one self-contained page, openable offline: each PANEL is
-``NAME|FILE.ansi|TITLE|EXIT[|LABEL]``, the screen a terminal shows once the command ends, its
-escape codes as colors. A LABEL, such as the offline test doubles a measured run used, is shown
-beside its panel; each --mask shows PATH, a recording machine's directory, as NAME.
+with that text. ``screen`` keeps, as panel NAME of DATA (docs/cli/cli-output.json), the screen
+a terminal shows once that recording ends, its escape codes kept for colors, with its width and
+EXIT code; each --mask shows PATH, a recording machine's directory, as NAME. A panel's title and
+optional LABEL (such as the offline test doubles a measured run used) are written in DATA, once
+per page language. ``html`` writes every page DATA lists, beside DATA: one self-contained page
+per language, openable offline, all of them from the same panels.
 """
 
 from __future__ import annotations
@@ -142,31 +146,61 @@ def span(text: str, color: str | None, bold: bool) -> str:
     return f'<span style="{style}">{escaped}</span>' if style else escaped
 
 
-def page(panels: list[str], masks: dict[str, str]) -> str:
+def page(data: dict, lang: str) -> str:
+    text = next(p for p in data["pages"] if p["lang"] == lang)
+    links = [
+        f'<a href="{p["file"]}">{html.escape(p["name"])}</a>'
+        for p in data["pages"]
+        if p["lang"] != lang
+    ]
     index, sections = [], []
-    for panel in panels:
-        name, path, title, code, *label = panel.split("|")
-        cols = int(re.search(r"-(\d+)$", Path(path).stem).group(1))
-        text = screen(Path(path).read_bytes().decode("utf-8", "replace"))
-        for old, new in masks.items():
-            text = text.replace(old, new)
-        body = colored(text)
-        tag = f'<span class="tag">{html.escape(label[0])}</span>' if label else ""
-        index.append(f'<li><a href="#{name}">{html.escape(title)}</a>{tag}</li>')
-        sections.append(
-            f'<section id="{name}"><h2>{html.escape(title)}{tag}</h2>'
-            f'<p class="meta"><span>{cols} columns</span><span>exit {html.escape(code)}</span></p>'
-            f'<div class="term"><pre style="width:{cols}ch">{body}</pre></div></section>'
+    for panel in data["panels"]:
+        name, title = panel["name"], html.escape(panel["title"][lang])
+        tag = (
+            f'<span class="tag">{html.escape(panel["label"][lang])}</span>'
+            if "label" in panel
+            else ""
         )
-    return TEMPLATE.replace("{index}", "\n".join(index)).replace("{panels}", "\n".join(sections))
+        columns = html.escape(text["columns"].format(panel["columns"]))
+        code = html.escape(text["exit"].format(panel["exit"]))
+        index.append(f'<li><a href="#{name}">{title}</a>{tag}</li>')
+        sections.append(
+            f'<section id="{name}"><h2>{title}{tag}</h2>'
+            f'<p class="meta"><span>{columns}</span><span>{code}</span></p>'
+            f'<div class="term"><pre style="width:{panel["columns"]}ch">{colored(panel["screen"])}</pre></div></section>'
+        )
+    values = {
+        "lang": lang,
+        "title": html.escape(text["title"]),
+        "heading": html.escape(text["heading"]),
+        "links": " · ".join(links),
+        "lead": text["lead"],
+        "index": "\n".join(index),
+        "panels": "\n".join(sections),
+    }
+    return re.sub(r"\{(\w+)\}", lambda m: values[m.group(1)], TEMPLATE)
+
+
+def store(data_path: Path, name: str, out: str, code: str, masks: dict[str, str]) -> None:
+    data = json.loads(data_path.read_text(encoding="utf-8"))
+    header = json.loads(Path(f"{out}.cast").read_text(encoding="utf-8").splitlines()[0])
+    text = screen(Path(f"{out}.ansi").read_bytes().decode("utf-8", "replace"))
+    for old, new in masks.items():
+        text = text.replace(old, new)
+    panel = next((p for p in data["panels"] if p["name"] == name), None)
+    if panel is None:
+        panel = {"name": name, "title": {p["lang"]: name for p in data["pages"]}}
+        data["panels"].append(panel)
+    panel.update(columns=header["width"], exit=code, screen=text)
+    data_path.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 
 TEMPLATE = """<!doctype html>
-<html lang="en">
+<html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AlphaAvatar CLI Output</title>
+<title>{title}</title>
 <style>
 /* One reading column; each terminal keeps its own width and scrolls inside. System fonts
    only: the page opens offline. */
@@ -200,25 +234,9 @@ h2 { font-size: 16px; line-height: 1.35; margin: 0 0 4px; }
 </head>
 <body>
 <main>
-<h1>AlphaAvatar CLI output</h1>
-<p><a href="cli-zh.html">中文</a></p>
-<p class="lead">What a terminal of each width shows once the command ends, rendered from its
-recording with the escape codes kept as colors (scripts/docs/cli_preview.py). The installer
-and Setup ran on 2026-11-23 in an empty home on Alibaba Cloud Linux 3 (glibc 2.32), with the
-Linux package CI built for 3e5b8e2d (0.6.8-3e5b8e2d9b2a), its own wheels given with --artifacts,
-and fictional credentials; install.sh is the one this change brings, and Setup installed and
-validated for real. The panels Setup's grouped install summary and config check's colored
-groups change were recorded again on 2026-11-24 with a package built from that change's
-source (0.6.8-a6e75ba8fb56-dirty.20261124093551), installed and set up for real: Setup's
-(setup-first, setup-bundle, setup-cancel, setup-interrupt, setup-nocolor) the same way, config
-check after setup (check) in the clean Ubuntu 24.04 root.
-Config, and Doctor declined or with --no-metrics, ran earlier on a clean
-Ubuntu 24.04 root with the Linux package of their build. Doctor's measured runs used the offline test doubles of its tests,
-marked 离线测试替身: their services and model files are stand-ins and their timings are the
-doubles', in rounds of their own. No panel here holds a real service's figures: those are
-recorded apart, in the acceptance log. Every figure ends at the Host's output; LiveKit's
-transport, a client's playback and the devices are measured separately. Lines wider than a
-panel are diagnostics and commands, which print whole.</p>
+<h1>{heading}</h1>
+<p>{links}</p>
+<p class="lead">{lead}</p>
 <nav><ol>
 {index}
 </ol></nav>
@@ -237,10 +255,14 @@ def main() -> int:
     recording.add_argument("cols", type=int)
     recording.add_argument("--answer", action="append", default=[])
     recording.add_argument("--interrupt-at")
+    storing = commands.add_parser("screen")
+    storing.add_argument("data", type=Path)
+    storing.add_argument("name")
+    storing.add_argument("out")
+    storing.add_argument("exit")
+    storing.add_argument("--mask", action="append", default=[], metavar="PATH=NAME")
     building = commands.add_parser("html")
-    building.add_argument("out")
-    building.add_argument("--mask", action="append", default=[], metavar="PATH=NAME")
-    building.add_argument("panels", nargs="+")
+    building.add_argument("data", type=Path)
     argv = sys.argv[1:]
     command = argv[argv.index("--") + 1 :] if "--" in argv else []
     args = parser.parse_args(argv[: argv.index("--")] if "--" in argv else argv)
@@ -248,8 +270,12 @@ def main() -> int:
         code = record(args.out, args.cols, args.answer, args.interrupt_at, command)
         print(f"[{args.out}: exit {code}, {args.cols} columns]", file=sys.stderr)
         return code
-    masks = dict(mask.split("=", 1) for mask in args.mask)
-    Path(args.out).write_text(page(args.panels, masks), encoding="utf-8")
+    if args.command == "screen":
+        store(args.data, args.name, args.out, args.exit, dict(m.split("=", 1) for m in args.mask))
+        return 0
+    data = json.loads(args.data.read_text(encoding="utf-8"))
+    for text in data["pages"]:
+        (args.data.parent / text["file"]).write_text(page(data, text["lang"]), encoding="utf-8")
     return 0
 
 

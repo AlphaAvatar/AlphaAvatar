@@ -417,7 +417,7 @@ InferenceExecutor owns client connections, while Host supervises the service.
 | Runner interface | [inference/runner.py](avatar-agents/alphaavatar/agents/runtime/inference/runner.py). |
 | Worker selection, service and pools | [runtime/inference/](avatar-agents/alphaavatar/agents/runtime/inference/). |
 | Plugin-specific runner plan | The selected plugin's factory and `inference.py`. |
-| Model resolution and offline policy | [Model cache guide](docs/models-cache-layout.md). |
+| Model resolution and offline policy | [Model cache guide](docs/layouts/models-cache.md). |
 
 - Select runners from validated active configuration.
 - Resolve/download model files in the appropriate initialization path, not module import.
@@ -445,7 +445,7 @@ Path construction and filesystem mutation have separate owners.
 | Avatar workspace, users and session paths | [Agents WorkspacePaths](avatar-agents/alphaavatar/agents/workspace/paths.py). |
 | Explicit application directory preparation | [Host workspace operations](avatar-host/alphaavatar/host/workspace/operations.py). |
 | Explicit Avatar directory preparation | [Agents workspace operations](avatar-agents/alphaavatar/agents/workspace/operations.py). |
-| User-facing layout and backup guidance | [Workspace guide](docs/avatar-workspace-layout.md). |
+| User-facing layout and backup guidance | [Workspace guide](docs/layouts/avatar-workspace.md). |
 
 - Host selects the platform data directory by default; `ALPHAAVATAR_HOME` or YAML `application.home` can select another absolute root.
 - Preserve the documented configuration/settings/cache/Avatar organization.
@@ -616,8 +616,9 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | [quickstart.md](docs/quickstart.md) | From nothing to a running Host: requirements, install, setup, Doctor, start, a client, and the source path. |
 | [coding-conventions.md](docs/coding-conventions.md) | Module/class ordering, functional section strings, method naming, constructor field groups and function-body blocks. |
 | [identifiers-zh.md](docs/identifiers-zh.md) | Identifier meanings, owners, uniqueness/lifetimes, initialization and correlation rules. |
-| [avatar-workspace-layout.md](docs/avatar-workspace-layout.md) | Application/Avatar data layout, personal data, logs and backup boundaries. |
-| [models-cache-layout.md](docs/models-cache-layout.md) | Model cache ownership, resolution, downloads, offline behavior and cleanup. |
+| [layouts/application-home.md](docs/layouts/application-home.md) | The three roots (application home, application cache, Avatar workspace): how each is chosen, what the home holds, what is created on demand or reserved. |
+| [layouts/avatar-workspace.md](docs/layouts/avatar-workspace.md) | An Avatar workspace's layout, personal data, logs and backup boundaries. |
+| [layouts/models-cache.md](docs/layouts/models-cache.md) | Model cache ownership, resolution, downloads, offline behavior and cleanup. |
 | [bugs-zh.md](docs/bugs-zh.md) | Known defects, fixes and deferred observations; verify status against the current revision. |
 | [cli/README.md](docs/cli/README.md) | CLI navigation, available/planned commands, configuration and exit behavior. |
 | [cli/config.md](docs/cli/config.md) | Bundle/profile creation and effective configuration inspection/validation. |
@@ -629,6 +630,7 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | [cli/start.md](docs/cli/start.md) | Service-mode startup, configuration overrides and operating behavior. |
 | [cli/test.md](docs/cli/test.md) | Proposed capability-test command; not available, and whether to offer it is undecided (Roadmap QA-06). |
 | [cli/cli.html](docs/cli/cli.html) | Recorded CLI display gallery; illustrative output, not live service or benchmark evidence. |
+| [cli/cli-output.json](docs/cli/cli-output.json) | The recorded screens both CLI output pages are generated from, with their text in each language (`scripts/docs/cli_preview.py`). |
 | [releases/v0.6.1.md](docs/releases/v0.6.1.md) | Review v0.6.1 face recognition, visual identity, speaker-face fusion, and Persona persistence changes. Historical version context. |
 | [releases/v0.6.2.md](docs/releases/v0.6.2.md) | Review v0.6.2 unified providers and embeddings, tracing, runtime and multiparticipant foundations, and nested configuration migration. Historical version context. |
 | [releases/v0.6.3.md](docs/releases/v0.6.3.md) | Review v0.6.3 graph-aware Memory, node mentions and aliases, session-local entity keys, and LanceDB retrieval. Historical version context. |

@@ -44,7 +44,7 @@ application:
   cache_root: /var/cache/alphaavatar
 ```
 
-这样模型会放在 `/var/cache/alphaavatar/models/` 下。如果设置了 `application.home`，它会覆盖由环境选定的应用主目录。对于已有的工作区，把 `avatar.workspace_root` 设为它完整的绝对目录；不会再追加 Avatar ID。从服务环境和 `.env` 文件中删除旧的 `AVATAR_WORK_DIR` 和 `ALPHAAVATAR_MODEL_CACHE` 值：Host 会拒绝这两个设置，而不是迁移已有数据。定位、备份和移动数据见 [Avatar 工作区](avatar-workspace-layout.md)和[模型缓存](models-cache-layout.md)。
+这样模型会放在 `/var/cache/alphaavatar/models/` 下。如果设置了 `application.home`，它会覆盖由环境选定的应用主目录。对于已有的工作区，把 `avatar.workspace_root` 设为它完整的绝对目录；不会再追加 Avatar ID。从服务环境和 `.env` 文件中删除旧的 `AVATAR_WORK_DIR` 和 `ALPHAAVATAR_MODEL_CACHE` 值：Host 会拒绝这两个设置，而不是迁移已有数据。定位、备份和移动数据见 [Avatar 工作区](layouts/avatar-workspace.md)和[模型缓存](layouts/models-cache.md)。
 
 ### 或安装 Linux 安装包，再选择能力
 
@@ -167,7 +167,7 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-**保留 `KillMode=mixed`。**第一个停止信号发给 Host，使它能够通过各自的关闭协议让执行收尾并关闭推理 runner。systemd 的默认值 `control-group` 会把第一个信号发给服务的所有进程，可能在 Host 完成清理之前终止 runner。不要改为 `process` 或 `none`，它们可能使子孙进程脱离管理。
+**保留 `KillMode=mixed`**。第一个停止信号发给 Host，使它能够通过各自的关闭协议让执行收尾并关闭推理 runner。systemd 的默认值 `control-group` 会把第一个信号发给服务的所有进程，可能在 Host 完成清理之前终止 runner。不要改为 `process` 或 `none`，它们可能使子孙进程脱离管理。
 
 systemd 最后的强制终止仍会覆盖服务控制组中剩余的进程，包括仍留在该组中的已分离浏览器进程。它可能在 Host 退出或停止期限到期时执行。这是服务范围的边界，不是按执行隔离浏览器，也不能证明外部工具的操作已被撤销。
 

@@ -77,4 +77,4 @@ ENV_FILE=.env.dev alphaavatar dev
 
 - [DEPLOY.md](DEPLOY.md)：凭据、健康检查、systemd 服务、日志、存储和更新。
 - [命令](cli/README.md)、[config](cli/config.md#credentials)、[upgrade](cli/upgrade.md) 和 [cleanup](cli/cleanup.md)；完整配置的[示例](../examples/README.md)。
-- [Avatar 工作区](avatar-workspace-layout.md)和[模型与缓存](models-cache-layout.md)：数据和模型存放在哪里；[README](../README.md)；[CONTRIBUTING.md](../CONTRIBUTING.md)。
+- [Avatar 工作区](layouts/avatar-workspace.md)和[模型与缓存](layouts/models-cache.md)：数据和模型存放在哪里；[README](../README.md)；[CONTRIBUTING.md](../CONTRIBUTING.md)。

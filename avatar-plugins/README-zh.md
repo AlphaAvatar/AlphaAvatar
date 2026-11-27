@@ -92,7 +92,7 @@ MCP 在其隔离的 runner 中拥有原生 MCP 客户端会话。每个连接的
 
 `prepare_inference_runners()` 把已校验的 AvatarConfig 传给插件自身的选择器。Worker 重建所选计划；所选 runner 在初始化期间、开始处理实时请求之前解析并加载模型。导入和工厂注册不得下载或加载模型。更改启用的组件需要重启应用。
 
-`InferenceRunner` 是一个执行契约，不是全局 runner 注册表。下载、离线使用和清理见[模型缓存](../docs/models-cache-layout.md)，已存储的个人数据与备份见 [Avatar 工作区](../docs/avatar-workspace-layout.md)，完整配置见[示例](../examples/README.md)。
+`InferenceRunner` 是一个执行契约，不是全局 runner 注册表。下载、离线使用和清理见[模型缓存](../docs/layouts/models-cache.md)，已存储的个人数据与备份见 [Avatar 工作区](../docs/layouts/avatar-workspace.md)，完整配置见[示例](../examples/README.md)。
 
 ## 工作区维护
 

@@ -1,8 +1,8 @@
 # 你的 Avatar 工作区
 
-[English](avatar-workspace-layout.md)
+[English](avatar-workspace.md)
 
-Avatar 工作区保存你的用户信息、记忆、会话记录，以及已启用功能生成的文件。它与源码检出目录分开，也与[已下载的模型缓存](models-cache-layout.md)分开。
+Avatar 工作区保存你的用户信息、记忆、会话记录，以及已启用功能生成的文件。它与源码检出目录分开，也与[已下载的模型缓存](models-cache.md)分开。
 
 请把工作区当作私有数据。移动工作区、清理文件或更改 Avatar ID 之前，先做好备份。
 
@@ -19,15 +19,7 @@ avatar:
 
 这样工作区正好位于 `/srv/AlphaAvatarData/my_avatar/`。AlphaAvatar 不会在 `avatar.workspace_root` 后追加 Avatar ID。请使用不含 `..` 的绝对路径；YAML 中的相对路径和字面量 `~` 会被拒绝。
 
-省略 `avatar.workspace_root` 时，工作区为 `<application-home>/avatars/<avatar_key>/`。应用主目录可以用启动环境变量 `ALPHAAVATAR_HOME` 选择，也可以在 YAML 中设置 `application.home`，覆盖由该环境变量选择的主目录。两者都必须是完整的绝对路径。两者都未设置时，Host 使用服务账户的平台数据目录：
-
-| 平台 | 默认应用主目录 |
-| --- | --- |
-| Linux | `$XDG_DATA_HOME/alphaavatar/`，或 `~/.local/share/alphaavatar/` |
-| macOS | `~/Library/Application Support/AlphaAvatar/` |
-| Windows | `%LOCALAPPDATA%/AlphaAvatar/`，或 `~/AppData/Local/AlphaAvatar/` |
-
-应用主目录包含 `configs/profiles/`、`configs/bundles/`、`settings/settings.yaml`、`cache/` 和 `avatars/`。这些路径并不表示所有配置界面或设置流程都已实现。`cache/` 包含 `models/`、`downloads/`、`providers/`、`diagnostics/` 和 `avatars/<avatar_key>/`。将 `application.cache_root` 设为一个绝对路径，可以把整个应用缓存放到别处；它与工作区以及工作区自己的 `.cache/` 目录相互独立。
+省略 `avatar.workspace_root` 时，工作区为 `<application-home>/avatars/<avatar_key>/`。应用主目录如何通过 `ALPHAAVATAR_HOME` 或 `application.home` 选定、其中还存放什么，见[应用数据目录布局](application-home-zh.md)。其中包括应用缓存，`application.cache_root` 可以把它放到别处；它与工作区以及工作区自己的 `.cache/` 目录相互独立。
 
 旧的 `avatar.work_dir` 和 `AVATAR_WORK_DIR` 设置会被拒绝。删除它们，并将 `avatar.workspace_root` 设为现有的完整 Avatar 目录。例如，旧的基础目录 `/srv/AlphaAvatarData` 加上 `avatar.id: my_avatar`，通常表示现有根目录是 `/srv/AlphaAvatarData/my_avatar`，而不是 `/srv/AlphaAvatarData`。以前的回退目录 `/var/lib/<avatar-id>/` 不再被自动选用。检测到旧数据时，Host 可能拒绝使用新的默认工作区；请显式指向现有根目录。更改这项设置不会移动或删除任何现有目录。
 
@@ -143,7 +135,7 @@ Conversation 和 Tool 处理器在收尾时提取全部未处理的输入。Pers
 
 每次启动创建单独的日志文件。使用默认设置时，该次启动保留当前文件和最多三个轮转分卷（`.1`、`.2`、`.3`）。之前启动留下的文件不会被自动删除。日志可能包含路径或私人信息，因此分享前先检查；只在相关 Host 停止后再删除不需要的旧日志。
 
-工作区的 `.cache/` 与已下载的模型权重分开，后者通常位于 `<application-cache>/models/` 下。移动或清理已下载的模型时，请按照[模型缓存指南](models-cache-layout.md)操作。`env/` 不能代替启动用的 `.env` 文件，也不会自动成为凭据保管库。将 API key 和配置文件放在各自预定的受保护位置，不要复制到预留的工作区目录中。
+工作区的 `.cache/` 与已下载的模型权重分开，后者通常位于 `<application-cache>/models/` 下。移动或清理已下载的模型时，请按照[模型缓存指南](models-cache.md)操作。`env/` 不能代替启动用的 `.env` 文件，也不会自动成为凭据保管库。将 API key 和配置文件放在各自预定的受保护位置，不要复制到预留的工作区目录中。
 
 ## 备份或移动工作区
 
@@ -153,7 +145,7 @@ Conversation 和 Tool 处理器在收尾时提取全部未处理的输入。Pers
 
 要移动数据，复制已停止使用的完整工作区目录，保留相同的 Avatar ID，并将 `avatar.workspace_root` 设为复制后的目录本身。例如，复制到 `/mnt/avatars/my_avatar/` 后，就配置这个根目录。为服务账户授予复制文件的读写权限。针对新位置启动一个 Host，确认预期的画像和记忆都在，然后再删除旧副本。不要让新旧两个部署同时使用同一份本地文件，作为非正式的迁移测试。
 
-移动模型缓存是另一项操作。请按照[模型缓存指南](models-cache-layout.md)操作，不要把模型文件移入 `data/`。
+移动模型缓存是另一项操作。请按照[模型缓存指南](models-cache.md)操作，不要把模型文件移入 `data/`。
 
 ## 释放空间而不丢失数据
 

@@ -74,4 +74,4 @@ Core logging installs no handlers at import time. Modules use standard `logging`
 owns collection, formatting and file rotation. Optional Core event diagnostics are sampled,
 may be dropped, and do not replace canonical records or execution outcomes. See
 [Host settings](../avatar-host/README.md) and the user-facing
-[workspace guide](../docs/avatar-workspace-layout.md) for saved logs and backups.
+[workspace guide](../docs/layouts/avatar-workspace.md) for saved logs and backups.
