@@ -1,7 +1,5 @@
 # `alphaavatar doctor`
 
-[中文](doctor-zh.md)
-
 Diagnose the installation and a configuration: static checks first, then the runtime
 diagnosis. Doctor starts the bundle's runtime as `start` does, feeds it a fixed spoken sample
 at a real input's pace, measures what comes out, and runs its one scenario several times, each
@@ -559,6 +557,130 @@ Runners
 
 Run again as JSON
   alphaavatar doctor avatar.json --rounds 3 --json
+```
+
+The same scenario as a terminal showed it, colors and all, recorded with an earlier build whose
+layout predates the text above: three rounds on the offline test doubles, a sentence lost in
+round 2. Its figures are the doubles', not a service's, and it ends at the Host's output:
+LiveKit's transport, a client's playback and the devices are not measured.
+
+```terminal doctor-partial
+AlphaAvatar / Doctor
+FAIL  Diagnostics completed · 12 passed · 2 failed · 1 skipped
+
+Checks
+  PASS  Environment            3 checks passed
+  PASS  Configuration          avatar.json · 2 runners
+  PASS  Directories            3 checks passed
+  FAIL  Session and services   3 passed · 2 failed
+        FAIL  services.external   2 passed, 1 failed, 3 not verified by the samples
+              model providers (scripted): configured, authorized, reached, passed
+              speech recognition (openai_segment): configured, authorized, reached, failed (stopped
+              at stt.final)
+              speech synthesis (openai): configured, authorized, reached, passed
+              custom memory 'doctor': configured, authorized, reached: not observed, passed: not
+              observed (external access unknown)
+              custom persona 'doctor': configured, authorized, reached: not observed, passed: not
+              observed (external access unknown)
+              custom provider backend 'scripted': configured, authorized, reached: not observed,
+              passed: not observed (external access unknown)
+              livekit RTC server: not contacted; `alphaavatar dev
+              $WORK/avatar.json`
+              connects to it
+              → See the failed scenarios' blocked stages and causes
+        FAIL  session.scenarios   voice 2/3 passed, 2 not enabled, 1 no coverage
+              → See each failed round's stage, cause and evidence
+
+Not verified
+  SKIP  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        LiveKit transport: not measured; the samples end at the Host's output
+        client playback: not measured; no client takes part
+        physical devices: not opened; the samples stand in for them
+        → Join a dev session from a client to try its devices
+
+Session
+  Ready                  2.4 ms at the median of 3, 2.3–18 ms
+
+Runners
+  Runtime start          817 ms · the model cache did not grow (net)
+  PASS  alphaavatar.voice.vad.silero
+        started in 0.43 s · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+  PASS  alphaavatar.router.turn_taking.smart_turn_v3
+        started in 0.39 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+
+Scenarios · 3 rounds, a session each
+  FAIL  voice                  2/3 passed · stopped: 1 at stt.final
+        Round 2: The transcript does not hold every sentence of the sample
+        Round 2: Sentence 2: the final the Turn took (23 characters) holds another sentence too, and
+        leaves this one out
+        → See the transcript and each sentence in --json; another STT model or plugin compares
+  SKIP  voice_vision           Vision is off or text only: voice runs instead
+  SKIP  image_input            No input transport delivers images to a session yet
+  SKIP  visual_output          No Character is configured
+  With model m · stt openai_segment m · tts openai m · vision off
+  Sample sum_question sha256:0f72883c4ad4
+
+Latency · voice · 2 of 3 rounds passed
+  Metric                                               Round 1   n   Median    Range
+  End to end
+    Runtime first text                                  706 ms   1   704 ms   704 ms
+    First audio frame                                   727 ms   1   726 ms   726 ms
+    Response complete                                   957 ms   1   957 ms   957 ms
+    Text complete                                       706 ms   1   704 ms   704 ms
+    Last audio frame                                    957 ms   1   957 ms   957 ms
+  Input                                                 652 ms   1   650 ms   650 ms
+    Final speech → VAD close                            601 ms   1   600 ms   600 ms
+    VAD close → Final transcript                         51 ms   1    50 ms    50 ms
+  Context                                               3.5 ms   1   2.8 ms   2.8 ms
+    Final transcript → Turn commit                      1.0 ms   1   1.0 ms   1.0 ms
+    Turn commit → Context readiness check complete      0.7 ms   1   0.5 ms   0.5 ms
+    Context readiness check complete → Context built    1.3 ms   1   1.0 ms   1.0 ms
+    Context built → Model request sent                  0.5 ms   1   0.4 ms   0.4 ms
+  Output                                                 72 ms   1    72 ms    72 ms
+    Model request sent → First text delta                51 ms   1    51 ms    51 ms
+    First text delta → TTS request                      0.9 ms   1   0.6 ms   0.6 ms
+    TTS request → First PCM                                  —   0        —        —
+    First PCM → First audio frame                            —   0        —        —
+  n: later rounds that passed and observed it; the stages add up to First audio frame
+  — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
+  — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
+  no first PCM
+
+Latency · voice · every round, the 1 not passed included
+  Metric                                               Round 1   n   Median        Range
+  End to end
+    Runtime first text                                  706 ms   2   705 ms   704–705 ms
+    First audio frame                                   727 ms   2   726 ms   726–727 ms
+    Response complete                                   957 ms   2   958 ms   957–958 ms
+    Text complete                                       706 ms   2   705 ms   704–706 ms
+    Last audio frame                                    957 ms   2   957 ms   957–958 ms
+  Input                                                 652 ms   2   651 ms   650–651 ms
+    Final speech → VAD close                            601 ms   2   600 ms   600–601 ms
+    VAD close → Final transcript                         51 ms   2    50 ms     50–51 ms
+  Context                                               3.5 ms   2   3.0 ms   2.8–3.1 ms
+    Final transcript → Turn commit                      1.0 ms   2   1.0 ms       1.0 ms
+    Turn commit → Context readiness check complete      0.7 ms   2   0.5 ms       0.5 ms
+    Context readiness check complete → Context built    1.3 ms   2   1.1 ms   1.0–1.2 ms
+    Context built → Model request sent                  0.5 ms   2   0.4 ms       0.4 ms
+  Output                                                 72 ms   2    72 ms     72–73 ms
+    Model request sent → First text delta                51 ms   2    51 ms        51 ms
+    First text delta → TTS request                      0.9 ms   2   0.6 ms   0.6–0.7 ms
+    TTS request → First PCM                                  —   0        —            —
+    First PCM → First audio frame                            —   0        —            —
+  n: later rounds that observed it; the stages add up to First audio frame
+  — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
+  — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
+  no first PCM
+
+Failed rounds · voice
+  Round 2 · stopped at stt.final · measured: Runtime first text 705 ms; First audio frame 727 ms;
+  Response complete 958 ms; Text complete 706 ms; Last audio frame 958 ms; Input 651 ms; Context 3.1
+  ms; Output 73 ms
+
+Run again as JSON
+  alphaavatar doctor $WORK/avatar.json --rounds 3 --json
 ```
 
 The text is grouped, through the [commands' shared layout](README.md#output), and gives the

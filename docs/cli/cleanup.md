@@ -1,7 +1,5 @@
 # `alphaavatar cleanup`
 
-[中文](cleanup-zh.md)
-
 Remove what upgrades and setups leave in a Linux x86_64 installation: the environments
 `current` does not run, then the base packages no kept environment is over. Part of the Linux
 package, like [`alphaavatar upgrade`](upgrade.md), which keeps the previous version and

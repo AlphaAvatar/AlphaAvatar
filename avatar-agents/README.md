@@ -1,7 +1,5 @@
 # AlphaAvatar Agents
 
-[中文](README-zh.md)
-
 `alpha-avatar-agents` defines Agent execution contracts and runtime composition.
 Concrete model backends and feature implementations live in plugin packages;
 application hosting and transport assembly belong to Host and RTC.

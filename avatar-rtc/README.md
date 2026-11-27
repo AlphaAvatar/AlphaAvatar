@@ -1,7 +1,5 @@
 # AlphaAvatar RTC
 
-[中文](README-zh.md)
-
 `alpha-avatar-rtc` owns transport-specific adapters. Its base package depends only on `alpha-avatar-core`; the `livekit` extra enables LiveKit codecs and adapters.
 
 ```python

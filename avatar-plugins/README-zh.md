@@ -1,7 +1,5 @@
 # 插件布局与边界
 
-[English](README.md)
-
 本文说明插件工作区及其运行时边界。能力与实现状态见[插件目录](../README.md#alphaavatar-plugins)。
 
 ## 📦 包结构

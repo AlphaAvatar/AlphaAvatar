@@ -1,6 +1,6 @@
 # AlphaAvatar agent guide
 
-[中文](AGENTS-zh.md) · [Project overview](README.md) · [Development](CONTRIBUTING.md)
+[Project overview](README.md) · [Development](CONTRIBUTING.md)
 
 This is the repository navigation guide for coding agents.
 Use it to find the owner, contract, implementation and relevant checks for a change.
@@ -630,7 +630,7 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | [cli/start.md](docs/cli/start.md) | Service-mode startup, configuration overrides and operating behavior. |
 | [cli/test.md](docs/cli/test.md) | Proposed capability-test command; not available, and whether to offer it is undecided (Roadmap QA-06). |
 | [cli/cli.html](docs/cli/cli.html) | Recorded CLI display gallery; illustrative output, not live service or benchmark evidence. |
-| [cli/cli-output.json](docs/cli/cli-output.json) | The recorded screens both CLI output pages are generated from, with their text in each language (`scripts/docs/cli_preview.py`). |
+| [cli/cli-output.json](docs/cli/cli-output.json) | The recorded screens both CLI output pages are generated from, with their text in each language and the colors of the 4-bit codes (the docs site uses them too); a `terminal NAME` code block in a document shows panel NAME (`scripts/docs/cli_preview.py`). |
 | [releases/v0.6.1.md](docs/releases/v0.6.1.md) | Review v0.6.1 face recognition, visual identity, speaker-face fusion, and Persona persistence changes. Historical version context. |
 | [releases/v0.6.2.md](docs/releases/v0.6.2.md) | Review v0.6.2 unified providers and embeddings, tracing, runtime and multiparticipant foundations, and nested configuration migration. Historical version context. |
 | [releases/v0.6.3.md](docs/releases/v0.6.3.md) | Review v0.6.3 graph-aware Memory, node mentions and aliases, session-local entity keys, and LanceDB retrieval. Historical version context. |

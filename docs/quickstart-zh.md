@@ -1,7 +1,5 @@
 # 快速开始
 
-[English](quickstart.md)
-
 用最新发布版本的 Linux 安装包，从零开始在 Linux 服务器上运行 AlphaAvatar Host。其他版本、镜像和无人值守安装见 [DEPLOY.md](DEPLOY.md#or-install-the-linux-package-then-choose-capabilities)。
 
 ## 准备条件

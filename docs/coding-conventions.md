@@ -1,7 +1,5 @@
 # Coding conventions
 
-[中文](coding-conventions-zh.md)
-
 How AlphaAvatar's Python reads. The models are `avatar-core/alphaavatar/core/perception/runtime.py` and the Memory plugin (`MemoryRuntime`, `MemoryStore`, `MemoryContextState`, `PassiveRecall`).
 
 ## Code order

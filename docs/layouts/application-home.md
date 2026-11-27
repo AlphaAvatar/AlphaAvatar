@@ -1,7 +1,5 @@
 # Application data layout
 
-[中文](application-home-zh.md)
-
 What AlphaAvatar keeps on a machine sits under three roots: the **application home**, the
 **application cache** and one **Avatar workspace** per Avatar. Unless configured otherwise, the
 cache and the workspaces are inside the application home. This page says how each root is chosen,

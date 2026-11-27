@@ -1,7 +1,5 @@
 # AlphaAvatar Status Plugin
 
-[中文](README-zh.md)
-
 Status is a lifecycle-managed observer, not an execution controller or tool dependency. Its processors consume Core streams and derive presentation; they do not register tools, call the foreground Loop or publish canonical Memory records.
 
 ## Data flow

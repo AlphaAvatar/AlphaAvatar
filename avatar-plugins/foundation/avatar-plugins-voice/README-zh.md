@@ -1,7 +1,5 @@
 # AlphaAvatar Voice 插件
 
-[English](README.md)
-
 Voice 是 Foundation 层插件，提供通过 `runtime.foundation.voice` 使用的 VAD、STT 和 TTS 实现。
 
 ## 所有权

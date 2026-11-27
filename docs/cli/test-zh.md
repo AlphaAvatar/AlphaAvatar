@@ -1,7 +1,5 @@
 # `alphaavatar test`
 
-[English](test.md)
-
 **计划中——尚不可用。** `alphaavatar` 没有 `test` 命令。是否提供该命令尚未决定（[Roadmap QA-06](../ROADMAP.md#backlog)）；本页是一份提案，下面的命令无法运行。
 
 提案内容：运行选定的场景和基准测试，衡量某项具体能力的正确性、延迟和可靠性。

@@ -1,7 +1,5 @@
 # Native Engine examples
 
-[中文](README-zh.md)
-
 All five configurations use `loop.plugin: realtime` with the main model in
 `loop.init_config.model`. `backend: openai` selects the native Responses backend;
 plugin-local Memory/Persona providers retain their existing backend settings.

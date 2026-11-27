@@ -1,7 +1,5 @@
 # AlphaAvatar Loop 插件
 
-[English](README.md)
-
 Loop 是必需的 Foundation 组件。Host 用 AvatarRuntime 构造它，绑定 Foundation，然后调用 `initialize()`。初始化会解析共享服务并检查流式支持，不会发起前台模型请求。Engine 提交时要求 Loop 已初始化且未关闭。
 
 ## 配置与所有权

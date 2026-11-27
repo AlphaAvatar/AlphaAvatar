@@ -1,7 +1,5 @@
 # 编码约定
 
-[English](coding-conventions.md)
-
 AlphaAvatar 的 Python 代码应有的写法。范例是 `avatar-core/alphaavatar/core/perception/runtime.py` 和 Memory 插件（`MemoryRuntime`、`MemoryStore`、`MemoryContextState`、`PassiveRecall`）。
 
 ## 代码顺序

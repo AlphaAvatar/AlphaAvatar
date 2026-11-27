@@ -1,7 +1,5 @@
 # `alphaavatar upgrade`
 
-[English](upgrade.md)
-
 将 Linux x86_64 安装升级到另一个构建：升级其基础包；当 `current` 运行的环境由 [`alphaavatar setup`](setup.md) 创建时，还升级默认 bundle 的环境。
 两者都先在当前基础包和环境旁边准备并检查，然后一次性切换。
 该命令属于 Linux 包；在源码检出中，用 `git pull` 和 `uv sync --all-packages --locked` 更新。

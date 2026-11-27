@@ -1,6 +1,6 @@
 # AlphaAvatar 编码 Agent 指南
 
-[English](AGENTS.md) · [项目概览](README.md) · [开发](CONTRIBUTING.md)
+[项目概览](README.md) · [开发](CONTRIBUTING.md)
 
 本文是面向编码 Agent 的仓库导航指南。
 用于查找一项变更的职责归属、契约、实现及相关检查。
@@ -630,7 +630,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | [cli/start.md](docs/cli/start.md) | 服务模式启动、配置覆盖和运行行为。 |
 | [cli/test.md](docs/cli/test.md) | 能力测试命令的方案；尚不可用，是否提供未定（路线图 QA-06）。 |
 | [cli/cli.html](docs/cli/cli.html) | 已记录的 CLI 展示图集；属于示例输出，不是实时服务或基准测试证据。 |
-| [cli/cli-output.json](docs/cli/cli-output.json) | 两种语言的 CLI 输出页共用的录制屏幕及各语言文字，两页都由它生成（`scripts/docs/cli_preview.py`）。 |
+| [cli/cli-output.json](docs/cli/cli-output.json) | 两种语言的 CLI 输出页共用的录制屏幕、各语言文字及 4 位颜色码的配色（文档站也使用），两页都由它生成；文档中的 `terminal NAME` 代码块显示面板 NAME（`scripts/docs/cli_preview.py`）。 |
 | [releases/v0.6.1.md](docs/releases/v0.6.1.md) | 查阅 v0.6.1 的人脸识别、视觉身份、声脸融合与 Persona 持久化变更。用于了解该历史版本。 |
 | [releases/v0.6.2.md](docs/releases/v0.6.2.md) | 查阅 v0.6.2 的统一 Provider 与嵌入、追踪、运行时与多参与者基础，以及嵌套配置迁移。用于了解该历史版本。 |
 | [releases/v0.6.3.md](docs/releases/v0.6.3.md) | 查阅 v0.6.3 的图感知 Memory、节点提及与别名、会话局部实体键，以及 LanceDB 检索。用于了解该历史版本。 |

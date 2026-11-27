@@ -1,7 +1,5 @@
 # AlphaAvatar RTC
 
-[English](README.md)
-
 `alpha-avatar-rtc` 负责特定于传输的适配器。其基础包只依赖 `alpha-avatar-core`；`livekit` extra 启用 LiveKit 编解码器和适配器。
 
 ```python

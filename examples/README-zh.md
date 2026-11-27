@@ -1,7 +1,5 @@
 # 原生 Engine 示例
 
-[English](README.md)
-
 五份配置都使用 `loop.plugin: realtime`，主模型位于 `loop.init_config.model`。`backend: openai` 选择原生 Responses 后端；插件内部的 Memory／Persona 供应商保留各自现有的后端设置。模型和语音标识是部署时的选择，不保证你的账户有权访问。主模型标识沿用仓库中的值；运行之前，把它改为你所配置的供应商上可用的模型。`temperature: null` 避免向可能不接受采样参数的模型注入该参数。
 
 ```bash

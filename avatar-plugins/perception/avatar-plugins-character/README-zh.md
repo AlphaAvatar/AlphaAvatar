@@ -1,7 +1,5 @@
 # AlphaAvatar 虚拟角色插件
 
-[English](README.md)
-
 AIRI 呈现使用原生的 Character 生命周期。它不接收 AgentSession，不生成回答，不合成语音，也不发布第二条音轨。渲染器消费 Agent 现有的 RTC 音频，并发布其画布视频。
 
 ## 所有权

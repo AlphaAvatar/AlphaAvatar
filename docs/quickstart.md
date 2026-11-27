@@ -1,7 +1,5 @@
 # Quick start
 
-[中文](quickstart-zh.md)
-
 From nothing to a running AlphaAvatar Host on a Linux server, with the latest release's Linux
 package. Other versions, mirrors and unattended installs are in
 [DEPLOY.md](DEPLOY.md#or-install-the-linux-package-then-choose-capabilities).

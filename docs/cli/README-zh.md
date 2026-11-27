@@ -1,7 +1,5 @@
 # `alphaavatar` 命令
 
-[English](README.md)
-
 `alphaavatar` 用于运行和配置 AlphaAvatar Host。在 Linux x86_64 上，`install.sh` 会连同它自带的 Python 一起安装它；见 [DEPLOY.md](../DEPLOY.md#or-install-the-linux-package-then-choose-capabilities)。在源码检出中，它是 `alpha-avatar-host` 包提供的命令。
 
 | 命令 | 作用 |

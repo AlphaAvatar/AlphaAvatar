@@ -1,7 +1,5 @@
 # AlphaAvatar RAG Plugin
 
-[中文](README-zh.md)
-
 A Retrieval-Augmented Generation (RAG) tool for AlphaAvatar, enabling agents to **index**, **search**, and **ground answers** on documents stored on the Host.
 
 The index belongs to the session: it lives in the session's own `artifacts/rag/rag_anything/` directory, so each new session starts with an empty one.

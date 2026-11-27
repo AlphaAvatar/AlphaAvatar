@@ -1,7 +1,5 @@
 # AlphaAvatar App
 
-[English](README.md)
-
 此目录为 AlphaAvatar 客户端应用预留。
 目前只包含这份 README；这里没有交付可安装的 App、移动端运行时或配置界面。
 

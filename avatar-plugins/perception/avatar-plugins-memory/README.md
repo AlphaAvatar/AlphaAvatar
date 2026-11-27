@@ -1,7 +1,5 @@
 # 🧠 AlphaAvatar Memory Plugin
 
-[中文](README-zh.md)
-
 Memory provides persistent conversation, tool and environment memory through independently configured processors. Agent code exposes contracts; extraction prompts, storage, retrieval and finalization remain in this plugin.
 
 ## 🧩 Runtime and processors

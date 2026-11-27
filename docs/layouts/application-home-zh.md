@@ -1,7 +1,5 @@
 # 应用数据目录布局
 
-[English](application-home.md)
-
 AlphaAvatar 在一台机器上保存的内容分属三个根目录：**应用主目录**、**应用缓存**，以及每个 Avatar 各自的 **Avatar 工作区**。除非另行配置，应用缓存和各工作区都位于应用主目录之内。本页说明每个根目录如何选定、应用主目录存放什么，以及哪些目录按需创建、哪些是预留的；另外两个根目录见 [Avatar 工作区](avatar-workspace-zh.md)和[模型与缓存](models-cache-zh.md)。
 
 Linux 包的程序文件不在其中任何一个目录下：安装程序把它们放在 `~/.local/lib/alphaavatar`，把 `alphaavatar` 命令放在 `~/.local/bin`。升级不会写入应用主目录，清理也从不删除应用主目录及其缓存（[setup](../cli/setup-zh.md)、[upgrade](../cli/upgrade-zh.md)、[cleanup](../cli/cleanup-zh.md)）。

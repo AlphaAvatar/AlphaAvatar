@@ -1,7 +1,5 @@
 # `alphaavatar cleanup`
 
-[English](cleanup.md)
-
 删除升级和 setup 在 Linux x86_64 安装中留下的内容：先删除 `current` 不运行的环境，再删除不再作为任何保留环境基础的基础包。
 与 [`alphaavatar upgrade`](upgrade.md) 一样属于 Linux 包；upgrade 会保留原版本和原环境，留给 cleanup 处理。
 

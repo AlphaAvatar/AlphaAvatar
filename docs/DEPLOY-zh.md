@@ -1,7 +1,5 @@
 # AlphaAvatar 部署指南
 
-[English](DEPLOY.md)
-
 在 Linux 服务器上运行原生 AlphaAvatar Host，并通过 LiveKit 连接浏览器客户端。按本指南操作之前，先安装一个经过测试的源码版本：某个发布版本的 tag，按 [README](../README.md) 中的方式设置，而不是 README 克隆的默认分支，默认分支包含尚未发布的改动：
 
 ```bash

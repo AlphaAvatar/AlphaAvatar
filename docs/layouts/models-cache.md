@@ -1,7 +1,5 @@
 # Downloaded models and cache folders
 
-[中文](models-cache-zh.md)
-
 AlphaAvatar downloads the local models needed by your selected configuration during
 startup. A first launch may therefore take longer than later launches. Models are separate
 from your [Avatar workspace](avatar-workspace.md): removing a model cache is not the

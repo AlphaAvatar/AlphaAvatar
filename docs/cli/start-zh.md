@@ -1,7 +1,5 @@
 # `alphaavatar start`
 
-[English](start.md)
-
 将 AlphaAvatar Host 作为长期运行的服务运行。
 
 ```bash

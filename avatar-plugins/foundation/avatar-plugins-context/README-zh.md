@@ -1,7 +1,5 @@
 # AlphaAvatar Context 插件
 
-[English](README.md)
-
 默认 Context 管理器由 Host 基于尚未装配完整的 AvatarRuntime 创建，之后由 FoundationRuntime 拥有。Engine 借出 Memory／Persona 读取来源；它不组装原生 Loop prompt，也不拥有 SDK ChatContext。
 
 ## 接口

@@ -1,7 +1,5 @@
 # AlphaAvatar DeepResearch 插件
 
-[English](README.md)
-
 面向 AlphaAvatar 的模块化深度研究与内容获取中间件，统一提供**网页搜索**、**深度搜索**和**内容提取**。
 
 本插件让 AlphaAvatar agent 能够进行**广泛的信息收集**和**探索性研究**，而不必把 agent 逻辑耦合到任何特定的搜索引擎、爬虫或研究服务提供方。多步调查来自 Loop 对其操作的组合；每次调用是一个请求。

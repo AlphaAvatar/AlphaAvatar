@@ -1,7 +1,5 @@
 # AlphaAvatar MCP 插件
 
-[English](README.md)
-
 MCP 通过 AlphaAvatar 的原生能力系统，在已配置的远程服务器上提供发现和调用。传输层和 ClientSession 的所有权直接使用 MCP Python 客户端；不涉及 LiveKit AgentSession 或 Agents SDK 的 MCP 基类。
 
 ## 架构

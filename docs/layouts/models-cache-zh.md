@@ -1,7 +1,5 @@
 # 已下载的模型与缓存目录
 
-[English](models-cache.md)
-
 AlphaAvatar 在启动时下载所选配置需要的本地模型，因此首次启动可能比之后的启动耗时更长。模型与你的 [Avatar 工作区](avatar-workspace.md)分开：删除模型缓存不等于删除记忆、画像或对话数据。
 
 ## 查找或选择缓存位置

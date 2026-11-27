@@ -1,7 +1,5 @@
 # AlphaAvatar Status 插件
 
-[English](README.md)
-
 Status 是一个受生命周期管理的观察者，不是执行控制器，也不是工具依赖。它的处理器消费 Core 流并推导出呈现；它们不注册工具、不调用前台 Loop，也不发布规范的 Memory 记录。
 
 ## 数据流

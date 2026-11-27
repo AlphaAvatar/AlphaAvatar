@@ -1,7 +1,5 @@
 # 🧠 AlphaAvatar Memory 插件
 
-[English](README.md)
-
 Memory 通过各自独立配置的处理器，提供持久的对话、工具和环境记忆。Agent 代码只暴露契约；提取 prompt、存储、检索和收尾都留在本插件中。
 
 ## 🧩 运行时与处理器

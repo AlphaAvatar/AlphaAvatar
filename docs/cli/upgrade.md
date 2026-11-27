@@ -1,7 +1,5 @@
 # `alphaavatar upgrade`
 
-[中文](upgrade-zh.md)
-
 Upgrade a Linux x86_64 installation to another build: its base package and, when
 [`alphaavatar setup`](setup.md) made the environment `current` runs, the default bundle's
 environment, both prepared and checked beside the current ones, then switched to at once. Part

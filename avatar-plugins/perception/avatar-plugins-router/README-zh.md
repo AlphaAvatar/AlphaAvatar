@@ -1,7 +1,5 @@
 # 🎯 AlphaAvatar Interaction Router 插件
 
-[English](README.md)
-
 Router 通过相互独立的处理器协调实时感知、寻址、轮次判断、合成和转录同步。它借用模型／语音抽象，不直接向 LiveKit 或前端发布。
 
 ## ⚙️ 运行时与处理器

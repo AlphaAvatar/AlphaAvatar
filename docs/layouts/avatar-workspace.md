@@ -1,7 +1,5 @@
 # Your Avatar workspace
 
-[中文](avatar-workspace-zh.md)
-
 An Avatar workspace contains your saved user information, memories, session records and
 files produced by enabled features. It is separate from the source checkout and from the
 [downloaded model cache](models-cache.md).

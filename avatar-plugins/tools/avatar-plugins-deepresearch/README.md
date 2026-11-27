@@ -1,7 +1,5 @@
 # AlphaAvatar DeepResearch Plugin
 
-[中文](README-zh.md)
-
 A modular deep-research and content acquisition middleware for AlphaAvatar, providing unified access to **web search**, **deeper search**, and **content extraction**.
 
 This plugin enables AlphaAvatar agents to perform **broad information gathering** and **exploratory research**, without coupling agent logic to any specific search engine, crawler, or research provider. Multi-step investigation comes from the Loop composing its operations; each call is one request.

@@ -1,7 +1,5 @@
 # 你的 Avatar 工作区
 
-[English](avatar-workspace.md)
-
 Avatar 工作区保存你的用户信息、记忆、会话记录，以及已启用功能生成的文件。它与源码检出目录分开，也与[已下载的模型缓存](models-cache.md)分开。
 
 请把工作区当作私有数据。移动工作区、清理文件或更改 Avatar ID 之前，先做好备份。

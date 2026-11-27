@@ -1,7 +1,5 @@
 # AlphaAvatar identifier and association conventions
 
-[中文](identifiers-zh.md)
-
 This document explains each identifier by the function it serves in the application: its meaning, owner, uniqueness scope, lifetime and initialization entry. It describes the current temporal input window implementation: turn-taking consumes perception observations and annotations and proposes actions, Engine admits the input and Core commits the Turn; recognizing people and accepting identities are not done by turn-taking.
 
 A field name is interpreted together with the type that owns it. A uniqueness scope is not an access permission: knowing an ID does not mean the user data it points to may be read. The initialization entries in the tables also distinguish automatic generation, caller-provided values, reuse of an existing reference and provider mapping.

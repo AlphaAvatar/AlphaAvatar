@@ -1,7 +1,5 @@
 # Plugin Layout and Boundaries
 
-[中文](README-zh.md)
-
 This document describes the plugin workspace and its runtime boundaries. See the [plugin catalog](../README.md#alphaavatar-plugins) for capabilities and implementation status.
 
 ## 📦 Package structure

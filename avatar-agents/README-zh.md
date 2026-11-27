@@ -1,7 +1,5 @@
 # AlphaAvatar Agents
 
-[English](README.md)
-
 `alpha-avatar-agents` 定义 Agent 执行契约和运行时组合。
 具体的模型后端和功能实现位于插件包中；应用托管和传输组装归 Host 和 RTC 负责。
 

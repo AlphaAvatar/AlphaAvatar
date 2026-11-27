@@ -1,7 +1,5 @@
 # AlphaAvatar Provider 插件
 
-[English](README.md)
-
 公开的模型、prompt、工具结果、请求和流契约位于 `alphaavatar.agents.avatar.provider`。SDK 构造、消息转换、结构化解析和用量归一化仍保留在本插件中。
 
 ## 共享所有权

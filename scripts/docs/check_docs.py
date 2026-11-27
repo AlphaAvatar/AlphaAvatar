@@ -514,28 +514,88 @@ def _check_roadmaps(manifest: dict, problems: list[str]) -> None:
                 )
 
 
-def _check_cli_pages(problems: list[str]) -> None:
-    """The CLI output pages are what cli_preview.py makes of their one data file."""
-    from cli_preview import page
+def _check_language_lines(manifest: dict, problems: list[str]) -> None:
+    """No published document has a line of links switching to another language of itself: the
+    docs site offers the languages in its own menu. Links in prose stay."""
+    by_path = {d["path"]: d for d in manifest["documents"] if "path" in d}
+    for doc in manifest["documents"]:
+        rel, group = doc.get("path", ""), doc.get("translation_group")
+        if doc.get("visibility") != "public" or not rel.endswith(".md") or not group:
+            continue
+        for number, line in _lines((ROOT / rel).read_text(encoding="utf-8")):
+            targets = INLINE_LINK.findall(line)
+            if not targets or INLINE_LINK.sub("", line).strip(" ·|/•,"):
+                continue
+            for target in targets:
+                resolved = ((ROOT / rel).parent / target.split("#")[0]).resolve()
+                other = (
+                    by_path.get(resolved.relative_to(ROOT).as_posix())
+                    if resolved.is_relative_to(ROOT)
+                    else None
+                )
+                if (
+                    other
+                    and other.get("translation_group") == group
+                    and other["lang"] != doc["lang"]
+                ):
+                    problems.append(
+                        f"{rel}:{number}: a line switching language; the site has a language menu"
+                    )
+
+
+def _check_cli_pages(manifest: dict, problems: list[str]) -> None:
+    """The CLI output pages the manifest lists are what cli_preview.py makes of their one data
+    file, in the languages the manifest gives them; each page of the data is listed; every
+    ```terminal NAME block of a published document shows panel NAME's text."""
+    from cli_preview import blocks, page
 
     data_path = ROOT / "docs" / "cli" / "cli-output.json"
     data = json.loads(data_path.read_text(encoding="utf-8"))
-    langs = {text["lang"] for text in data["pages"]}
+    where = "docs/cli/cli-output.json"
+    listed = {
+        d["path"]: d["lang"]
+        for d in manifest["documents"]
+        if d.get("format") == "html" and d["path"].startswith("docs/cli/")
+    }
+    given = {f"docs/cli/{text['file']}": text["lang"] for text in data["pages"]}
+    for path, lang in sorted(listed.items()):
+        if given.get(path) != lang:
+            problems.append(f"{path}: the manifest lists it in {lang}; {where} has no such page")
+    for path in sorted(given.keys() - listed.keys()):
+        problems.append(f"{where}: page {path} is not in the manifest")
+    if not isinstance(data.get("palette"), dict):
+        problems.append(f"{where}: no palette for the 4-bit color codes")
+        return
+
+    langs = set(listed.values())
     incomplete = [
-        f"docs/cli/cli-output.json: {panel['name']} {key} per {sorted(langs)}"
+        f"{where}: {panel['name']} {key} per {sorted(langs)}"
         for panel in data["panels"]
         for key in ("title", *(("label",) if "label" in panel else ()))
         if set(panel[key]) != langs
     ]
     problems.extend(incomplete)
-    if incomplete:
-        return
-    for text in data["pages"]:
-        path = data_path.parent / text["file"]
-        if not path.is_file() or path.read_text(encoding="utf-8") != page(data, text["lang"]):
+    if not incomplete:
+        for text in data["pages"]:
+            path = data_path.parent / text["file"]
+            if not path.is_file() or path.read_text(encoding="utf-8") != page(data, text["lang"]):
+                problems.append(
+                    f"docs/cli/{text['file']}: not generated from {where}; "
+                    f"run scripts/docs/cli_preview.py html {where}"
+                )
+
+    for doc in manifest["documents"]:
+        rel = doc.get("path", "")
+        if doc.get("visibility") != "public" or not rel.endswith(".md"):
+            continue
+        source = (ROOT / rel).read_text(encoding="utf-8")
+        shown, missing = blocks(data, source)
+        for name in missing:
+            problems.append(f"{rel}: terminal block {name}: no such panel in {where}")
+        if shown != source and not missing:
             problems.append(
-                f"docs/cli/{text['file']}: not generated from cli-output.json; "
-                "run scripts/docs/cli_preview.py html docs/cli/cli-output.json"
+                f"{rel}: a terminal block differs from its panel; "
+                f"run scripts/docs/cli_preview.py blocks {where} {rel}"
             )
 
 
@@ -549,7 +609,8 @@ def main() -> int:
             _check_links(doc["path"], problems, cache)
             _check_emphasis(doc["path"], problems)
     _check_roadmaps(manifest, problems)
-    _check_cli_pages(problems)
+    _check_language_lines(manifest, problems)
+    _check_cli_pages(manifest, problems)
 
     for problem in problems:
         print(problem, file=sys.stderr)

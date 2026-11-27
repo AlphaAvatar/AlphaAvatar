@@ -1,7 +1,5 @@
 # `alphaavatar config`
 
-[English](config.md)
-
 创建或检查应用配置。两个子命令都不会启动任何东西。
 
 ## Bundle 与 profile

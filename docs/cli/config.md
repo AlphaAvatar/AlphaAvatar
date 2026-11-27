@@ -1,7 +1,5 @@
 # `alphaavatar config`
 
-[中文](config-zh.md)
-
 Create or check application configuration. Neither subcommand starts anything.
 
 ## Bundles and profiles

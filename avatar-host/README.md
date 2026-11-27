@@ -1,7 +1,5 @@
 # AlphaAvatar Host
 
-[中文](README-zh.md)
-
 `alpha-avatar-host` starts AlphaAvatar, owns shared inference, and supervises Avatar
 executions. Interaction connections belong to session backends; Agents, Core and RTC
 do not depend on Host. The App is not required to run the service.

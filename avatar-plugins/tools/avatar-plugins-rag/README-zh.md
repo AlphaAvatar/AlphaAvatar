@@ -1,7 +1,5 @@
 # AlphaAvatar RAG 插件
 
-[English](README.md)
-
 面向 AlphaAvatar 的检索增强生成（Retrieval-Augmented Generation，RAG）工具，让 agent 能够对存储在 Host 上的文档进行**索引**、**检索**，并**基于文档生成有依据的回答**。
 
 索引属于会话：它位于会话自己的 `artifacts/rag/rag_anything/` 目录中，因此每个新会话都从一个空索引开始。

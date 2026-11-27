@@ -1,7 +1,5 @@
 # `alphaavatar test`
 
-[中文](test-zh.md)
-
 **Planned — not available.** `alphaavatar` has no `test` command. Whether to offer one is
 undecided ([Roadmap QA-06](../ROADMAP.md#backlog)); this page is a proposal, and the commands
 below do not run.

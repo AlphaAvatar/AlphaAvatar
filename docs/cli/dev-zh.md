@@ -1,7 +1,5 @@
 # `alphaavatar dev`
 
-[English](dev.md)
-
 为开发运行 AlphaAvatar Host。
 
 ```bash

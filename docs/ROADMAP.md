@@ -1,7 +1,5 @@
 # AlphaAvatar Roadmap
 
-[中文](ROADMAP-zh.md)
-
 This file is the single maintained source of the AlphaAvatar Roadmap: what has been delivered,
 what is in development and what is planned, by version. [ROADMAP-zh.md](ROADMAP-zh.md) is its
 Chinese version and is kept in step with it. The docs site renders its Roadmap page from these

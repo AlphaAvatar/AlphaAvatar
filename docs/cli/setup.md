@@ -1,7 +1,5 @@
 # `alphaavatar setup`
 
-[中文](setup-zh.md)
-
 Install what a bundle needs, check it, then make it the default bundle. Part of the Linux
 x86_64 package: [install it](../DEPLOY.md#or-install-the-linux-package-then-choose-capabilities)
 with `install.sh` first.
@@ -230,6 +228,114 @@ OK    Bundle enabled
       Environment   ~/.local/lib/alphaavatar/envs/97138f31be7bfc50
       Start reads OPENAI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET from the
       environment or .env.
+
+Next
+  alphaavatar doctor first
+```
+
+A first setup as a terminal showed it, colors and all: `alphaavatar setup --artifacts DIR` on
+Linux at 100 columns, recorded on 2026-11-24 (first recorded on 2026-11-23) with a 0.6.8
+package built that day, fictional credentials and no model on the machine;
+[cli.html](cli.html) holds it with the other recordings:
+
+```terminal setup-first
+AlphaAvatar / Setup
+
+01  Capabilities
+    Each question starts from the reference configuration: Enter keeps its answer.
+    Voice: speech in and out, voice activity detected on this machine? [Y/n]:
+    Vision: camera frames reach the model? [Y/n]:
+    Models on this machine: turn taking, addressing, face and speaker recognition? [Y/n]: n
+    ENV memory: memories drawn from the session's audio and video by Google's Gemini, an external
+    model? [Y/n]:
+    Vectors for memory and persona: LanceDB in the Avatar workspace
+    Tools  None enabled (default)
+           Enable DeepResearch or MCP in the tools profile,
+           then run: alphaavatar setup <bundle>
+           RAG is not available through setup in this release.
+    Bundle name [avatar]: first
+    Avatar ID [first]:
+01  Capabilities   Bundle first · Voice on · Vision on · Local models off · ENV memory on
+02  Models
+    Provider for the conversation: OpenAI
+      Model for the conversation [gpt-5.6-luna]:
+    Provider for memory: OpenAI
+      Model for memory [gpt-4o]:
+    Provider for tool memory: OpenAI
+      Model for tool memory [gpt-4o]:
+    Provider for persona profiles: OpenAI
+      Model for persona profiles [gpt-4o]:
+    ENV memory: from Google, the only one
+      Model for ENV memory [gemini-2.5-flash]:
+    Provider for embeddings: OpenAI
+      Model for embeddings [text-embedding-3-small]:
+    Provider for speech recognition: OpenAI, segment by segment (openai_segment)
+      Model for speech recognition [gpt-4o-transcribe]:
+    Provider for speech synthesis: OpenAI (openai)
+      Model for speech synthesis [gpt-4o-mini-tts]:
+      Voice [ash]:
+      Speed, 0.25 to 4.0 [1.15]:
+02  Models         OpenAI · Google
+03  Credentials
+    OPENAI_API_KEY, for the conversation model, memory, tool memory, persona profiles, embeddings,
+    speech recognition, speech synthesis, from OpenAI:
+    GOOGLE_API_KEY, for ENV memory, from Google:
+    LIVEKIT_URL, for the LiveKit server sessions use: wss://livekit.example.com
+    LIVEKIT_API_KEY, for LiveKit:
+    LIVEKIT_API_SECRET, for LiveKit:
+    Store OPENAI_API_KEY, GOOGLE_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET in
+    /home/tester/.local/share/alphaavatar/settings, readable
+    only by you? [y/N]: n
+    Not stored: start reads them from the environment or .env
+03  Credentials    Ready
+04  Install
+
+    Configuration
+      Bundle          first · will become the default
+      Avatar ID       first
+      Version         0.6.8 · linux-x86_64
+
+    Capabilities
+      Voice           On
+      Vision          On
+      Local models    Off
+      ENV memory      On
+
+    Models
+      Conversation    OpenAI       gpt-5.6-luna
+      Memory          OpenAI       gpt-4o
+      Tool memory     OpenAI       gpt-4o
+      ENV memory      Google       gemini-2.5-flash
+      Persona         OpenAI       gpt-4o
+      Embedding       OpenAI       text-embedding-3-small
+
+    Speech
+      STT             openai_segment · gpt-4o-transcribe
+      TTS             openai · gpt-4o-mini-tts
+      Voice / Speed   ash · 1.15
+
+    Storage & Tools
+      Vectors         LanceDB · Avatar workspace
+      Tools           None enabled (default)
+                      Enable DeepResearch or MCP in the tools profile,
+                      then run: alphaavatar setup first
+                      RAG is not available through setup in this release.
+
+    Installation
+      Packages        85
+      Download        212 MB
+      Plan            993ef4cfdb9932b4
+      Environment     ~/.local/lib/alphaavatar/envs/993ef4cfdb9932b4
+
+    Install and enable? [Y/n]: y
+04  Install        85 packages · 212 MB
+05  Validate       PASS · 3 runners
+
+OK    Bundle enabled
+      Default       first
+      Environment   ~/.local/lib/alphaavatar/envs/993ef4cfdb9932b4
+      Start reads OPENAI_API_KEY, GOOGLE_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+      from the environment or .env.
 
 Next
   alphaavatar doctor first

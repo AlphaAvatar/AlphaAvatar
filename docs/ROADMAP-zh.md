@@ -1,7 +1,5 @@
 # AlphaAvatar 路线图
 
-[English](ROADMAP.md)
-
 本文件是 AlphaAvatar 路线图的中文版，与英文版 [ROADMAP.md](ROADMAP.md) 同步维护：按版本记录已交付、开发中和计划中的工作。两份文件是路线图唯一的维护来源，文档站的 Roadmap 页面由它们生成，Agent 直接阅读。某个版本实际交付了什么，见对应的 [Release 文档](releases/)；系统当前如何工作，见技术文档，例如[标识参考](identifiers-zh.md)。本路线图链接这些文档，不替代它们。
 
 ## 目标

@@ -1,7 +1,5 @@
 # AlphaAvatar Core
 
-[English](README.md)
-
 `avatar-core` 提供与传输无关的媒体、事件和生命周期契约。
 它不依赖 Agents、具体插件、模型 SDK 或 LiveKit。
 

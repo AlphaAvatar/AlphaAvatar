@@ -1,7 +1,5 @@
 # AlphaAvatar Host
 
-[English](README.md)
-
 `alpha-avatar-host` 启动 AlphaAvatar，管理共享推理，并监督 Avatar 执行实例。
 交互连接归会话后端管理；Agents、Core 和 RTC 不依赖 Host。
 运行服务不需要 App。

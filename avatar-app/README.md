@@ -1,7 +1,5 @@
 # AlphaAvatar App
 
-[中文](README-zh.md)
-
 This directory is reserved for the AlphaAvatar client application. It currently contains
 only this README; no installable app, mobile runtime or configuration UI is delivered here.
 

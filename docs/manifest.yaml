@@ -75,14 +75,12 @@ sections:
 
 documents:
   # Guide: get-started
-  - {id: home, path: README.md, title: AlphaAvatar, type: overview, lang: en, route: /overview, group: get-started, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: home}
-  - {id: home-zh, path: README-zh.md, title: AlphaAvatar, type: overview, lang: zh-CN, route: /overview, group: get-started, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: home}
-  - {id: quickstart, path: docs/quickstart.md, title: Quick start, type: guide, lang: en, route: /get-started/quickstart, group: get-started, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: quickstart}
-  - {id: quickstart-zh, path: docs/quickstart-zh.md, title: 快速开始, type: guide, lang: zh-CN, route: /get-started/quickstart, group: get-started, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: quickstart}
-  - {id: deploy, path: docs/DEPLOY.md, title: Deployment, type: guide, lang: en, route: /deploy, group: get-started, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: deploy}
-  - {id: deploy-zh, path: docs/DEPLOY-zh.md, title: 部署, type: guide, lang: zh-CN, route: /deploy, group: get-started, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: deploy}
-  - {id: examples, path: examples/README.md, title: Configuration examples, type: example, lang: en, route: /examples, group: get-started, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: examples}
-  - {id: examples-zh, path: examples/README-zh.md, title: 配置示例, type: example, lang: zh-CN, route: /examples, group: get-started, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: examples}
+  - {id: quickstart, path: docs/quickstart.md, title: Quick start, type: guide, lang: en, route: /get-started/quickstart, group: get-started, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: quickstart}
+  - {id: quickstart-zh, path: docs/quickstart-zh.md, title: 快速开始, type: guide, lang: zh-CN, route: /get-started/quickstart, group: get-started, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: quickstart}
+  - {id: deploy, path: docs/DEPLOY.md, title: Deployment, type: guide, lang: en, route: /deploy, group: get-started, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: deploy}
+  - {id: deploy-zh, path: docs/DEPLOY-zh.md, title: 部署, type: guide, lang: zh-CN, route: /deploy, group: get-started, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: deploy}
+  - {id: examples, path: examples/README.md, title: Configuration examples, type: example, lang: en, route: /examples, group: get-started, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: examples}
+  - {id: examples-zh, path: examples/README-zh.md, title: 配置示例, type: example, lang: zh-CN, route: /examples, group: get-started, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: examples}
 
   # Development: contribute
   - {id: contributing, path: CONTRIBUTING.md, title: Contributing, type: development, lang: en, route: /development/contributing, group: contribute, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: contributing}
@@ -197,6 +195,9 @@ documents:
   - {id: release-v0.6.1-zh, path: docs/releases/v0.6.1-zh.md, title: v0.6.1, type: release, lang: zh-CN, route: /releases/v0.6.1, group: releases, order: 9, visibility: public, status: historical, applies_to: v0.6.1, release: {tag: v0.6.1, published: 2026-06-14}, translation_group: release-v0.6.1}
 
   # Internal records: kept in the repository, never published.
+  # The repository README is GitHub's front page, not a page of the site; links to it lead to GitHub.
+  - {id: home, path: README.md, title: AlphaAvatar, type: overview, lang: en, visibility: internal, status: current, applies_to: snapshot, translation_group: home}
+  - {id: home-zh, path: README-zh.md, title: AlphaAvatar, type: overview, lang: zh-CN, visibility: internal, status: current, applies_to: snapshot, translation_group: home}
   - {id: bugs, path: docs/bugs-zh.md, title: 缺陷记录, type: record, lang: zh-CN, visibility: internal, status: current, applies_to: snapshot}
 
 groups:

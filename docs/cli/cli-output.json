@@ -1,9 +1,26 @@
 {
+ "palette": {
+  "30": "#71717A",
+  "31": "#FCA5A5",
+  "32": "#86EFAC",
+  "33": "#FDE047",
+  "34": "#93C5FD",
+  "35": "#F0ABFC",
+  "36": "#67E8F9",
+  "37": "#E5E7EB",
+  "90": "#A1A1AA",
+  "91": "#FECACA",
+  "92": "#BBF7D0",
+  "93": "#FEF08A",
+  "94": "#BFDBFE",
+  "95": "#F5D0FE",
+  "96": "#A5F3FC",
+  "97": "#FFFFFF"
+ },
  "pages": [
   {
    "lang": "en",
    "file": "cli.html",
-   "name": "English",
    "title": "AlphaAvatar CLI Output",
    "heading": "AlphaAvatar CLI output",
    "columns": "{} columns",
@@ -13,7 +30,6 @@
   {
    "lang": "zh-CN",
    "file": "cli-zh.html",
-   "name": "中文",
    "title": "AlphaAvatar CLI 输出",
    "heading": "AlphaAvatar CLI 输出",
    "columns": "{} 列",

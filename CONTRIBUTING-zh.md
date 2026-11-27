@@ -1,7 +1,5 @@
 # 为 AlphaAvatar 做贡献
 
-[English](CONTRIBUTING.md)
-
 ## Python 3.13 开发环境
 
 开发目标是标准 CPython 3.13，而不是 free-threaded 解释器。

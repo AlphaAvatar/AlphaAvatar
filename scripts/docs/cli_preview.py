@@ -18,6 +18,7 @@ colors and all.
         [--interrupt-at TEXT] -- COMMAND...
     python scripts/docs/cli_preview.py screen DATA NAME OUT EXIT [--mask PATH=NAME ...]
     python scripts/docs/cli_preview.py html DATA
+    python scripts/docs/cli_preview.py blocks DATA FILE...
 
 ``record`` runs a command in a terminal of COLS columns and writes OUT.cast (asciinema v2:
 each output chunk with its time) and OUT.ansi (the bytes as shown). Each --answer goes to the
@@ -27,7 +28,11 @@ a terminal shows once that recording ends, its escape codes kept for colors, wit
 EXIT code; each --mask shows PATH, a recording machine's directory, as NAME. A panel's title and
 optional LABEL (such as the offline test doubles a measured run used) are written in DATA, once
 per page language. ``html`` writes every page DATA lists, beside DATA: one self-contained page
-per language, openable offline, all of them from the same panels.
+per language, openable offline, all of them from the same panels. ``blocks`` writes, into each
+Markdown FILE, every block fenced as ```` ```terminal NAME ```` with the text panel NAME shows:
+what the terminal displays, its escape codes applied, none left. DATA's ``palette`` gives the
+colors of the 4-bit codes, for these pages and the docs site alike; 256-color and RGB codes are
+taken as recorded.
 """
 
 from __future__ import annotations
@@ -42,9 +47,8 @@ import time
 from pathlib import Path
 
 SGR = re.compile(r"\x1b\[([0-9;]*)m")
-ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-# The terminal's own palette for the 4-bit codes the CLI uses; truecolor codes are exact.
-BASIC = {"31": "#f87171", "32": "#4ade80", "33": "#facc15", "90": "#9ca3af"}
+ESCAPE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+FENCE = re.compile(r"^(```+|~~~+)terminal\s+(\S+)\s*$")
 
 
 def record(
@@ -115,44 +119,105 @@ def screen(data: str) -> str:
     return "\n".join(lines).strip("\n")
 
 
-def colored(text: str) -> str:
-    out, color, bold, last = [], None, False, 0
+def _xterm(index: int, palette: dict[str, str]) -> str | None:
+    """A 256-color index: the 16 4-bit colors from the palette, then xterm's cube and grays."""
+    if index < 16:
+        return palette.get(str(30 + index if index < 8 else 82 + index))
+    if index < 232:
+        level = [0, 95, 135, 175, 215, 255]
+        cube = index - 16
+        red, green, blue = level[cube // 36], level[cube // 6 % 6], level[cube % 6]
+        return f"rgb({red},{green},{blue})"
+    gray = 8 + 10 * (index - 232)
+    return f"rgb({gray},{gray},{gray})"
+
+
+def segments(text: str, palette: dict[str, str]) -> list[tuple[str, str | None, bool]]:
+    """A screen's text in runs of one color and weight: SGR codes applied, any other escape code
+    dropped (the screen has already applied those that move the cursor)."""
+    out: list[tuple[str, str | None, bool]] = []
+    color, bold, last = None, False, 0
+
+    def add(part: str) -> None:
+        if part := ESCAPE.sub("", part):
+            out.append((part, color, bold))
+
     for match in SGR.finditer(text):
-        out.append(span(text[last : match.start()], color, bold))
+        add(text[last : match.start()])
         last = match.end()
-        codes = match.group(1).split(";") if match.group(1) else ["0"]
+        codes = [int(c or 0) for c in match.group(1).split(";")]
         index = 0
         while index < len(codes):
             code = codes[index]
-            if code == "0":
+            if code == 0:
                 color, bold = None, False
-            elif code == "1":
+            elif code == 1:
                 bold = True
-            elif code in BASIC:
-                color = BASIC[code]
-            elif code == "38" and codes[index + 1 : index + 2] == ["2"]:
+            elif code == 22:
+                bold = False
+            elif code == 39:
+                color = None
+            elif 30 <= code <= 37 or 90 <= code <= 97:
+                color = palette.get(str(code))
+            elif code == 38 and codes[index + 1 : index + 2] == [5] and index + 2 < len(codes):
+                color = _xterm(codes[index + 2], palette)
+                index += 2
+            elif code == 38 and codes[index + 1 : index + 2] == [2] and index + 4 < len(codes):
                 color = "rgb({},{},{})".format(*codes[index + 2 : index + 5])
                 index += 4
             index += 1
-    out.append(span(text[last:], color, bold))
-    return "".join(out)
+    add(text[last:])
+    return out
+
+
+def colored(text: str, palette: dict[str, str]) -> str:
+    return "".join(span(part, color, bold) for part, color, bold in segments(text, palette))
+
+
+def plain(text: str, palette: dict[str, str]) -> str:
+    """What the terminal shows, as text; a line's trailing blanks are not part of it."""
+    shown = "".join(part for part, _, _ in segments(text, palette))
+    return "\n".join(line.rstrip() for line in shown.split("\n"))
 
 
 def span(text: str, color: str | None, bold: bool) -> str:
-    if not text:
-        return ""
-    escaped = html.escape(ESCAPE.sub("", text))
+    escaped = html.escape(text)
     style = ";".join(filter(None, (f"color:{color}" if color else "", "font-weight:700" * bold)))
     return f'<span style="{style}">{escaped}</span>' if style else escaped
 
 
+def blocks(data: dict, markdown: str) -> tuple[str, list[str]]:
+    """The Markdown with each ```terminal NAME block holding panel NAME's text, and the names it
+    could not find."""
+    panels = {p["name"]: p for p in data["panels"]}
+    lines, out, missing = markdown.split("\n"), [], []
+    index = 0
+    while index < len(lines):
+        out.append(lines[index])
+        match = FENCE.match(lines[index])
+        index += 1
+        if not match:
+            continue
+        fence, name = match.groups()
+        end = next(
+            (
+                i
+                for i in range(index, len(lines))
+                if lines[i].startswith(fence) and not lines[i].strip(fence[0]).strip()
+            ),
+            len(lines),
+        )
+        if name in panels:
+            out.extend(plain(panels[name]["screen"], data["palette"]).split("\n"))
+        else:
+            missing.append(name)
+            out.extend(lines[index:end])
+        index = end
+    return "\n".join(out), missing
+
+
 def page(data: dict, lang: str) -> str:
     text = next(p for p in data["pages"] if p["lang"] == lang)
-    links = [
-        f'<a href="{p["file"]}">{html.escape(p["name"])}</a>'
-        for p in data["pages"]
-        if p["lang"] != lang
-    ]
     index, sections = [], []
     for panel in data["panels"]:
         name, title = panel["name"], html.escape(panel["title"][lang])
@@ -167,13 +232,12 @@ def page(data: dict, lang: str) -> str:
         sections.append(
             f'<section id="{name}"><h2>{title}{tag}</h2>'
             f'<p class="meta"><span>{columns}</span><span>{code}</span></p>'
-            f'<div class="term"><pre style="width:{panel["columns"]}ch">{colored(panel["screen"])}</pre></div></section>'
+            f'<div class="term"><pre style="width:{panel["columns"]}ch">{colored(panel["screen"], data["palette"])}</pre></div></section>'
         )
     values = {
         "lang": lang,
         "title": html.escape(text["title"]),
         "heading": html.escape(text["heading"]),
-        "links": " · ".join(links),
         "lead": text["lead"],
         "index": "\n".join(index),
         "panels": "\n".join(sections),
@@ -235,7 +299,6 @@ h2 { font-size: 16px; line-height: 1.35; margin: 0 0 4px; }
 <body>
 <main>
 <h1>{heading}</h1>
-<p>{links}</p>
 <p class="lead">{lead}</p>
 <nav><ol>
 {index}
@@ -263,6 +326,9 @@ def main() -> int:
     storing.add_argument("--mask", action="append", default=[], metavar="PATH=NAME")
     building = commands.add_parser("html")
     building.add_argument("data", type=Path)
+    writing = commands.add_parser("blocks")
+    writing.add_argument("data", type=Path)
+    writing.add_argument("files", nargs="+", type=Path)
     argv = sys.argv[1:]
     command = argv[argv.index("--") + 1 :] if "--" in argv else []
     args = parser.parse_args(argv[: argv.index("--")] if "--" in argv else argv)
@@ -274,6 +340,14 @@ def main() -> int:
         store(args.data, args.name, args.out, args.exit, dict(m.split("=", 1) for m in args.mask))
         return 0
     data = json.loads(args.data.read_text(encoding="utf-8"))
+    if args.command == "blocks":
+        for file in args.files:
+            text, missing = blocks(data, file.read_text(encoding="utf-8"))
+            if missing:
+                print(f"{file}: no panel {', '.join(missing)} in {args.data}", file=sys.stderr)
+                return 1
+            file.write_text(text, encoding="utf-8")
+        return 0
     for text in data["pages"]:
         (args.data.parent / text["file"]).write_text(page(data, text["lang"]), encoding="utf-8")
     return 0

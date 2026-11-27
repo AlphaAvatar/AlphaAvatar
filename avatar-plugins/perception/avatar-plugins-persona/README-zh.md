@@ -1,7 +1,5 @@
 # 🧬 AlphaAvatar Persona 插件
 
-[English](README.md)
-
 Persona 提供可独立配置的用户画像、说话人识别和人脸识别。具体的处理、身份解析和持久化位于插件中；公开的画像和处理器契约保留在 Agents 中。
 
 ## 概览
