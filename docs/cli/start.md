@@ -1,5 +1,7 @@
 # `alphaavatar start`
 
+[中文](start-zh.md)
+
 Run the AlphaAvatar Host as a long-running service.
 
 ```bash

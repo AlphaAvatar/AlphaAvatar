@@ -1,5 +1,7 @@
 # AlphaAvatar Virtual Character Plugin
 
+[中文](README-zh.md)
+
 AIRI presentation uses the native Character lifecycle. It does not receive an
 AgentSession, generate answers, synthesize speech, or publish a second audio track.
 The renderer consumes the Agent's existing RTC audio and publishes its canvas video.

@@ -1,5 +1,7 @@
 # Voice Plugin for AlphaAvatar
 
+[中文](README-zh.md)
+
 Voice is a Foundation-layer plugin providing VAD, STT and TTS implementations used through `runtime.foundation.voice`.
 
 ## Ownership

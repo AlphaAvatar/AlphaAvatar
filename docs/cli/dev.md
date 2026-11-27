@@ -1,5 +1,7 @@
 # `alphaavatar dev`
 
+[中文](dev-zh.md)
+
 Run the AlphaAvatar Host for development.
 
 ```bash

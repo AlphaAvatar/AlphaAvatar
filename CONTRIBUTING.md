@@ -1,5 +1,7 @@
 # Contributing to AlphaAvatar
 
+[中文](CONTRIBUTING-zh.md)
+
 ## Python 3.13 development environment
 
 The development target is standard CPython 3.13, not a free-threaded interpreter.

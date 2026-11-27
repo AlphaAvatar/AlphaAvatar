@@ -47,6 +47,8 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
 
 </div>
 
+[中文](README-zh.md)
+
 ---
 
 <h2>AlphaAvatar Introduction</h2>

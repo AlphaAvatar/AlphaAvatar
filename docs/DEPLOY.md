@@ -1,5 +1,7 @@
 # AlphaAvatar Deployment Guide
 
+[中文](DEPLOY-zh.md)
+
 Run the native AlphaAvatar Host on a Linux server and connect a browser client through
 LiveKit. Install a tested source revision before following this guide: a release's tag, set up
 as in the [README](../README.md), rather than the default branch the README clones, which holds

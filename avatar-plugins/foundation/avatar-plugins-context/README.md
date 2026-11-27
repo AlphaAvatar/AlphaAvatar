@@ -1,5 +1,7 @@
 # AlphaAvatar Context Plugin
 
+[中文](README-zh.md)
+
 The default Context manager is created by Host against a partial AvatarRuntime and then owned by FoundationRuntime. Engine lends Memory/Persona read sources; it does not assemble native Loop prompts or own an SDK ChatContext.
 
 ## Interface

@@ -1,5 +1,7 @@
 # 🧬 AlphaAvatar Persona Plugin
 
+[中文](README-zh.md)
+
 Persona provides independently configurable user profiling, speaker recognition and face recognition. Concrete processing, identity resolution and persistence live in the plugin; public profile and processor contracts remain in Agents.
 
 ## Overview

@@ -1,5 +1,7 @@
 # 🎯 AlphaAvatar Interaction Router Plugin
 
+[中文](README-zh.md)
+
 Router coordinates realtime perception, addressing, turn-taking, synthesis and transcript synchronization through independent processors. It borrows model/voice abstractions and does not publish directly to LiveKit or a frontend.
 
 ## ⚙️ Runtime and processors

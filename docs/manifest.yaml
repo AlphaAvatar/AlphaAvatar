@@ -13,8 +13,9 @@
 # lang               language the text is written in: en or zh-CN; no other language exists
 #                    unless a file for it does
 # translation_group  entries that are the same document in different languages
-# route              site path without a language prefix; unique per language
-# section, order     navigation
+# route              site path without a language prefix; unique per language; / is the site's
+#                    own home page
+# section, order     navigation; a section's title is given in each language
 # visibility         public or internal
 # status             current (describes this snapshot), planned (describes something not
 #                    available), historical (describes a past version), illustrative (sample
@@ -27,81 +28,128 @@ schema: 1
 repository: AlphaAvatar/AlphaAvatar
 
 sections:
-  - {id: overview, title: Overview}
-  - {id: get-started, title: Get started}
-  - {id: cli, title: Commands}
-  - {id: architecture, title: Architecture}
-  - {id: plugins, title: Plugins}
-  - {id: reference, title: Reference}
-  - {id: development, title: Development}
-  - {id: roadmap, title: Roadmap}
-  - {id: releases, title: Releases}
+  - {id: overview, title: {en: Overview, zh-CN: 概览}}
+  - {id: get-started, title: {en: Get started, zh-CN: 开始使用}}
+  - {id: cli, title: {en: Commands, zh-CN: 命令}}
+  - {id: architecture, title: {en: Architecture, zh-CN: 架构}}
+  - {id: plugins, title: {en: Plugins, zh-CN: 插件}}
+  - {id: reference, title: {en: Reference, zh-CN: 参考}}
+  - {id: development, title: {en: Development, zh-CN: 开发}}
+  - {id: roadmap, title: {en: Roadmap, zh-CN: 路线图}}
+  - {id: releases, title: {en: Releases, zh-CN: 发布}}
 
 documents:
   # Overview
-  - {id: home, path: README.md, title: AlphaAvatar, type: overview, lang: en, route: /, section: overview, order: 1, visibility: public, status: current, applies_to: snapshot}
+  - {id: home, path: README.md, title: AlphaAvatar, type: overview, lang: en, route: /overview, section: overview, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: home}
+  - {id: home-zh, path: README-zh.md, title: AlphaAvatar, type: overview, lang: zh-CN, route: /overview, section: overview, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: home}
 
   # Get started
-  - {id: deploy, path: docs/DEPLOY.md, title: Deployment, type: guide, lang: en, route: /deploy, section: get-started, order: 1, visibility: public, status: current, applies_to: snapshot}
-  - {id: examples, path: examples/README.md, title: Configuration examples, type: example, lang: en, route: /examples, section: get-started, order: 2, visibility: public, status: current, applies_to: snapshot}
-  - {id: workspace, path: docs/avatar-workspace-layout.md, title: Avatar workspace, type: reference, lang: en, route: /guides/workspace, section: get-started, order: 3, visibility: public, status: current, applies_to: snapshot}
-  - {id: model-cache, path: docs/models-cache-layout.md, title: Models and cache, type: reference, lang: en, route: /guides/model-cache, section: get-started, order: 4, visibility: public, status: current, applies_to: snapshot}
+  - {id: quickstart, path: docs/quickstart.md, title: Quick start, type: guide, lang: en, route: /get-started/quickstart, section: get-started, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: quickstart}
+  - {id: quickstart-zh, path: docs/quickstart-zh.md, title: 快速开始, type: guide, lang: zh-CN, route: /get-started/quickstart, section: get-started, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: quickstart}
+  - {id: deploy, path: docs/DEPLOY.md, title: Deployment, type: guide, lang: en, route: /deploy, section: get-started, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: deploy}
+  - {id: deploy-zh, path: docs/DEPLOY-zh.md, title: 部署, type: guide, lang: zh-CN, route: /deploy, section: get-started, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: deploy}
+  - {id: examples, path: examples/README.md, title: Configuration examples, type: example, lang: en, route: /examples, section: get-started, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: examples}
+  - {id: examples-zh, path: examples/README-zh.md, title: 配置示例, type: example, lang: zh-CN, route: /examples, section: get-started, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: examples}
+  - {id: workspace, path: docs/avatar-workspace-layout.md, title: Avatar workspace, type: reference, lang: en, route: /guides/workspace, section: get-started, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: workspace}
+  - {id: workspace-zh, path: docs/avatar-workspace-layout-zh.md, title: Avatar 工作区, type: reference, lang: zh-CN, route: /guides/workspace, section: get-started, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: workspace}
+  - {id: model-cache, path: docs/models-cache-layout.md, title: Models and cache, type: reference, lang: en, route: /guides/model-cache, section: get-started, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: model-cache}
+  - {id: model-cache-zh, path: docs/models-cache-layout-zh.md, title: 模型与缓存, type: reference, lang: zh-CN, route: /guides/model-cache, section: get-started, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: model-cache}
 
   # Commands
-  - {id: cli, path: docs/cli/README.md, title: alphaavatar commands, type: cli, lang: en, route: /cli, section: cli, order: 1, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-setup, path: docs/cli/setup.md, title: setup, type: cli, lang: en, route: /cli/setup, section: cli, order: 2, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-config, path: docs/cli/config.md, title: config, type: cli, lang: en, route: /cli/config, section: cli, order: 3, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-doctor, path: docs/cli/doctor.md, title: doctor, type: cli, lang: en, route: /cli/doctor, section: cli, order: 4, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-start, path: docs/cli/start.md, title: start, type: cli, lang: en, route: /cli/start, section: cli, order: 5, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-dev, path: docs/cli/dev.md, title: dev, type: cli, lang: en, route: /cli/dev, section: cli, order: 6, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-upgrade, path: docs/cli/upgrade.md, title: upgrade, type: cli, lang: en, route: /cli/upgrade, section: cli, order: 7, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-cleanup, path: docs/cli/cleanup.md, title: cleanup, type: cli, lang: en, route: /cli/cleanup, section: cli, order: 8, visibility: public, status: current, applies_to: snapshot}
-  - {id: cli-test, path: docs/cli/test.md, title: test (planned), type: cli, lang: en, route: /cli/test, section: cli, order: 9, visibility: public, status: planned, applies_to: snapshot}
-  - {id: cli-output, path: docs/cli/cli.html, title: Output gallery, type: illustration, lang: en, route: /cli/output, section: cli, order: 10, visibility: public, status: illustrative, applies_to: snapshot, format: html}
+  - {id: cli, path: docs/cli/README.md, title: alphaavatar commands, type: cli, lang: en, route: /cli, section: cli, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: cli}
+  - {id: cli-zh, path: docs/cli/README-zh.md, title: alphaavatar 命令, type: cli, lang: zh-CN, route: /cli, section: cli, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: cli}
+  - {id: cli-setup, path: docs/cli/setup.md, title: setup, type: cli, lang: en, route: /cli/setup, section: cli, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: cli-setup}
+  - {id: cli-setup-zh, path: docs/cli/setup-zh.md, title: setup, type: cli, lang: zh-CN, route: /cli/setup, section: cli, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: cli-setup}
+  - {id: cli-config, path: docs/cli/config.md, title: config, type: cli, lang: en, route: /cli/config, section: cli, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: cli-config}
+  - {id: cli-config-zh, path: docs/cli/config-zh.md, title: config, type: cli, lang: zh-CN, route: /cli/config, section: cli, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: cli-config}
+  - {id: cli-doctor, path: docs/cli/doctor.md, title: doctor, type: cli, lang: en, route: /cli/doctor, section: cli, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: cli-doctor}
+  - {id: cli-doctor-zh, path: docs/cli/doctor-zh.md, title: doctor, type: cli, lang: zh-CN, route: /cli/doctor, section: cli, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: cli-doctor}
+  - {id: cli-start, path: docs/cli/start.md, title: start, type: cli, lang: en, route: /cli/start, section: cli, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: cli-start}
+  - {id: cli-start-zh, path: docs/cli/start-zh.md, title: start, type: cli, lang: zh-CN, route: /cli/start, section: cli, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: cli-start}
+  - {id: cli-dev, path: docs/cli/dev.md, title: dev, type: cli, lang: en, route: /cli/dev, section: cli, order: 6, visibility: public, status: current, applies_to: snapshot, translation_group: cli-dev}
+  - {id: cli-dev-zh, path: docs/cli/dev-zh.md, title: dev, type: cli, lang: zh-CN, route: /cli/dev, section: cli, order: 6, visibility: public, status: current, applies_to: snapshot, translation_group: cli-dev}
+  - {id: cli-upgrade, path: docs/cli/upgrade.md, title: upgrade, type: cli, lang: en, route: /cli/upgrade, section: cli, order: 7, visibility: public, status: current, applies_to: snapshot, translation_group: cli-upgrade}
+  - {id: cli-upgrade-zh, path: docs/cli/upgrade-zh.md, title: upgrade, type: cli, lang: zh-CN, route: /cli/upgrade, section: cli, order: 7, visibility: public, status: current, applies_to: snapshot, translation_group: cli-upgrade}
+  - {id: cli-cleanup, path: docs/cli/cleanup.md, title: cleanup, type: cli, lang: en, route: /cli/cleanup, section: cli, order: 8, visibility: public, status: current, applies_to: snapshot, translation_group: cli-cleanup}
+  - {id: cli-cleanup-zh, path: docs/cli/cleanup-zh.md, title: cleanup, type: cli, lang: zh-CN, route: /cli/cleanup, section: cli, order: 8, visibility: public, status: current, applies_to: snapshot, translation_group: cli-cleanup}
+  - {id: cli-test, path: docs/cli/test.md, title: test (planned), type: cli, lang: en, route: /cli/test, section: cli, order: 9, visibility: public, status: planned, applies_to: snapshot, translation_group: cli-test}
+  - {id: cli-test-zh, path: docs/cli/test-zh.md, title: test（规划中）, type: cli, lang: zh-CN, route: /cli/test, section: cli, order: 9, visibility: public, status: planned, applies_to: snapshot, translation_group: cli-test}
+  - {id: cli-output, path: docs/cli/cli.html, title: Output gallery, type: illustration, lang: en, route: /cli/output, section: cli, order: 10, visibility: public, status: illustrative, applies_to: snapshot, format: html, translation_group: cli-output}
+  - {id: cli-output-zh, path: docs/cli/cli-zh.html, title: 输出示例, type: illustration, lang: zh-CN, route: /cli/output, section: cli, order: 10, visibility: public, status: illustrative, applies_to: snapshot, format: html, translation_group: cli-output}
 
   # Architecture
-  - {id: core, path: avatar-core/README.md, title: Core, type: package, lang: en, route: /architecture/core, section: architecture, order: 1, visibility: public, status: current, applies_to: snapshot}
-  - {id: agents, path: avatar-agents/README.md, title: Agents, type: package, lang: en, route: /architecture/agents, section: architecture, order: 2, visibility: public, status: current, applies_to: snapshot}
-  - {id: rtc, path: avatar-rtc/README.md, title: RTC, type: package, lang: en, route: /architecture/rtc, section: architecture, order: 3, visibility: public, status: current, applies_to: snapshot}
-  - {id: host, path: avatar-host/README.md, title: Host, type: package, lang: en, route: /architecture/host, section: architecture, order: 4, visibility: public, status: current, applies_to: snapshot}
-  - {id: app, path: avatar-app/README.md, title: App, type: package, lang: en, route: /architecture/app, section: architecture, order: 5, visibility: public, status: current, applies_to: snapshot}
+  - {id: core, path: avatar-core/README.md, title: Core, type: package, lang: en, route: /architecture/core, section: architecture, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: core}
+  - {id: core-zh, path: avatar-core/README-zh.md, title: Core, type: package, lang: zh-CN, route: /architecture/core, section: architecture, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: core}
+  - {id: agents, path: avatar-agents/README.md, title: Agents, type: package, lang: en, route: /architecture/agents, section: architecture, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: agents}
+  - {id: agents-zh, path: avatar-agents/README-zh.md, title: Agents, type: package, lang: zh-CN, route: /architecture/agents, section: architecture, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: agents}
+  - {id: rtc, path: avatar-rtc/README.md, title: RTC, type: package, lang: en, route: /architecture/rtc, section: architecture, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: rtc}
+  - {id: rtc-zh, path: avatar-rtc/README-zh.md, title: RTC, type: package, lang: zh-CN, route: /architecture/rtc, section: architecture, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: rtc}
+  - {id: host, path: avatar-host/README.md, title: Host, type: package, lang: en, route: /architecture/host, section: architecture, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: host}
+  - {id: host-zh, path: avatar-host/README-zh.md, title: Host, type: package, lang: zh-CN, route: /architecture/host, section: architecture, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: host}
+  - {id: app, path: avatar-app/README.md, title: App, type: package, lang: en, route: /architecture/app, section: architecture, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: app}
+  - {id: app-zh, path: avatar-app/README-zh.md, title: App, type: package, lang: zh-CN, route: /architecture/app, section: architecture, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: app}
 
   # Plugins
-  - {id: plugins, path: avatar-plugins/README.md, title: Plugin layout and boundaries, type: package, lang: en, route: /plugins, section: plugins, order: 1, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-voice, path: avatar-plugins/foundation/avatar-plugins-voice/README.md, title: Voice, type: plugin, lang: en, route: /plugins/voice, section: plugins, order: 2, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-provider, path: avatar-plugins/foundation/avatar-plugins-provider/README.md, title: Provider, type: plugin, lang: en, route: /plugins/provider, section: plugins, order: 3, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-context, path: avatar-plugins/foundation/avatar-plugins-context/README.md, title: Context, type: plugin, lang: en, route: /plugins/context, section: plugins, order: 4, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-loop, path: avatar-plugins/foundation/avatar-plugins-loop/README.md, title: Loop, type: plugin, lang: en, route: /plugins/loop, section: plugins, order: 5, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-router, path: avatar-plugins/perception/avatar-plugins-router/README.md, title: Router, type: plugin, lang: en, route: /plugins/router, section: plugins, order: 6, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-memory, path: avatar-plugins/perception/avatar-plugins-memory/README.md, title: Memory, type: plugin, lang: en, route: /plugins/memory, section: plugins, order: 7, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-persona, path: avatar-plugins/perception/avatar-plugins-persona/README.md, title: Persona, type: plugin, lang: en, route: /plugins/persona, section: plugins, order: 8, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-character, path: avatar-plugins/perception/avatar-plugins-character/README.md, title: Character, type: plugin, lang: en, route: /plugins/character, section: plugins, order: 9, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-status, path: avatar-plugins/perception/avatar-plugins-status/README.md, title: Status, type: plugin, lang: en, route: /plugins/status, section: plugins, order: 10, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-mcp, path: avatar-plugins/tools/avatar-plugins-mcp/README.md, title: MCP, type: plugin, lang: en, route: /plugins/mcp, section: plugins, order: 11, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-deepresearch, path: avatar-plugins/tools/avatar-plugins-deepresearch/README.md, title: DeepResearch, type: plugin, lang: en, route: /plugins/deepresearch, section: plugins, order: 12, visibility: public, status: current, applies_to: snapshot}
-  - {id: plugin-rag, path: avatar-plugins/tools/avatar-plugins-rag/README.md, title: RAG, type: plugin, lang: en, route: /plugins/rag, section: plugins, order: 13, visibility: public, status: current, applies_to: snapshot}
+  - {id: plugins, path: avatar-plugins/README.md, title: Plugin layout and boundaries, type: package, lang: en, route: /plugins, section: plugins, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: plugins}
+  - {id: plugins-zh, path: avatar-plugins/README-zh.md, title: 插件布局与边界, type: package, lang: zh-CN, route: /plugins, section: plugins, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: plugins}
+  - {id: plugin-voice, path: avatar-plugins/foundation/avatar-plugins-voice/README.md, title: Voice, type: plugin, lang: en, route: /plugins/voice, section: plugins, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-voice}
+  - {id: plugin-voice-zh, path: avatar-plugins/foundation/avatar-plugins-voice/README-zh.md, title: Voice, type: plugin, lang: zh-CN, route: /plugins/voice, section: plugins, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-voice}
+  - {id: plugin-provider, path: avatar-plugins/foundation/avatar-plugins-provider/README.md, title: Provider, type: plugin, lang: en, route: /plugins/provider, section: plugins, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-provider}
+  - {id: plugin-provider-zh, path: avatar-plugins/foundation/avatar-plugins-provider/README-zh.md, title: Provider, type: plugin, lang: zh-CN, route: /plugins/provider, section: plugins, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-provider}
+  - {id: plugin-context, path: avatar-plugins/foundation/avatar-plugins-context/README.md, title: Context, type: plugin, lang: en, route: /plugins/context, section: plugins, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-context}
+  - {id: plugin-context-zh, path: avatar-plugins/foundation/avatar-plugins-context/README-zh.md, title: Context, type: plugin, lang: zh-CN, route: /plugins/context, section: plugins, order: 4, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-context}
+  - {id: plugin-loop, path: avatar-plugins/foundation/avatar-plugins-loop/README.md, title: Loop, type: plugin, lang: en, route: /plugins/loop, section: plugins, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-loop}
+  - {id: plugin-loop-zh, path: avatar-plugins/foundation/avatar-plugins-loop/README-zh.md, title: Loop, type: plugin, lang: zh-CN, route: /plugins/loop, section: plugins, order: 5, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-loop}
+  - {id: plugin-router, path: avatar-plugins/perception/avatar-plugins-router/README.md, title: Router, type: plugin, lang: en, route: /plugins/router, section: plugins, order: 6, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-router}
+  - {id: plugin-router-zh, path: avatar-plugins/perception/avatar-plugins-router/README-zh.md, title: Router, type: plugin, lang: zh-CN, route: /plugins/router, section: plugins, order: 6, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-router}
+  - {id: plugin-memory, path: avatar-plugins/perception/avatar-plugins-memory/README.md, title: Memory, type: plugin, lang: en, route: /plugins/memory, section: plugins, order: 7, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-memory}
+  - {id: plugin-memory-zh, path: avatar-plugins/perception/avatar-plugins-memory/README-zh.md, title: Memory, type: plugin, lang: zh-CN, route: /plugins/memory, section: plugins, order: 7, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-memory}
+  - {id: plugin-persona, path: avatar-plugins/perception/avatar-plugins-persona/README.md, title: Persona, type: plugin, lang: en, route: /plugins/persona, section: plugins, order: 8, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-persona}
+  - {id: plugin-persona-zh, path: avatar-plugins/perception/avatar-plugins-persona/README-zh.md, title: Persona, type: plugin, lang: zh-CN, route: /plugins/persona, section: plugins, order: 8, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-persona}
+  - {id: plugin-character, path: avatar-plugins/perception/avatar-plugins-character/README.md, title: Character, type: plugin, lang: en, route: /plugins/character, section: plugins, order: 9, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-character}
+  - {id: plugin-character-zh, path: avatar-plugins/perception/avatar-plugins-character/README-zh.md, title: Character, type: plugin, lang: zh-CN, route: /plugins/character, section: plugins, order: 9, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-character}
+  - {id: plugin-status, path: avatar-plugins/perception/avatar-plugins-status/README.md, title: Status, type: plugin, lang: en, route: /plugins/status, section: plugins, order: 10, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-status}
+  - {id: plugin-status-zh, path: avatar-plugins/perception/avatar-plugins-status/README-zh.md, title: Status, type: plugin, lang: zh-CN, route: /plugins/status, section: plugins, order: 10, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-status}
+  - {id: plugin-mcp, path: avatar-plugins/tools/avatar-plugins-mcp/README.md, title: MCP, type: plugin, lang: en, route: /plugins/mcp, section: plugins, order: 11, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-mcp}
+  - {id: plugin-mcp-zh, path: avatar-plugins/tools/avatar-plugins-mcp/README-zh.md, title: MCP, type: plugin, lang: zh-CN, route: /plugins/mcp, section: plugins, order: 11, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-mcp}
+  - {id: plugin-deepresearch, path: avatar-plugins/tools/avatar-plugins-deepresearch/README.md, title: DeepResearch, type: plugin, lang: en, route: /plugins/deepresearch, section: plugins, order: 12, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-deepresearch}
+  - {id: plugin-deepresearch-zh, path: avatar-plugins/tools/avatar-plugins-deepresearch/README-zh.md, title: DeepResearch, type: plugin, lang: zh-CN, route: /plugins/deepresearch, section: plugins, order: 12, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-deepresearch}
+  - {id: plugin-rag, path: avatar-plugins/tools/avatar-plugins-rag/README.md, title: RAG, type: plugin, lang: en, route: /plugins/rag, section: plugins, order: 13, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-rag}
+  - {id: plugin-rag-zh, path: avatar-plugins/tools/avatar-plugins-rag/README-zh.md, title: RAG, type: plugin, lang: zh-CN, route: /plugins/rag, section: plugins, order: 13, visibility: public, status: current, applies_to: snapshot, translation_group: plugin-rag}
 
   # Reference
-  - {id: identifiers, path: docs/identifiers-zh.md, title: 标识与关联约定, type: reference, lang: zh-CN, route: /reference/identifiers, section: reference, order: 1, visibility: public, status: current, applies_to: snapshot}
+  - {id: identifiers-en, path: docs/identifiers.md, title: Identifiers and associations, type: reference, lang: en, route: /reference/identifiers, section: reference, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: identifiers}
+  - {id: identifiers, path: docs/identifiers-zh.md, title: 标识与关联约定, type: reference, lang: zh-CN, route: /reference/identifiers, section: reference, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: identifiers}
 
   # Development
-  - {id: contributing, path: CONTRIBUTING.md, title: Contributing, type: development, lang: en, route: /development/contributing, section: development, order: 1, visibility: public, status: current, applies_to: snapshot}
-  - {id: coding-conventions, path: docs/coding-conventions.md, title: Coding conventions, type: development, lang: en, route: /development/coding-conventions, section: development, order: 2, visibility: public, status: current, applies_to: snapshot}
+  - {id: contributing, path: CONTRIBUTING.md, title: Contributing, type: development, lang: en, route: /development/contributing, section: development, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: contributing}
+  - {id: contributing-zh, path: CONTRIBUTING-zh.md, title: 参与贡献, type: development, lang: zh-CN, route: /development/contributing, section: development, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: contributing}
+  - {id: coding-conventions, path: docs/coding-conventions.md, title: Coding conventions, type: development, lang: en, route: /development/coding-conventions, section: development, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: coding-conventions}
+  - {id: coding-conventions-zh, path: docs/coding-conventions-zh.md, title: 编码约定, type: development, lang: zh-CN, route: /development/coding-conventions, section: development, order: 2, visibility: public, status: current, applies_to: snapshot, translation_group: coding-conventions}
   - {id: agent-guide, path: AGENTS.md, title: Agent guide, type: agent-guide, lang: en, route: /development/agent-guide, section: development, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: agent-guide}
   - {id: agent-guide-zh, path: AGENTS-zh.md, title: 编码 Agent 指南, type: agent-guide, lang: zh-CN, route: /development/agent-guide, section: development, order: 3, visibility: public, status: current, applies_to: snapshot, translation_group: agent-guide}
 
   # Roadmap and releases
   - {id: roadmap, path: docs/ROADMAP.md, title: Roadmap, type: roadmap, lang: en, route: /roadmap, section: roadmap, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: roadmap}
   - {id: roadmap-zh, path: docs/ROADMAP-zh.md, title: 路线图, type: roadmap, lang: zh-CN, route: /roadmap, section: roadmap, order: 1, visibility: public, status: current, applies_to: snapshot, translation_group: roadmap}
-  - {id: release-v0.6.9, path: docs/releases/v0.6.9.md, title: v0.6.9, type: release, lang: en, route: /releases/v0.6.9, section: releases, order: 1, visibility: public, status: historical, applies_to: v0.6.9, release: {tag: v0.6.9, published: 2026-11-25}}
-  - {id: release-v0.6.8, path: docs/releases/v0.6.8.md, title: v0.6.8, type: release, lang: en, route: /releases/v0.6.8, section: releases, order: 2, visibility: public, status: historical, applies_to: v0.6.8, release: {tag: v0.6.8, published: 2026-10-22}}
-  - {id: release-v0.6.7, path: docs/releases/v0.6.7.md, title: v0.6.7, type: release, lang: en, route: /releases/v0.6.7, section: releases, order: 3, visibility: public, status: historical, applies_to: v0.6.7, release: {tag: v0.6.7, published: 2026-09-05}}
-  - {id: release-v0.6.6, path: docs/releases/v0.6.6.md, title: v0.6.6, type: release, lang: en, route: /releases/v0.6.6, section: releases, order: 4, visibility: public, status: historical, applies_to: v0.6.6, release: {tag: v0.6.6, published: 2026-08-17}}
-  - {id: release-v0.6.5, path: docs/releases/v0.6.5.md, title: v0.6.5, type: release, lang: en, route: /releases/v0.6.5, section: releases, order: 5, visibility: public, status: historical, applies_to: v0.6.5, release: {tag: v0.6.5, published: 2026-07-25}}
-  - {id: release-v0.6.4, path: docs/releases/v0.6.4.md, title: v0.6.4, type: release, lang: en, route: /releases/v0.6.4, section: releases, order: 6, visibility: public, status: historical, applies_to: v0.6.4, release: {tag: v0.6.4, published: 2026-07-11}}
-  - {id: release-v0.6.3, path: docs/releases/v0.6.3.md, title: v0.6.3, type: release, lang: en, route: /releases/v0.6.3, section: releases, order: 7, visibility: public, status: historical, applies_to: v0.6.3, release: {tag: v0.6.3, published: 2026-06-28}}
-  - {id: release-v0.6.2, path: docs/releases/v0.6.2.md, title: v0.6.2, type: release, lang: en, route: /releases/v0.6.2, section: releases, order: 8, visibility: public, status: historical, applies_to: v0.6.2, release: {tag: v0.6.2, published: 2026-06-21}}
-  - {id: release-v0.6.1, path: docs/releases/v0.6.1.md, title: v0.6.1, type: release, lang: en, route: /releases/v0.6.1, section: releases, order: 9, visibility: public, status: historical, applies_to: v0.6.1, release: {tag: v0.6.1, published: 2026-06-14}}
+  - {id: release-v0.6.9, path: docs/releases/v0.6.9.md, title: v0.6.9, type: release, lang: en, route: /releases/v0.6.9, section: releases, order: 1, visibility: public, status: historical, applies_to: v0.6.9, release: {tag: v0.6.9, published: 2026-11-25}, translation_group: release-v0.6.9}
+  - {id: release-v0.6.9-zh, path: docs/releases/v0.6.9-zh.md, title: v0.6.9, type: release, lang: zh-CN, route: /releases/v0.6.9, section: releases, order: 1, visibility: public, status: historical, applies_to: v0.6.9, release: {tag: v0.6.9, published: 2026-11-25}, translation_group: release-v0.6.9}
+  - {id: release-v0.6.8, path: docs/releases/v0.6.8.md, title: v0.6.8, type: release, lang: en, route: /releases/v0.6.8, section: releases, order: 2, visibility: public, status: historical, applies_to: v0.6.8, release: {tag: v0.6.8, published: 2026-10-22}, translation_group: release-v0.6.8}
+  - {id: release-v0.6.8-zh, path: docs/releases/v0.6.8-zh.md, title: v0.6.8, type: release, lang: zh-CN, route: /releases/v0.6.8, section: releases, order: 2, visibility: public, status: historical, applies_to: v0.6.8, release: {tag: v0.6.8, published: 2026-10-22}, translation_group: release-v0.6.8}
+  - {id: release-v0.6.7, path: docs/releases/v0.6.7.md, title: v0.6.7, type: release, lang: en, route: /releases/v0.6.7, section: releases, order: 3, visibility: public, status: historical, applies_to: v0.6.7, release: {tag: v0.6.7, published: 2026-09-05}, translation_group: release-v0.6.7}
+  - {id: release-v0.6.7-zh, path: docs/releases/v0.6.7-zh.md, title: v0.6.7, type: release, lang: zh-CN, route: /releases/v0.6.7, section: releases, order: 3, visibility: public, status: historical, applies_to: v0.6.7, release: {tag: v0.6.7, published: 2026-09-05}, translation_group: release-v0.6.7}
+  - {id: release-v0.6.6, path: docs/releases/v0.6.6.md, title: v0.6.6, type: release, lang: en, route: /releases/v0.6.6, section: releases, order: 4, visibility: public, status: historical, applies_to: v0.6.6, release: {tag: v0.6.6, published: 2026-08-17}, translation_group: release-v0.6.6}
+  - {id: release-v0.6.6-zh, path: docs/releases/v0.6.6-zh.md, title: v0.6.6, type: release, lang: zh-CN, route: /releases/v0.6.6, section: releases, order: 4, visibility: public, status: historical, applies_to: v0.6.6, release: {tag: v0.6.6, published: 2026-08-17}, translation_group: release-v0.6.6}
+  - {id: release-v0.6.5, path: docs/releases/v0.6.5.md, title: v0.6.5, type: release, lang: en, route: /releases/v0.6.5, section: releases, order: 5, visibility: public, status: historical, applies_to: v0.6.5, release: {tag: v0.6.5, published: 2026-07-25}, translation_group: release-v0.6.5}
+  - {id: release-v0.6.5-zh, path: docs/releases/v0.6.5-zh.md, title: v0.6.5, type: release, lang: zh-CN, route: /releases/v0.6.5, section: releases, order: 5, visibility: public, status: historical, applies_to: v0.6.5, release: {tag: v0.6.5, published: 2026-07-25}, translation_group: release-v0.6.5}
+  - {id: release-v0.6.4, path: docs/releases/v0.6.4.md, title: v0.6.4, type: release, lang: en, route: /releases/v0.6.4, section: releases, order: 6, visibility: public, status: historical, applies_to: v0.6.4, release: {tag: v0.6.4, published: 2026-07-11}, translation_group: release-v0.6.4}
+  - {id: release-v0.6.4-zh, path: docs/releases/v0.6.4-zh.md, title: v0.6.4, type: release, lang: zh-CN, route: /releases/v0.6.4, section: releases, order: 6, visibility: public, status: historical, applies_to: v0.6.4, release: {tag: v0.6.4, published: 2026-07-11}, translation_group: release-v0.6.4}
+  - {id: release-v0.6.3, path: docs/releases/v0.6.3.md, title: v0.6.3, type: release, lang: en, route: /releases/v0.6.3, section: releases, order: 7, visibility: public, status: historical, applies_to: v0.6.3, release: {tag: v0.6.3, published: 2026-06-28}, translation_group: release-v0.6.3}
+  - {id: release-v0.6.3-zh, path: docs/releases/v0.6.3-zh.md, title: v0.6.3, type: release, lang: zh-CN, route: /releases/v0.6.3, section: releases, order: 7, visibility: public, status: historical, applies_to: v0.6.3, release: {tag: v0.6.3, published: 2026-06-28}, translation_group: release-v0.6.3}
+  - {id: release-v0.6.2, path: docs/releases/v0.6.2.md, title: v0.6.2, type: release, lang: en, route: /releases/v0.6.2, section: releases, order: 8, visibility: public, status: historical, applies_to: v0.6.2, release: {tag: v0.6.2, published: 2026-06-21}, translation_group: release-v0.6.2}
+  - {id: release-v0.6.2-zh, path: docs/releases/v0.6.2-zh.md, title: v0.6.2, type: release, lang: zh-CN, route: /releases/v0.6.2, section: releases, order: 8, visibility: public, status: historical, applies_to: v0.6.2, release: {tag: v0.6.2, published: 2026-06-21}, translation_group: release-v0.6.2}
+  - {id: release-v0.6.1, path: docs/releases/v0.6.1.md, title: v0.6.1, type: release, lang: en, route: /releases/v0.6.1, section: releases, order: 9, visibility: public, status: historical, applies_to: v0.6.1, release: {tag: v0.6.1, published: 2026-06-14}, translation_group: release-v0.6.1}
+  - {id: release-v0.6.1-zh, path: docs/releases/v0.6.1-zh.md, title: v0.6.1, type: release, lang: zh-CN, route: /releases/v0.6.1, section: releases, order: 9, visibility: public, status: historical, applies_to: v0.6.1, release: {tag: v0.6.1, published: 2026-06-14}, translation_group: release-v0.6.1}
 
   # Internal records: kept in the repository, never published.
   - {id: bugs, path: docs/bugs-zh.md, title: 缺陷记录, type: record, lang: zh-CN, visibility: internal, status: current, applies_to: snapshot}

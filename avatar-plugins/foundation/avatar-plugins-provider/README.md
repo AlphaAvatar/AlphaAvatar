@@ -1,5 +1,7 @@
 # AlphaAvatar Provider Plugin
 
+[中文](README-zh.md)
+
 Public model, prompt, tool-result, request and stream contracts live in `alphaavatar.agents.avatar.provider`. SDK construction, message conversion, structured parsing and usage normalization remain in this plugin.
 
 ## Shared ownership

@@ -593,7 +593,7 @@ Use this table to avoid starting in a convenient but non-owning module.
 | Doctor metric | Producer trace boundary → Core trace schema → Host measurement → compare script/tests/docs. |
 | New plugin/package | Plugin boundary guide → entry points/factory → metadata/workspace/lock → catalog/tests. |
 | Future App presentation | App design/implementation → Core/RTC delivery contract → frontend checks. |
-| Documentation or Roadmap | Owning document → `docs/manifest.yaml` entry → both Roadmap languages → `scripts/docs/check_docs.py`. |
+| Documentation or Roadmap | Owning document and its other-language file → `docs/manifest.yaml` entry → `scripts/docs/check_docs.py`. |
 | Deployment, install, upgrade or cleanup | Host `tools/setup`, `tools/upgrade`, `tools/cleanup` or packaging → `docs/DEPLOY.md` / setup, upgrade or cleanup guide → installation validation. |
 
 Search with `rg` for a contract's constructors, serializers and consumers before renaming it.
@@ -602,7 +602,8 @@ When changing identities, check scopes, persistence and cancellation as well as 
 
 ## 22. Documentation index
 
-Every non-log file currently under `docs/` is listed below.
+Every non-log file currently under `docs/` is listed below, apart from the other language of a listed file:
+`X-zh.md` is the Chinese version of `X.md` (`identifiers-zh.md` is the original, `identifiers.md` its English version).
 `agent-logs/` is one historical-work category rather than a per-artifact API index.
 Keep this table and its Chinese counterpart synchronized when documents are added or moved.
 
@@ -612,6 +613,7 @@ Keep this table and its Chinese counterpart synchronized when documents are adde
 | [ROADMAP-zh.md](docs/ROADMAP-zh.md) | Chinese version of the Roadmap; same milestones, IDs, statuses and dates. |
 | [manifest.yaml](docs/manifest.yaml) | Which documents the docs site may publish, with ID, path, title, type, language, route, navigation, visibility and applicable version. |
 | [DEPLOY.md](docs/DEPLOY.md) | Linux/source deployment, service configuration, credentials and operating procedures. |
+| [quickstart.md](docs/quickstart.md) | From nothing to a running Host: requirements, install, setup, Doctor, start, a client, and the source path. |
 | [coding-conventions.md](docs/coding-conventions.md) | Module/class ordering, functional section strings, method naming, constructor field groups and function-body blocks. |
 | [identifiers-zh.md](docs/identifiers-zh.md) | Identifier meanings, owners, uniqueness/lifetimes, initialization and correlation rules. |
 | [avatar-workspace-layout.md](docs/avatar-workspace-layout.md) | Application/Avatar data layout, personal data, logs and backup boundaries. |

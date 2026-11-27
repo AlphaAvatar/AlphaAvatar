@@ -1,5 +1,7 @@
 # AlphaAvatar Core
 
+[中文](README-zh.md)
+
 `avatar-core` provides transport-independent media, event and lifecycle contracts.
 It does not depend on Agents, concrete plugins, model SDKs or LiveKit.
 

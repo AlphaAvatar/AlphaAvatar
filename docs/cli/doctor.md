@@ -1,5 +1,7 @@
 # `alphaavatar doctor`
 
+[中文](doctor-zh.md)
+
 Diagnose the installation and a configuration: static checks first, then the runtime
 diagnosis. Doctor starts the bundle's runtime as `start` does, feeds it a fixed spoken sample
 at a real input's pace, measures what comes out, and runs its one scenario several times, each

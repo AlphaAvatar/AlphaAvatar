@@ -1,5 +1,7 @@
 # AlphaAvatar Loop Plugin
 
+[中文](README-zh.md)
+
 Loop is a required Foundation component. Host constructs it with AvatarRuntime, binds Foundation, then calls `initialize()`. Initialization resolves shared services and checks streaming support without making a foreground model request. Engine submission requires an initialized, non-closed Loop.
 
 ## Configuration and ownership

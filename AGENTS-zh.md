@@ -592,7 +592,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | Doctor 指标 | 生产者追踪边界 → Core 追踪 schema → Host 测量 → 对比脚本、测试与文档。 |
 | 新插件或包 | 插件边界指南 → 入口点与工厂 → 元数据、工作区与锁文件 → 目录与测试。 |
 | 未来的 App 展示 | App 设计与实现 → Core/RTC 交付契约 → 前端检查。 |
-| 文档或路线图 | 所属文档 → `docs/manifest.yaml` 条目 → 路线图中英两版 → `scripts/docs/check_docs.py`。 |
+| 文档或路线图 | 所属文档及其另一语言版本 → `docs/manifest.yaml` 条目 → `scripts/docs/check_docs.py`。 |
 | 部署、安装、升级或清理 | Host `tools/setup`、`tools/upgrade`、`tools/cleanup` 或 packaging → `docs/DEPLOY.md` 与 setup、升级或清理指南 → 安装验证。 |
 
 重命名契约前，用 `rg` 搜索其构造函数、序列化器与消费者。
@@ -601,7 +601,8 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 
 ## 22. 文档索引
 
-当前 `docs/` 下的每个非日志文件都列在下表中。
+当前 `docs/` 下的每个非日志文件都列在下表中，已列文件的另一语言版本除外：
+`X-zh.md` 是 `X.md` 的中文版（`identifiers-zh.md` 是原文，`identifiers.md` 是其英文版）。
 `agent-logs/` 作为一类历史工作记录列出，不按每份产物建立 API 索引。
 新增或移动文档时，保持本表与英文对应表同步。
 
@@ -611,6 +612,7 @@ Doctor 在已授权或已配置时可能下载模型或调用远端供应商。
 | [ROADMAP-zh.md](docs/ROADMAP-zh.md) | 路线图中文版；里程碑、ID、状态和日期与英文版相同。 |
 | [manifest.yaml](docs/manifest.yaml) | 文档站可发布哪些文档，以及各文档的 ID、路径、标题、类型、语言、路由、导航、公开范围和适用版本。 |
 | [DEPLOY.md](docs/DEPLOY.md) | Linux 与源码部署、服务配置、凭据和操作流程。 |
+| [quickstart.md](docs/quickstart.md) | 从零到运行中的 Host：前提条件、安装、setup、Doctor、启动、客户端，以及源码路径。 |
 | [coding-conventions.md](docs/coding-conventions.md) | 模块与类的顺序、功能分区字符串、方法命名、构造函数字段分组和函数体内的代码块。 |
 | [identifiers-zh.md](docs/identifiers-zh.md) | 标识含义、所有者、唯一性与生命周期、初始化和关联规则。 |
 | [avatar-workspace-layout.md](docs/avatar-workspace-layout.md) | 应用与 Avatar 数据布局、个人数据、日志和备份边界。 |

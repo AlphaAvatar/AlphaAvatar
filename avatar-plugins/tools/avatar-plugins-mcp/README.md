@@ -1,5 +1,7 @@
 # AlphaAvatar MCP Plugin
 
+[中文](README-zh.md)
+
 MCP provides discovery and invocation across configured remote servers through
 AlphaAvatar's native capability system. Transport and ClientSession ownership use
 the MCP Python client directly; no LiveKit AgentSession or Agents SDK MCP base class

@@ -103,23 +103,30 @@ def _slug(heading: str) -> str:
     return kept.replace(" ", "-")
 
 
+def _headings(text: str) -> list[tuple[int, str]]:
+    """Markdown headings outside fenced code blocks: level and text."""
+    found, fenced = [], False
+    for line in text.splitlines():
+        if FENCE.match(line):
+            fenced = not fenced
+            continue
+        match = None if fenced else HEADING.match(line)
+        if match:
+            found.append((len(match.group(1)), match.group(2)))
+    return found
+
+
 def _anchors(path: Path, cache: dict[Path, set[str]]) -> set[str]:
     if path not in cache:
         text = path.read_text(encoding="utf-8")
         found = set(HTML_ID.findall(text))
         if path.suffix == ".md":
             counts: dict[str, int] = {}
-            fenced = False
-            for line in text.splitlines():
-                if FENCE.match(line):
-                    fenced = not fenced
-                    continue
-                match = None if fenced else HEADING.match(line)
-                if match:
-                    slug = _slug(match.group(2))
-                    n = counts.get(slug, 0)
-                    counts[slug] = n + 1
-                    found.add(slug if n == 0 else f"{slug}-{n}")
+            for _, heading in _headings(text):
+                slug = _slug(heading)
+                n = counts.get(slug, 0)
+                counts[slug] = n + 1
+                found.add(slug if n == 0 else f"{slug}-{n}")
         cache[path] = found
     return cache[path]
 
@@ -153,6 +160,12 @@ def _check_links(rel: str, problems: list[str], cache: dict[Path, set[str]]) -> 
 def _check_manifest(problems: list[str]) -> dict:
     manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
     sections = {s["id"] for s in manifest.get("sections", [])}
+    for section in manifest.get("sections", []):
+        title = section.get("title")
+        if isinstance(title, dict) and set(title) != LANGS:
+            problems.append(f"manifest: section {section['id']}: titles must be {sorted(LANGS)}")
+        elif not isinstance(title, str | dict):
+            problems.append(f"manifest: section {section['id']}: missing title")
     documents, groups = manifest.get("documents", []), manifest.get("groups", [])
     ids, routes, paths = set(), set(), set()
 
@@ -219,13 +232,25 @@ def _check_manifest(problems: list[str]) -> dict:
         for lang in sorted({lang for lang in langs if langs.count(lang) > 1}):
             problems.append(f"manifest: {version} has two {lang} release notes")
 
-    by_group: dict[str, set[str]] = {}
+    by_group: dict[str, list[dict]] = {}
     for doc in documents:
         if "translation_group" in doc:
-            langs = by_group.setdefault(doc["translation_group"], set())
-            if doc["lang"] in langs:
+            members = by_group.setdefault(doc["translation_group"], [])
+            if doc["lang"] in {m["lang"] for m in members}:
                 problems.append(f"manifest: {doc['id']}: two {doc['lang']} files in its group")
-            langs.add(doc["lang"])
+            members.append(doc)
+
+    # Translations keep their source's headings in order, so an anchor names the same place in
+    # every language of a document.
+    for group, members in sorted(by_group.items()):
+        files = [ROOT / m["path"] for m in members if m["path"].endswith(".md")]
+        levels = {
+            f.relative_to(ROOT).as_posix(): [level for level, _ in _headings(f.read_text("utf-8"))]
+            for f in files
+            if f.is_file()
+        }
+        if len({tuple(v) for v in levels.values()}) > 1:
+            problems.append(f"manifest: {group}: heading levels differ between {sorted(levels)}")
 
     tracked = _tracked()
     for rel in tracked:
