@@ -52,6 +52,9 @@ uv lock --check
 `scripts/docs/check_docs.py` 检查 [docs/manifest.yaml](docs/manifest.yaml)、其中所列文档的相对链接和锚点，以及[路线图](docs/ROADMAP.md)的结构及其两种语言版本。
 新文档须列入清单，否则检查失败。
 
+推送到 `dev/v0.7.0` 的文档会发布到[文档站](https://docs.alphaavatar.io/zh-CN/v0.7.0)：**Docs site** 工作流运行这项检查，触发文档站重新构建，并等待线上提供这次推送的内容。
+文档站的 [build.json](https://docs.alphaavatar.io/build.json) 给出线上实际使用的提交；重试和新增文档版本见[文档站仓库](https://github.com/AlphaAvatar/AlphaAvatar-docs#publishing)。
+
 `scripts/quality/check_workspace.py` 在不导入运行时的情况下检查包元数据、依赖关系、入口点文件、许可证和锁文件策略。
 其 `--metadata-only` 模式在编写期间有用，但会明确跳过源码／锁文件校验；它不是发布关卡。
 解析器层面的时效性仍需要 `uv lock --check`。

@@ -1,0 +1,41 @@
+name: Docs site
+
+# Publishes https://docs.alphaavatar.io when the documentation it reads changes on this branch:
+# the Publish workflow of AlphaAvatar/AlphaAvatar-docs checks it (scripts/docs/check_docs.py),
+# has Vercel build the site again by its Deploy Hook, waits until the site serves this commit or
+# a later one, and checks the deployment. Retry from that repository's Publish workflow.
+
+on:
+  push:
+    branches: [dev/v0.7.0]
+    paths:
+      - docs/**
+      - '**.md'
+      - '**.html'
+      - '**.png'
+      - '**.jpg'
+      - '**.jpeg'
+      - '**.gif'
+      - '**.svg'
+      - '**.webp'
+      - .github/workflows/docs-site.yml
+      - '!docs/agent-logs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+# A newer push replaces the run in progress; the build it starts reads the latest content.
+concurrency:
+  group: docs-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    uses: AlphaAvatar/AlphaAvatar-docs/.github/workflows/publish.yml@main
+    with:
+      ref: ${{ github.ref_name }}
+      content: ${{ github.sha }}
+    secrets:
+      DOCS_DEPLOY_HOOK_URL: ${{ secrets.DOCS_DEPLOY_HOOK_URL }}

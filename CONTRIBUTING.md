@@ -57,6 +57,12 @@ uv lock --check
 and anchors of the documents it lists, and the [Roadmap](docs/ROADMAP.md)'s structure and its
 two languages. List a new document in the manifest, or it fails.
 
+Documentation pushed to `dev/v0.7.0` is published to the [docs site](https://docs.alphaavatar.io/en/v0.7.0):
+the **Docs site** workflow runs this check, has the site built again and waits until it serves the
+push. The site's [build.json](https://docs.alphaavatar.io/build.json) names the commit it serves;
+retrying and adding a version are in the
+[docs site repository](https://github.com/AlphaAvatar/AlphaAvatar-docs#publishing).
+
 `scripts/quality/check_workspace.py` checks package metadata, dependency relationships,
 entrypoint files, licenses and lock policy without importing the runtime. Its `--metadata-only` mode
 is useful during authoring but explicitly skips source/lock validation; it is not a release
